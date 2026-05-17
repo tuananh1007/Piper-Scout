@@ -22,8 +22,10 @@ Estimated total time: **6–8 weeks** of single-engineer effort.
 ```bash
 cd Piper_Scout_ws/Codes
 vcs import src < repos.yaml
-ls src   # Expect: piper_ros/ scout_ros2/ scout_nav2/ realsense-ros/
-         #         scout_piper_bringup/ scout_piper_description/ stem_grasp/
+./scripts/patch_upstream.sh           # apply local-only fixes (ugv_sdk build_type)
+ls src   # Expect: piper_ros/ scout_ros2/ scout_nav2/ realsense-ros/ ugv_sdk/
+         #         scout_piper_bringup/ scout_piper_description/
+         #         scout_piper_scene_repr/ stem_grasp/
 ```
 
 **Verify:**
