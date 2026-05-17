@@ -17,28 +17,29 @@ namespace scout_piper_scene_repr
 const std::string SemanticCollisionDetectorAllocator::NAME = "Semantic";
 
 CollisionEnvSemantic::CollisionEnvSemantic(
-  const moveit::core::RobotModelConstPtr & robot_model,
-  const ClassPolicyMap & policies,
-  double scale,
-  double padding)
-: collision_detection::CollisionEnv(robot_model, scale, padding)
-, policies_(policies)
+  const moveit::core::RobotModelConstPtr & robot_model)
+: collision_detection::CollisionEnv(robot_model)
+, policies_{}
 {
   RCLCPP_INFO(
     rclcpp::get_logger("scout_piper_scene_repr.semantic_collision_plugin"),
-    "Created CollisionEnvSemantic with %zu class policies (skeleton).",
-    policies_.size());
+    "Created CollisionEnvSemantic (single-arg ctor); policies empty — load via setPolicies().");
 }
 
 CollisionEnvSemantic::CollisionEnvSemantic(
   const moveit::core::RobotModelConstPtr & robot_model,
-  const collision_detection::WorldPtr & world,
-  const ClassPolicyMap & policies,
-  double scale,
-  double padding)
-: collision_detection::CollisionEnv(robot_model, world, scale, padding)
-, policies_(policies)
+  const collision_detection::WorldPtr & world)
+: collision_detection::CollisionEnv(robot_model, world)
+, policies_{}
 {
+}
+
+void CollisionEnvSemantic::setPolicies(const ClassPolicyMap & policies)
+{
+  policies_ = policies;
+  RCLCPP_INFO(
+    rclcpp::get_logger("scout_piper_scene_repr.semantic_collision_plugin"),
+    "Loaded %zu class policies into CollisionEnvSemantic.", policies_.size());
 }
 
 void CollisionEnvSemantic::checkSelfCollision(

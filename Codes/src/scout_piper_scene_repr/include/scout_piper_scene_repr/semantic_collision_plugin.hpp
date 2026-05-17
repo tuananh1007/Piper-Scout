@@ -53,20 +53,23 @@ using ClassPolicyMap = std::unordered_map<std::string, ClassPolicy>;
 class CollisionEnvSemantic : public collision_detection::CollisionEnv
 {
 public:
-  CollisionEnvSemantic(
-    const moveit::core::RobotModelConstPtr & robot_model,
-    const ClassPolicyMap & policies,
-    double scale = 1.0,
-    double padding = 0.0);
+  // The MoveIt allocator template needs single-arg and two-arg constructors
+  // that take only the robot model (and optionally the world). Policies are
+  // loaded post-construction via setPolicies() so they don't need to be
+  // baked into the constructor signature.
+  explicit CollisionEnvSemantic(
+    const moveit::core::RobotModelConstPtr & robot_model);
 
   CollisionEnvSemantic(
     const moveit::core::RobotModelConstPtr & robot_model,
-    const collision_detection::WorldPtr & world,
-    const ClassPolicyMap & policies,
-    double scale = 1.0,
-    double padding = 0.0);
+    const collision_detection::WorldPtr & world);
 
   ~CollisionEnvSemantic() override = default;
+
+  /// Load per-class policies (typically from semantic_classes.yaml).
+  /// Called by the wrapper service that bridges /scene_repr/policy ->
+  /// the active CollisionEnv instance(s).
+  void setPolicies(const ClassPolicyMap & policies);
 
   void checkSelfCollision(
     const collision_detection::CollisionRequest & req,
