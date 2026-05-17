@@ -34,9 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-# Pipeline Python deps
+# Pipeline Python deps.
+#
+# NumPy is pinned to <2 because ros-humble apt packages (cv_bridge,
+# rclpy_message_converter, sensor_msgs_py) were compiled against NumPy 1.x
+# and emit `_ARRAY_API not found` tracebacks under NumPy 2 — cv_bridge then
+# falls through to a slow Python path. NumPy 1.26.x is the last 1.x release.
 RUN pip3 install --no-cache-dir \
-      numpy scipy scikit-image scikit-learn networkx \
+      'numpy<2' scipy scikit-image scikit-learn networkx \
       open3d \
       ultralytics \
       'transforms3d>=0.4'
