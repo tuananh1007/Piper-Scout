@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-humble-realsense2-camera ros-humble-realsense2-description \
       ros-humble-rqt-gui ros-humble-rqt-graph ros-humble-rqt-image-view \
       libopencv-dev python3-opencv \
+      libasio-dev \
+      ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
 # Pipeline Python deps
