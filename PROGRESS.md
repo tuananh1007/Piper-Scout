@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-17 (vcs import done; upstream refs fixed; Docker dev env ready)
+**Last updated:** 2026-05-17 (workspace builds; Piper arm forked + integrated into unified URDF)
 
 ## Legend
 
@@ -43,7 +43,7 @@
 |---|---|---|---|
 | P0.2.1 | Package skeleton (package.xml, CMakeLists.txt) | ☑ | ament_cmake |
 | P0.2.2 | `scout_piper.urdf.xacro` composing scout_description + piper_description + realsense | ☑ | Verify upstream paths after vcs import |
-| P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ✗ | 2026-05-17 — upstream piper_description.xacro hardcodes `base_link` + `world` with no `prefix` arg → collides with scout_v2.xacro. v0 URDF (Scout-only) shipped; fork piper xacro into `scout_piper_description/urdf/_piper_arm.xacro` with prefixed link names |
+| P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ☑ | 2026-05-17 — forked piper xacro into `scout_piper_description/urdf/_piper_arm.xacro`. All 10 links + 10 joints + 8 transmissions + 8 gazebo refs prefixed via `scripts/fork_piper_arm.py` (re-runnable when upstream updates). Unified URDF now: Scout → piper_mount_link → piper_base_link → … → piper_link6 → camera_link (eye-in-hand) |
 | P0.2.4 | `view_robot.launch.py` + RViz config — visualize unified model | ☑ | Needs upstream meshes |
 | P0.2.5 | Visual sanity: arm reaches expected workspace from Scout top plate | ☐ | After P0.2.3 |
 | P0.2.6 | Add hand-eye TF (camera → link6) from existing calibration_samples.yaml | ☐ | Port [`../calibration_transform.py`](../calibration_transform.py) |

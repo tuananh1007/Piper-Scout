@@ -2,37 +2,40 @@
 <robot name="scout_piper" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <!--
-    Unified URDF for AgileX Piper 6-DoF arm mounted on Scout 2.0 UGV.
+    Unified URDF for AgileX Piper 6-DoF arm mounted on Scout 2.0 UGV with an
+    eye-in-hand RealSense D435.
 
-    STATUS (2026-05-17):
-      v0 — Scout-only. The upstream agilexrobotics/piper_ros@humble ships a
-      piper_description.xacro that hardcodes its root as <link name="base_link"/>
-      AND defines a <link name="world"/> with a fixed joint to base_link. There
-      is no `prefix` argument on the upstream xacro, so xacro:include-ing it
-      alongside scout_v2.xacro produces a duplicate-link error.
+    Composes three subtrees:
+      1. Scout 2.0 base       — upstream scout_description (root link: base_link)
+      2. Piper arm + gripper  — forked piper_description, prefixed `piper_` and
+                                wrapped in a macro (see _piper_arm.xacro)
+      3. RealSense D435       — upstream realsense2_description, mounted on
+                                piper_link6 (the EE flange)
 
-    TODO(P0.2.3): Fork piper_description.xacro into our own
-      scout_piper_description/urdf/_piper_arm.xacro with:
-        - all links prefixed (e.g., piper_base_link, piper_link1, …, piper_link6)
-        - the upstream world link + fixed_base_joint removed
-        - the upstream <link name="base_link"> renamed to piper_base_link
-      Then mount it on Scout via a fixed joint from base_link → piper_mount_link
-      → piper_base_link.
-
-    This v0 keeps view_robot.launch.py functional (you can verify the Scout
-    chassis + RealSense mount frame) while we sort out the arm integration.
+    TF tree:
+      odom -> base_link (Scout) -> piper_mount_link -> piper_base_link
+              -> piper_link1 -> ... -> piper_link6 -> camera_link
+                                                  \-> piper_gripper_base
+                                                        \-> piper_link7
+                                                        \-> piper_link8
   -->
 
   <xacro:arg name="use_sim"        default="false"/>
   <xacro:arg name="use_gazebo_ros" default="false"/>
 
-  <!-- Scout 2.0 base -->
+  <!-- Eye-in-hand camera placement on the EE flange. Override at launch
+       once hand-eye calibration is done. -->
+  <xacro:arg name="cam_xyz" default="0.05 0.0 0.05"/>
+  <xacro:arg name="cam_rpy" default="0.0 0.0 0.0"/>
+
+  <!-- =========================================================== -->
+  <!-- 1. Scout 2.0 base                                            -->
+  <!-- =========================================================== -->
   <xacro:include filename="$(find scout_description)/urdf/scout_v2.xacro"/>
 
-  <!-- Piper mount plate (placeholder; tune dimensions to match the physical mount) -->
-  <xacro:property name="piper_mount_xyz" value="0.15 0.0 0.18"/>
-  <xacro:property name="piper_mount_rpy" value="0.0 0.0 0.0"/>
-
+  <!-- =========================================================== -->
+  <!-- 2. Piper mount plate (placeholder; tune to physical mount)   -->
+  <!-- =========================================================== -->
   <link name="piper_mount_link">
     <visual>
       <geometry><box size="0.08 0.08 0.01"/></geometry>
@@ -50,15 +53,24 @@
   <joint name="scout_to_piper_mount" type="fixed">
     <parent link="base_link"/>
     <child  link="piper_mount_link"/>
-    <origin xyz="${piper_mount_xyz}" rpy="${piper_mount_rpy}"/>
+    <origin xyz="0.15 0.0 0.18" rpy="0 0 0"/>
   </joint>
 
-  <!-- RealSense D435 (eye-in-hand placeholder until P0.2.3 is done). Mounted
-       on piper_mount_link for now so RViz shows a sensible camera frame. -->
-  <xacro:arg name="cam_xyz" default="0.05 0.0 0.05"/>
-  <xacro:arg name="cam_rpy" default="0.0 0.0 0.0"/>
+  <!-- =========================================================== -->
+  <!-- 3. Piper 6-DoF arm + gripper (forked macro)                  -->
+  <!-- =========================================================== -->
+  <xacro:include filename="$(find scout_piper_description)/urdf/_piper_arm.xacro"/>
+
+  <xacro:piper_arm prefix="piper_" parent="piper_mount_link">
+    <origin xyz="0 0 0.005" rpy="0 0 0"/>
+  </xacro:piper_arm>
+
+  <!-- =========================================================== -->
+  <!-- 4. RealSense D435 (eye-in-hand on the EE flange)             -->
+  <!-- =========================================================== -->
   <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
-  <xacro:sensor_d435 name="camera" parent="piper_mount_link" use_nominal_extrinsics="true">
+
+  <xacro:sensor_d435 name="camera" parent="piper_link6" use_nominal_extrinsics="true">
     <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
   </xacro:sensor_d435>
 
