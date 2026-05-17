@@ -3,55 +3,43 @@
 
   <!--
     Unified URDF for AgileX Piper 6-DoF arm mounted on Scout 2.0 UGV.
-    Composes three upstream URDFs:
-      - scout_description       : Scout 2.0 base
-      - piper_description       : Piper 6-DoF arm + gripper
-      - realsense2_description  : RealSense camera (eye-in-hand)
 
-    TF tree (high level):
-        map  ->  odom  ->  base_link (Scout)  ->  scout_top_plate
-              ->  piper_mount_link  ->  base_link (Piper)  -> ... -> link6
-              ->  realsense_link
+    STATUS (2026-05-17):
+      v0 — Scout-only. The upstream agilexrobotics/piper_ros@humble ships a
+      piper_description.xacro that hardcodes its root as <link name="base_link"/>
+      AND defines a <link name="world"/> with a fixed joint to base_link. There
+      is no `prefix` argument on the upstream xacro, so xacro:include-ing it
+      alongside scout_v2.xacro produces a duplicate-link error.
 
-    The Scout's "base_link" is the kinematic root; the Piper's URDF also uses
-    "base_link" as its root, so we remap the Piper subtree's prefix via xacro
-    (piper_prefix) to avoid TF name collisions.
+    TODO(P0.2.3): Fork piper_description.xacro into our own
+      scout_piper_description/urdf/_piper_arm.xacro with:
+        - all links prefixed (e.g., piper_base_link, piper_link1, …, piper_link6)
+        - the upstream world link + fixed_base_joint removed
+        - the upstream <link name="base_link"> renamed to piper_base_link
+      Then mount it on Scout via a fixed joint from base_link → piper_mount_link
+      → piper_base_link.
 
-    NOTE: This xacro DEPENDS on the upstream piper_description and
-    scout_description xacros being available after `vcs import`. If those
-    paths drift, update the xacro:include block below.
+    This v0 keeps view_robot.launch.py functional (you can verify the Scout
+    chassis + RealSense mount frame) while we sort out the arm integration.
   -->
 
   <xacro:arg name="use_sim"        default="false"/>
   <xacro:arg name="use_gazebo_ros" default="false"/>
 
-  <!-- ============================================================ -->
-  <!-- 1. Scout 2.0 base                                            -->
-  <!-- ============================================================ -->
-  <!-- Upstream Scout xacro provides links: base_link, base_footprint,
-       and four wheel links. We keep its default frame names. -->
+  <!-- Scout 2.0 base -->
   <xacro:include filename="$(find scout_description)/urdf/scout_v2.xacro"/>
 
-  <!-- ============================================================ -->
-  <!-- 2. Mount plate on Scout for the Piper arm                    -->
-  <!--    Adjust the xyz/rpy if the physical mount differs.         -->
-  <!-- ============================================================ -->
+  <!-- Piper mount plate (placeholder; tune dimensions to match the physical mount) -->
   <xacro:property name="piper_mount_xyz" value="0.15 0.0 0.18"/>
   <xacro:property name="piper_mount_rpy" value="0.0 0.0 0.0"/>
 
   <link name="piper_mount_link">
     <visual>
-      <geometry>
-        <box size="0.08 0.08 0.01"/>
-      </geometry>
-      <material name="aluminum">
-        <color rgba="0.7 0.7 0.7 1.0"/>
-      </material>
+      <geometry><box size="0.08 0.08 0.01"/></geometry>
+      <material name="aluminum"><color rgba="0.7 0.7 0.7 1.0"/></material>
     </visual>
     <collision>
-      <geometry>
-        <box size="0.08 0.08 0.01"/>
-      </geometry>
+      <geometry><box size="0.08 0.08 0.01"/></geometry>
     </collision>
     <inertial>
       <mass value="0.2"/>
@@ -65,39 +53,12 @@
     <origin xyz="${piper_mount_xyz}" rpy="${piper_mount_rpy}"/>
   </joint>
 
-  <!-- ============================================================ -->
-  <!-- 3. Piper 6-DoF arm + gripper                                 -->
-  <!--    We re-prefix the Piper subtree to avoid base_link clash.  -->
-  <!--    Upstream piper_description supports a ${prefix} arg in    -->
-  <!--    most versions; if not, this xacro:include will need to be -->
-  <!--    swapped for a prefixed copy in this package's urdf/ dir.  -->
-  <!-- ============================================================ -->
-  <xacro:property name="piper_prefix" value="piper_"/>
-
-  <!-- Upstream path; verify after `vcs import` and update if needed. -->
-  <xacro:include filename="$(find piper_description)/urdf/piper_with_gripper.urdf.xacro"/>
-
-  <!-- The included xacro defines its own base_link as the arm's root.
-       We weld it onto the mount plate. If the upstream macro exposes a
-       prefix argument, prefer instantiating with prefix="${piper_prefix}"
-       and adjust this joint accordingly. -->
-  <joint name="piper_mount_to_piper_base" type="fixed">
-    <parent link="piper_mount_link"/>
-    <child  link="base_link"/>
-    <origin xyz="0 0 0.005" rpy="0 0 0"/>
-  </joint>
-
-  <!-- ============================================================ -->
-  <!-- 4. RealSense camera, eye-in-hand on Piper link6              -->
-  <!-- ============================================================ -->
-  <!-- These come from the hand-eye calibration; populate them in
-       config/hand_eye.yaml and override via xacro args at launch. -->
+  <!-- RealSense D435 (eye-in-hand placeholder until P0.2.3 is done). Mounted
+       on piper_mount_link for now so RViz shows a sensible camera frame. -->
   <xacro:arg name="cam_xyz" default="0.05 0.0 0.05"/>
   <xacro:arg name="cam_rpy" default="0.0 0.0 0.0"/>
-
   <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
-
-  <xacro:sensor_d435 name="camera" parent="link6" use_nominal_extrinsics="true">
+  <xacro:sensor_d435 name="camera" parent="piper_mount_link" use_nominal_extrinsics="true">
     <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
   </xacro:sensor_d435>
 

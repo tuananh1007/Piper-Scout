@@ -1,0 +1,54 @@
+# ROS 2 Humble development container for the Piper+Scout workspace.
+# Lets us run Phase 0 code on an Ubuntu 20.04 host (which can't get ros-humble-*
+# from apt directly). Built once with build_dev.sh; the workspace is bind-mounted
+# in at runtime via compose.dev.yml so edits on the host are immediate.
+
+FROM osrf/ros:humble-desktop-full
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ROS_DISTRO=humble
+
+# Core ROS 2 + MoveIt + ros2_control + sensors
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential cmake git curl gnupg lsb-release \
+      python3-pip python3-colcon-common-extensions python3-vcstool \
+      python3-rosdep python3-argcomplete \
+      ros-humble-moveit ros-humble-moveit-servo ros-humble-moveit-py \
+      ros-humble-ros2-control ros-humble-ros2-controllers \
+      ros-humble-controller-manager \
+      ros-humble-joint-state-publisher ros-humble-joint-state-publisher-gui \
+      ros-humble-rviz2 ros-humble-xacro \
+      ros-humble-nav2-bringup ros-humble-tf2-tools ros-humble-tf-transformations \
+      ros-humble-realsense2-camera ros-humble-realsense2-description \
+      ros-humble-rqt-gui ros-humble-rqt-graph ros-humble-rqt-image-view \
+      libopencv-dev python3-opencv \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pipeline Python deps
+RUN pip3 install --no-cache-dir \
+      numpy scipy scikit-image scikit-learn networkx \
+      open3d \
+      ultralytics \
+      'transforms3d>=0.4'
+
+# Optional Grounded-SAM stack — installed lazily by the user when they have
+# the checkpoints (see the README in scout_piper_bringup). Heavy install,
+# skipped by default to keep the dev container svelte.
+# RUN pip3 install groundingdino-py segment-anything
+
+WORKDIR /workspace
+
+# Drop into a user that matches the host UID (set at build time)
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd --gid $USER_GID dev 2>/dev/null || true && \
+    useradd --uid $USER_UID --gid $USER_GID --shell /bin/bash --create-home dev 2>/dev/null || true && \
+    echo "dev ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    chown -R dev:dev /workspace
+
+USER dev
+ENV HOME=/home/dev
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc && \
+    echo "[[ -f /workspace/install/setup.bash ]] && source /workspace/install/setup.bash" >> ~/.bashrc
+
+CMD ["/bin/bash"]

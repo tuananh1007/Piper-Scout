@@ -20,11 +20,16 @@
 
   <!-- Upstream (pulled in via vcs import from repos.yaml) -->
   <exec_depend>piper</exec_depend>
-  <exec_depend>piper_control</exec_depend>
-  <exec_depend>piper_moveit</exec_depend>
+  <exec_depend>piper_humble</exec_depend>
+  <exec_depend>piper_with_gripper_moveit</exec_depend>
+  <exec_depend>piper_description</exec_depend>
+  <exec_depend>piper_msgs</exec_depend>
   <exec_depend>scout_base</exec_depend>
+  <exec_depend>scout_description</exec_depend>
+  <exec_depend>scout_msgs</exec_depend>
   <exec_depend>scout_nav2</exec_depend>
   <exec_depend>realsense2_camera</exec_depend>
+  <exec_depend>realsense2_description</exec_depend>
 
   <!-- ROS 2 stack -->
   <exec_depend>robot_state_publisher</exec_depend>

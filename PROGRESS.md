@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-17 (Phase 0 algorithm ports advanced; Phase 1 scaffolding shipped)
+**Last updated:** 2026-05-17 (vcs import done; upstream refs fixed; Docker dev env ready)
 
 ## Legend
 
@@ -29,9 +29,13 @@
 | P0.1.2 | Write `repos.yaml` vcs-import manifest for upstream packages | ☑ | 2026-05-16; pins humble/main branches |
 | P0.1.3 | Write workspace `README.md` + `PHASE0_CHECKLIST.md` | ☑ | 2026-05-16 |
 | P0.1.4 | Add `.gitignore`, `build_workspace.sh`, `setup_env.sh` helpers | ☑ | 2026-05-16 |
-| P0.1.5 | Run `vcs import src < repos.yaml` and verify all four repos clone | ☐ | User action — needs network |
-| P0.1.6 | `rosdep install --from-paths src --ignore-src -r -y` | ☐ | User action |
-| P0.1.7 | First successful `colcon build --symlink-install` | ☐ | Confirms upstream + ours compile together |
+| P0.1.5 | Run `vcs import src < repos.yaml` and verify all four repos clone | ☑ | 2026-05-17 — 4/4 cloned (piper_ros@humble, scout_ros2@humble, scout_nav2@main, realsense-ros@ros2-development) |
+| P0.1.6 | `rosdep install --from-paths src --ignore-src -r -y` | ⊝ | Pre-baked in Docker image; not needed at host level |
+| P0.1.7 | First successful `colcon build --symlink-install` | ☐ | Will run inside dev container after `./docker/build_dev.sh` |
+| P0.1.8 | `vcstool` + `colcon` installed via `pip3 --user` | ☑ | 2026-05-17 |
+| P0.1.9 | Docker + nvidia-container-toolkit install script | ☑ | 2026-05-17 — `Codes/scripts/install_docker_nvidia.sh` |
+| P0.1.10 | Phase 0 dev Dockerfile + compose + build script | ☑ | 2026-05-17 — `Codes/docker/{Dockerfile.dev,compose.dev.yml,build_dev.sh,README.md}` |
+| P0.1.11 | Fix upstream package-name references after vcs import | ☑ | 2026-05-17 — `piper_humble`, `piper_with_gripper_moveit`, `scout_nav2/nav2.launch.py` |
 
 ### P0.2 — Unified URDF (scout_piper_description)
 
@@ -39,7 +43,7 @@
 |---|---|---|---|
 | P0.2.1 | Package skeleton (package.xml, CMakeLists.txt) | ☑ | ament_cmake |
 | P0.2.2 | `scout_piper.urdf.xacro` composing scout_description + piper_description + realsense | ☑ | Verify upstream paths after vcs import |
-| P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ☐ | May require prefix arg on piper xacro |
+| P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ✗ | 2026-05-17 — upstream piper_description.xacro hardcodes `base_link` + `world` with no `prefix` arg → collides with scout_v2.xacro. v0 URDF (Scout-only) shipped; fork piper xacro into `scout_piper_description/urdf/_piper_arm.xacro` with prefixed link names |
 | P0.2.4 | `view_robot.launch.py` + RViz config — visualize unified model | ☑ | Needs upstream meshes |
 | P0.2.5 | Visual sanity: arm reaches expected workspace from Scout top plate | ☐ | After P0.2.3 |
 | P0.2.6 | Add hand-eye TF (camera → link6) from existing calibration_samples.yaml | ☐ | Port [`../calibration_transform.py`](../calibration_transform.py) |
@@ -78,8 +82,8 @@
 | P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☑ | 2026-05-17 — drives `core.FullAdaptiveServoController` and publishes TwistStamped |
 | P0.4.13 | Iterative approach state machine | ☐ | ROS 1 lines ~1070–1220 |
 | P0.4.14 | Multi-view capture ring + ICP merge | ⊝ | Deferred to Phase 4 (replaced by NBV+VGGT) |
-| P0.4.15 | `segmentation_node` YOLO seg path | ☐ | Largest remaining chunk |
-| P0.4.16 | `segmentation_node` Grounded-SAM + target_caption path | ☐ | |
+| P0.4.15 | `segmentation_node` YOLO seg path | ☑ | 2026-05-17 — full port |
+| P0.4.16 | `segmentation_node` Grounded-SAM + target_caption path | ☑ | 2026-05-17 — full port incl. context prompts, union mode, target backprojection |
 | P0.4.17 | `pointcloud_node` mask-gated cloud filtering + `/static_cloud_out` | ☑ | 2026-05-17 — full port; output_frame configurable |
 | P0.4.18 | `pipeline_node` smoke test (no hardware) | ☑ | `test_pipeline_smoke.py` (expanded 2026-05-17 with servo + skeleton tests) |
 | P0.4.19 | End-to-end smoke: pipeline runs on bag file of ROS 1 data | ☐ | Use `rosbags` converter |

@@ -130,7 +130,8 @@ def _launch_setup(context, *args, **kwargs):
     moveit = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("piper_moveit"), "launch", "demo.launch.py"]
+                [FindPackageShare("piper_with_gripper_moveit"),
+                 "launch", "demo.launch.py"]
             )
         ),
         condition=IfCondition(LaunchConfiguration("bringup_arm")),
@@ -177,7 +178,7 @@ def _launch_setup(context, *args, **kwargs):
     nav2 = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
-                [FindPackageShare("scout_nav2"), "launch", "navigation.launch.py"]
+                [FindPackageShare("scout_nav2"), "launch", "nav2.launch.py"]
             )
         ),
         condition=IfCondition(LaunchConfiguration("bringup_nav2")),

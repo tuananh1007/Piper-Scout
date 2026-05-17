@@ -1,0 +1,41 @@
+# Dev compose for the Piper+Scout ROS 2 Humble workspace.
+# Usage:
+#   cd Codes
+#   ./docker/build_dev.sh
+#   docker compose -f docker/compose.dev.yml run --rm dev
+#
+# Inside the container:
+#   colcon build --symlink-install
+#   ros2 launch scout_piper_description view_robot.launch.py
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
+      args:
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    image: piper-scout-dev:humble
+    container_name: piper-scout-dev
+    network_mode: host
+    ipc: host
+    privileged: true
+    runtime: nvidia                # requires nvidia-container-toolkit on host
+    environment:
+      DISPLAY: ${DISPLAY:-:0}
+      QT_X11_NO_MITSHM: "1"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+    volumes:
+      - ..:/workspace                                                # workspace bind-mount
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw                             # X11 for RViz
+      - /dev/dri:/dev/dri                                            # GPU passthrough
+      - ${HOME}/.Xauthority:/home/dev/.Xauthority:ro                 # X auth
+      - /dev/bus/usb:/dev/bus/usb                                    # RealSense USB
+      - /sys/class/net:/sys/class/net                                # CAN ifaces visible
+    working_dir: /workspace
+    tty: true
+    stdin_open: true
+    command: /bin/bash

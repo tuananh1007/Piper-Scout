@@ -26,30 +26,30 @@ Upstream packages will be cloned into `src/` by `vcs import`:
 
 ## Quick start
 
+The workstation runs Ubuntu 20.04, which doesn't have apt packages for ROS 2
+Humble. Everything below runs inside a Docker dev container (see
+[`docker/README.md`](docker/README.md)).
+
 ```bash
 cd /home/sciarm/agilex/piper_ros/Piper_Scout_ws/Codes
 
-# 1. Source ROS 2 Humble
-source /opt/ros/humble/setup.bash
+# 1. (once) Install Docker + nvidia-container-toolkit on the host
+./scripts/install_docker_nvidia.sh
 
-# 2. Pull upstream packages
-sudo apt install -y python3-vcstool python3-colcon-common-extensions
-vcs import src < repos.yaml
+# 2. (once) Pull upstream packages (no sudo, no ROS 2 needed)
+PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml
 
-# 3. Install dependencies
-rosdep install --from-paths src --ignore-src -r -y
+# 3. (once) Build the dev container
+./docker/build_dev.sh
 
-# 4. Build
+# 4. Drop into the container — workspace bind-mounted at /workspace
+docker compose -f docker/compose.dev.yml run --rm dev
+
+# Inside the container:
 colcon build --symlink-install
-
-# 5. Source workspace
 source install/setup.bash
-
-# 6. Launch (simulation / no hardware)
-ros2 launch scout_piper_bringup full_system.launch.py use_sim:=true
-
-# 7. Launch (hardware)
-ros2 launch scout_piper_bringup full_system.launch.py
+ros2 launch scout_piper_description view_robot.launch.py     # URDF viz
+ros2 launch scout_piper_bringup full_system.launch.py        # full bringup
 ```
 
 See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
