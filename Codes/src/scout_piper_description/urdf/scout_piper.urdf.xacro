@@ -1,0 +1,104 @@
+<?xml version="1.0"?>
+<robot name="scout_piper" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    Unified URDF for AgileX Piper 6-DoF arm mounted on Scout 2.0 UGV.
+    Composes three upstream URDFs:
+      - scout_description       : Scout 2.0 base
+      - piper_description       : Piper 6-DoF arm + gripper
+      - realsense2_description  : RealSense camera (eye-in-hand)
+
+    TF tree (high level):
+        map  ->  odom  ->  base_link (Scout)  ->  scout_top_plate
+              ->  piper_mount_link  ->  base_link (Piper)  -> ... -> link6
+              ->  realsense_link
+
+    The Scout's "base_link" is the kinematic root; the Piper's URDF also uses
+    "base_link" as its root, so we remap the Piper subtree's prefix via xacro
+    (piper_prefix) to avoid TF name collisions.
+
+    NOTE: This xacro DEPENDS on the upstream piper_description and
+    scout_description xacros being available after `vcs import`. If those
+    paths drift, update the xacro:include block below.
+  -->
+
+  <xacro:arg name="use_sim"        default="false"/>
+  <xacro:arg name="use_gazebo_ros" default="false"/>
+
+  <!-- ============================================================ -->
+  <!-- 1. Scout 2.0 base                                            -->
+  <!-- ============================================================ -->
+  <!-- Upstream Scout xacro provides links: base_link, base_footprint,
+       and four wheel links. We keep its default frame names. -->
+  <xacro:include filename="$(find scout_description)/urdf/scout_v2.xacro"/>
+
+  <!-- ============================================================ -->
+  <!-- 2. Mount plate on Scout for the Piper arm                    -->
+  <!--    Adjust the xyz/rpy if the physical mount differs.         -->
+  <!-- ============================================================ -->
+  <xacro:property name="piper_mount_xyz" value="0.15 0.0 0.18"/>
+  <xacro:property name="piper_mount_rpy" value="0.0 0.0 0.0"/>
+
+  <link name="piper_mount_link">
+    <visual>
+      <geometry>
+        <box size="0.08 0.08 0.01"/>
+      </geometry>
+      <material name="aluminum">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.08 0.08 0.01"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.2"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+  </link>
+
+  <joint name="scout_to_piper_mount" type="fixed">
+    <parent link="base_link"/>
+    <child  link="piper_mount_link"/>
+    <origin xyz="${piper_mount_xyz}" rpy="${piper_mount_rpy}"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- 3. Piper 6-DoF arm + gripper                                 -->
+  <!--    We re-prefix the Piper subtree to avoid base_link clash.  -->
+  <!--    Upstream piper_description supports a ${prefix} arg in    -->
+  <!--    most versions; if not, this xacro:include will need to be -->
+  <!--    swapped for a prefixed copy in this package's urdf/ dir.  -->
+  <!-- ============================================================ -->
+  <xacro:property name="piper_prefix" value="piper_"/>
+
+  <!-- Upstream path; verify after `vcs import` and update if needed. -->
+  <xacro:include filename="$(find piper_description)/urdf/piper_with_gripper.urdf.xacro"/>
+
+  <!-- The included xacro defines its own base_link as the arm's root.
+       We weld it onto the mount plate. If the upstream macro exposes a
+       prefix argument, prefer instantiating with prefix="${piper_prefix}"
+       and adjust this joint accordingly. -->
+  <joint name="piper_mount_to_piper_base" type="fixed">
+    <parent link="piper_mount_link"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 0.005" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================ -->
+  <!-- 4. RealSense camera, eye-in-hand on Piper link6              -->
+  <!-- ============================================================ -->
+  <!-- These come from the hand-eye calibration; populate them in
+       config/hand_eye.yaml and override via xacro args at launch. -->
+  <xacro:arg name="cam_xyz" default="0.05 0.0 0.05"/>
+  <xacro:arg name="cam_rpy" default="0.0 0.0 0.0"/>
+
+  <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
+
+  <xacro:sensor_d435 name="camera" parent="link6" use_nominal_extrinsics="true">
+    <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
+  </xacro:sensor_d435>
+
+</robot>

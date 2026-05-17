@@ -1,0 +1,17 @@
+repositories:
+  piper_ros:
+    type: git
+    url: https://github.com/agilexrobotics/piper_ros.git
+    version: humble
+  scout_ros2:
+    type: git
+    url: https://github.com/agilexrobotics/scout_ros2.git
+    version: humble
+  scout_nav2:
+    type: git
+    url: https://github.com/AIRLab-POLIMI/scout_nav2.git
+    version: main
+  realsense-ros:
+    type: git
+    url: https://github.com/IntelRealSense/realsense-ros.git
+    version: ros2-development

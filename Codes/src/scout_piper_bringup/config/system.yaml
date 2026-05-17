@@ -1,0 +1,123 @@
+# scout_piper_bringup/config/system.yaml
+#
+# Top-level system parameters consumed by full_system.launch.py.
+# Mirrors the argument names of the ROS 1 stem_grasp_ros1.launch where possible
+# so existing tuning carries over.
+
+/**:
+  ros__parameters:
+    use_sim_time: false
+
+# ----------------------------------------------------------------------------
+# Arm (Piper) — CAN interface + control rates
+# ----------------------------------------------------------------------------
+piper_driver:
+  ros__parameters:
+    can_interface: "can0"          # Set with `find_all_can_port.sh`
+    auto_enable: true
+    # Conservative defaults; matches startup_zero_* args in ROS 1 launch.
+    default_joint_speed: 20
+    default_pose_speed: 20
+    startup_zero_speed: 12
+    startup_zero_duration_sec: 12.0
+    go_zero_speed: 12
+    zero_joint_threshold_rad: 0.08
+
+# ----------------------------------------------------------------------------
+# Scout base — CAN interface
+# ----------------------------------------------------------------------------
+scout_driver:
+  ros__parameters:
+    port_name: "can1"              # Distinct from Piper to avoid bus contention
+    odom_frame: "odom"
+    base_frame: "base_link"
+    simulated_robot: false
+
+# ----------------------------------------------------------------------------
+# Stem-grasp pipeline (ports the dense ROS 1 launch arguments)
+# ----------------------------------------------------------------------------
+stem_grasp_pipeline:
+  ros__parameters:
+    # --- Loop rates ---
+    outer_loop_hz: 5.0
+    inner_loop_hz: 100.0
+
+    # --- Frames ---
+    planning_frame: "piper_base_link"
+    eef_frame: "piper_link6"
+    camera_optical_frame: "camera_color_optical_frame"
+    move_group: "arm"
+
+    # --- Segmentation ---
+    mask_mode: "yolo_seg"
+    enable_depth_prefilter: false
+    enable_depth_postfilter: true
+    segmentation_min_depth_m: 0.05
+    segmentation_max_depth_m: 1.20
+    text_prompt: "branch"
+    target_caption: "leaf"
+    target_min_pixels: 30
+    instance_selection_mode: "highest_conf"
+    selection_frame: "base_link"
+    depth_topic: "/camera/depth/image_rect_raw"
+    min_valid_depth_pixels: 50
+
+    # --- YOLO ---
+    yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
+    yolo_conf: 0.15
+    yolo_iou: 0.45
+    yolo_stem_class_id: 58           # COCO potted plant
+    yolo_imgsz: 960
+    yolo_mask_threshold: 0.25
+
+    # --- Mask post ---
+    mask_dilate_kernel: 3
+    mask_dilate_iterations: 1
+
+    # --- Grounding ---
+    enable_vesselness_fusion: false
+    vessel_sigma_min: 1.0
+    vessel_sigma_max: 2.0
+    vessel_sigma_step: 0.5
+    vessel_threshold: 0.1
+    vessel_roi_dilate_px: 100
+    vessel_downsample: 2
+    enable_context_prompt: false
+    context_prompt_fallback_to_base: true
+
+    # --- Iterative approach ---
+    approach_target_distance: 0.25
+    approach_step: 0.05
+    approach_max_steps: 8
+    approach_settle_sec: 0.4
+    approach_distance_tolerance: 0.01
+    approach_mask_wait_sec: 2.0
+    approach_min_leaf_pixels: 60
+    approach_goal_orientation_tolerance: 0.05
+
+    # --- Skeleton stability ---
+    skeleton_min_stem_points: 6
+    skeleton_max_endpoint_jump_m: 0.05
+    skeleton_cache_max_age_sec: 2.0
+
+    # --- Planning (Phase 0: still MoveIt 2 OMPL; Phase 3 replaces with cuMotion) ---
+    goal_position_tolerance: 0.01
+    goal_orientation_tolerance: 0.35
+    target_position_offset_m: 0.12
+    velocity_scale: 0.12
+    acceleration_scale: 0.12
+    grasp_strategy: "nearest_target"
+    target_point_timeout_sec: 3.5
+
+    # --- Multi-view capture (kept off by default in Phase 0) ---
+    enable_autonomous_viewpoint_capture: false
+    capture_ring_views: 8
+    capture_ring_arc_deg: 160.0
+    capture_min_viewpoint_separation_deg: 20.0
+
+    # --- Force / safety ---
+    max_force_n: 2.0
+    contact_threshold_n: 0.15
+
+    # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
+    servo_cmd_topic: "/servo_node/delta_twist_cmds"

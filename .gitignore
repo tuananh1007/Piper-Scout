@@ -1,0 +1,36 @@
+# Repo-root ignores (the `Codes/` subdir has its own .gitignore too)
+
+# colcon outputs
+Codes/build/
+Codes/install/
+Codes/log/
+
+# vcs-imported upstream sources — tracked via Codes/repos.yaml only
+Codes/src/piper_ros/
+Codes/src/scout_ros2/
+Codes/src/scout_nav2/
+Codes/src/realsense-ros/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+.venv/
+venv/
+
+# Local-machine configuration
+**/config/hand_eye.local.yaml
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>scout_piper_bringup</name>
+  <version>0.0.1</version>
+  <description>Integrated bringup launch for Scout 2.0 + Piper arm + RealSense + MoveIt 2 + Nav2 + stem_grasp pipeline (ROS 2 Humble).</description>
+  <maintainer email="sciarm@todo.todo">sciarm</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>launch_xml</exec_depend>
+  <exec_depend>launch_yaml</exec_depend>
+  <exec_depend>xacro</exec_depend>
+
+  <!-- Our own packages -->
+  <exec_depend>scout_piper_description</exec_depend>
+  <exec_depend>stem_grasp</exec_depend>
+
+  <!-- Upstream (pulled in via vcs import from repos.yaml) -->
+  <exec_depend>piper</exec_depend>
+  <exec_depend>piper_control</exec_depend>
+  <exec_depend>piper_moveit</exec_depend>
+  <exec_depend>scout_base</exec_depend>
+  <exec_depend>scout_nav2</exec_depend>
+  <exec_depend>realsense2_camera</exec_depend>
+
+  <!-- ROS 2 stack -->
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>ros2_control</exec_depend>
+  <exec_depend>controller_manager</exec_depend>
+  <exec_depend>moveit_ros_move_group</exec_depend>
+  <exec_depend>moveit_servo</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

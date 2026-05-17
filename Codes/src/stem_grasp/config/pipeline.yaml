@@ -1,0 +1,57 @@
+# stem_grasp/config/pipeline.yaml
+#
+# Standalone defaults for the pipeline nodes (used when launched via
+# `ros2 launch stem_grasp stem_grasp.launch.py`). When launched as part
+# of the full bringup, scout_piper_bringup/config/system.yaml overrides
+# these.
+
+stem_grasp_pipeline:
+  ros__parameters:
+    outer_loop_hz: 5.0
+    inner_loop_hz: 100.0
+    planning_frame: "piper_base_link"
+    eef_frame: "piper_link6"
+    camera_optical_frame: "camera_color_optical_frame"
+    move_group: "arm"
+    max_force_n: 2.0
+    contact_threshold_n: 0.15
+    approach_target_distance: 0.25
+    approach_step: 0.05
+    approach_max_steps: 8
+    approach_settle_sec: 0.4
+    approach_distance_tolerance: 0.01
+    approach_mask_wait_sec: 2.0
+    approach_min_leaf_pixels: 60
+    approach_goal_orientation_tolerance: 0.05
+    skeleton_min_stem_points: 6
+    skeleton_max_endpoint_jump_m: 0.05
+    skeleton_cache_max_age_sec: 2.0
+    goal_position_tolerance: 0.01
+    goal_orientation_tolerance: 0.35
+    target_position_offset_m: 0.12
+    velocity_scale: 0.12
+    acceleration_scale: 0.12
+    grasp_strategy: "nearest_target"
+    target_point_timeout_sec: 3.5
+    servo_cmd_topic: "/servo_node/delta_twist_cmds"
+
+stem_grasp_segmentation:
+  ros__parameters:
+    mask_mode: "yolo_seg"
+    text_prompt: "branch"
+    target_caption: "leaf"
+    target_min_pixels: 30
+    segmentation_min_depth_m: 0.05
+    segmentation_max_depth_m: 1.20
+    yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
+    yolo_conf: 0.15
+    yolo_iou: 0.45
+    yolo_imgsz: 960
+    yolo_mask_threshold: 0.25
+    grounded_sam_every_n_frames: 5
+    segment_only_when_stationary: true
+
+stem_grasp_pointcloud:
+  ros__parameters:
+    depth_topic: "/camera/depth/image_rect_raw"
+    min_valid_depth_pixels: 50

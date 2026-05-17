@@ -1,0 +1,29 @@
+# colcon
+build/
+install/
+log/
+
+# vcs-imported upstream sources — track via repos.yaml only
+src/piper_ros/
+src/scout_ros2/
+src/scout_nav2/
+src/realsense-ros/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Local hand-eye calibration (machine-specific)
+**/config/hand_eye.local.yaml
+
+# OS
+.DS_Store
+*.swp

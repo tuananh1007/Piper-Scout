@@ -1,0 +1,3 @@
+# Placeholder. Meshes are pulled from upstream piper_description and
+# scout_description via xacro:include in urdf/scout_piper.urdf.xacro.
+# Drop custom mount meshes here if the printed mount plate differs.
