@@ -61,8 +61,10 @@
 | P0.3.6 | Verify Scout base driver alone launches and `/cmd_vel` moves wheels | ☐ | Requires hardware + CAN1 |
 | P0.3.7 | Verify both drivers run simultaneously without CAN contention | ☐ | |
 | P0.3.8 | RealSense launches with aligned depth + point cloud | ☐ | |
-| P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☐ | |
+| P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☐ | Run separately: `ros2 launch piper_with_gripper_moveit demo.launch.py` |
 | P0.3.10 | All six subsystems running concurrently with stable TF tree | ☐ | Phase 0 exit gate |
+| P0.3.11 | Hardware-free defaults — `full_system.launch.py` boots without CAN/USB | ☑ | 2026-05-17 — bringup_arm/base/camera default false; jsp_gui auto-spawned for URDF sliders |
+| P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3 unifies via cuMotion |
 
 ### P0.4 — stem_grasp ROS 2 port
 

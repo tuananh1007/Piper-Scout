@@ -41,18 +41,18 @@ def _declare_args():
         ),
         DeclareLaunchArgument(
             "bringup_arm",
-            default_value="true",
-            description="Launch the Piper arm driver + MoveIt 2.",
+            default_value="false",
+            description="Launch the Piper arm driver + MoveIt 2. Requires CAN0 hardware.",
         ),
         DeclareLaunchArgument(
             "bringup_base",
-            default_value="true",
-            description="Launch the Scout base driver.",
+            default_value="false",
+            description="Launch the Scout base driver. Requires CAN1 hardware.",
         ),
         DeclareLaunchArgument(
             "bringup_camera",
-            default_value="true",
-            description="Launch the RealSense camera driver.",
+            default_value="false",
+            description="Launch the RealSense camera driver. Requires USB camera.",
         ),
         DeclareLaunchArgument(
             "bringup_nav2",
@@ -74,6 +74,11 @@ def _declare_args():
             "bringup_rviz",
             default_value="true",
             description="Open RViz with the integrated config.",
+        ),
+        DeclareLaunchArgument(
+            "bringup_jsp_gui",
+            default_value="true",
+            description="Launch joint_state_publisher_gui sliders (only when bringup_arm:=false).",
         ),
         DeclareLaunchArgument(
             "system_params",
@@ -124,21 +129,18 @@ def _launch_setup(context, *args, **kwargs):
         ),
         condition=IfCondition(LaunchConfiguration("bringup_arm")),
         launch_arguments={
-            "can_interface": "can0",
-            "use_sim_time": use_sim,
+            "can_port": "can0",
+            "auto_enable": "true",
         }.items(),
     )
 
-    moveit = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [FindPackageShare("piper_with_gripper_moveit"),
-                 "launch", "demo.launch.py"]
-            )
-        ),
-        condition=IfCondition(LaunchConfiguration("bringup_arm")),
-        launch_arguments={"use_sim_time": use_sim}.items(),
-    )
+    # NOTE: MoveIt 2 is intentionally NOT included here. piper_with_gripper_moveit's
+    # demo.launch.py spawns its own robot_state_publisher with the standalone Piper
+    # URDF, which conflicts with our unified scout_piper URDF on /robot_description.
+    # Run it separately in another terminal:
+    #     ros2 launch piper_with_gripper_moveit demo.launch.py
+    # Phase 3 (whole-body MPC + cuMotion) replaces this with a unified planner that
+    # uses our forked URDF natively.
 
     # ----------------------------------------------------------------------
     # 3. Scout base driver
@@ -244,10 +246,18 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
     )
 
+    # Joint sliders for testing the URDF without the real arm driver.
+    # Suppressed when bringup_arm:=true since the real driver publishes joint_states.
+    jsp_gui = Node(
+        package="joint_state_publisher_gui",
+        executable="joint_state_publisher_gui",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("bringup_jsp_gui")),
+    )
+
     return [
         robot_state_publisher,
         arm_driver,
-        moveit,
         base_driver,
         camera,
         nav2,
@@ -256,6 +266,7 @@ def _launch_setup(context, *args, **kwargs):
         pointcloud,
         pipeline,
         rviz,
+        jsp_gui,
     ]
 
 
