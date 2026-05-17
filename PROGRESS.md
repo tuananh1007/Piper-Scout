@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-17 (P0.3 verified — bringup runs end-to-end on the dev container)
+**Last updated:** 2026-05-17 (Phase 1 plumbing smoke test ready; Isaac ROS apt install script ready)
 
 ## Legend
 
@@ -149,8 +149,9 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ☐ | Docker or native |
-| P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☐ | |
+| P1.1.0 | Plumbing smoke test (synthetic mask + class_demux, no nvblox) | ☑ | 2026-05-17 — `test_class_demux.launch.py` + `test_mask_publisher.py` |
+| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ◐ | 2026-05-17 — `scripts/install_isaac_ros_apt.sh` ready; user runs inside dev container. NVIDIA Isaac ROS now apt-distributed, not docker-image-distributed (changed mid-2024) |
+| P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☐ | Needs P1.1.1 done + RealSense plugged in |
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
 | P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
 
