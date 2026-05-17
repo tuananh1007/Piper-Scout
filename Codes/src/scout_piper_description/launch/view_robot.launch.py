@@ -14,6 +14,7 @@ from launch.substitutions import (
     PathJoinSubstitution,
 )
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -23,12 +24,9 @@ def generate_launch_description():
     xacro_path = PathJoinSubstitution([pkg_share, "urdf", "scout_piper.urdf.xacro"])
     rviz_config = PathJoinSubstitution([pkg_share, "rviz", "view_robot.rviz"])
 
-    robot_description_content = Command(
-        [
-            FindExecutable(name="xacro"),
-            " ",
-            xacro_path,
-        ]
+    robot_description_content = ParameterValue(
+        Command([FindExecutable(name="xacro"), " ", xacro_path]),
+        value_type=str,
     )
 
     use_gui_arg = DeclareLaunchArgument(
