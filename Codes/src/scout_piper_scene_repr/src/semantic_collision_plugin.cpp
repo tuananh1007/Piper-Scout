@@ -83,6 +83,27 @@ void CollisionEnvSemantic::checkRobotCollision(
   checkRobotCollision(req, res, state);
 }
 
+void CollisionEnvSemantic::checkRobotCollision(
+  const collision_detection::CollisionRequest & req,
+  collision_detection::CollisionResult & res,
+  const moveit::core::RobotState & /*state1*/,
+  const moveit::core::RobotState & state2) const
+{
+  // TODO(P1.4): swept-volume query through per-class ESDFs.
+  // Skeleton: delegate to the single-state check at state2.
+  checkRobotCollision(req, res, state2);
+}
+
+void CollisionEnvSemantic::checkRobotCollision(
+  const collision_detection::CollisionRequest & req,
+  collision_detection::CollisionResult & res,
+  const moveit::core::RobotState & /*state1*/,
+  const moveit::core::RobotState & state2,
+  const collision_detection::AllowedCollisionMatrix & /*acm*/) const
+{
+  checkRobotCollision(req, res, state2);
+}
+
 void CollisionEnvSemantic::distanceSelf(
   const collision_detection::DistanceRequest & /*req*/,
   collision_detection::DistanceResult & res,

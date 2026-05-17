@@ -90,6 +90,24 @@ public:
     const moveit::core::RobotState & state,
     const collision_detection::AllowedCollisionMatrix & acm) const override;
 
+  // Continuous-collision overloads — required pure virtuals on MoveIt Humble.
+  // P1.4 will fill these in with swept-volume queries against the per-class
+  // ESDFs; for now they conservatively delegate to the single-state version
+  // at state2 (the planner's "next" state) so trajectories see at least the
+  // same collisions as a per-waypoint check would.
+  void checkRobotCollision(
+    const collision_detection::CollisionRequest & req,
+    collision_detection::CollisionResult & res,
+    const moveit::core::RobotState & state1,
+    const moveit::core::RobotState & state2) const override;
+
+  void checkRobotCollision(
+    const collision_detection::CollisionRequest & req,
+    collision_detection::CollisionResult & res,
+    const moveit::core::RobotState & state1,
+    const moveit::core::RobotState & state2,
+    const collision_detection::AllowedCollisionMatrix & acm) const override;
+
   void distanceSelf(
     const collision_detection::DistanceRequest & req,
     collision_detection::DistanceResult & res,
