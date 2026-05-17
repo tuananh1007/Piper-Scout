@@ -64,6 +64,12 @@ public:
     const moveit::core::RobotModelConstPtr & robot_model,
     const collision_detection::WorldPtr & world);
 
+  /// Copy-with-new-world constructor — needed by the MoveIt allocator template
+  /// when swapping the underlying World on an existing CollisionEnv.
+  CollisionEnvSemantic(
+    const CollisionEnvSemantic & other,
+    const collision_detection::WorldPtr & world);
+
   ~CollisionEnvSemantic() override = default;
 
   /// Load per-class policies (typically from semantic_classes.yaml).

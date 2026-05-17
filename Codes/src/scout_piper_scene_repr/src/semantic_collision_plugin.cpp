@@ -34,6 +34,14 @@ CollisionEnvSemantic::CollisionEnvSemantic(
 {
 }
 
+CollisionEnvSemantic::CollisionEnvSemantic(
+  const CollisionEnvSemantic & other,
+  const collision_detection::WorldPtr & world)
+: collision_detection::CollisionEnv(other, world)
+, policies_(other.policies_)
+{
+}
+
 void CollisionEnvSemantic::setPolicies(const ClassPolicyMap & policies)
 {
   policies_ = policies;
