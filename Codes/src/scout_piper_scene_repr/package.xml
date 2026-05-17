@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>scout_piper_scene_repr</name>
+  <version>0.0.1</version>
+  <description>Phase 1 — semantic 3D scene representation. Demultiplexes a multi-class segmentation image into per-class depth streams, feeds N parallel nvblox instances, and exposes a MoveIt 2 collision plugin with per-class behaviors (hard / soft / attractor).</description>
+  <maintainer email="tuananh05253@gmail.com">Vu Tuan Anh</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+  <depend>tf2_ros</depend>
+  <depend>pluginlib</depend>
+  <depend>moveit_core</depend>
+  <depend>moveit_ros_planning</depend>
+  <depend>nav_msgs</depend>
+
+  <!-- Pulled via vcs / Isaac ROS install — not via rosdep -->
+  <exec_depend>isaac_ros_nvblox</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+    <moveit_core plugin="${prefix}/plugin_description.xml"/>
+  </export>
+</package>

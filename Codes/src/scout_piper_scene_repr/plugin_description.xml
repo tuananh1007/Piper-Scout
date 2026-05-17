@@ -1,0 +1,12 @@
+<library path="semantic_collision_plugin">
+  <class
+    name="scout_piper_scene_repr/SemanticCollisionDetectorAllocator"
+    type="scout_piper_scene_repr::SemanticCollisionDetectorAllocator"
+    base_class_type="collision_detection::CollisionDetectorAllocator">
+    <description>
+      Per-class semantic collision detector backed by nvblox ESDFs.
+      Class behaviors (hard / soft / attractor) are loaded from
+      semantic_classes.yaml at construction time.
+    </description>
+  </class>
+</library>

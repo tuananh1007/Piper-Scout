@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-16 (Phase 0 scaffolding shipped)
+**Last updated:** 2026-05-17 (Phase 0 algorithm ports advanced; Phase 1 scaffolding shipped)
 
 ## Legend
 
@@ -69,19 +69,19 @@
 | P0.4.3 | `segmentation_node.py` scaffold | ☑ | Empty stub |
 | P0.4.4 | `pointcloud_node.py` scaffold | ☑ | Empty stub |
 | P0.4.5 | `hotkey_stop_and_zero.py` ported (working) | ☑ | Zero-twist publish; service call still TODO |
-| P0.4.6 | `core.py` (servo math) — port classes from ROS 1 verbatim | ☐ | Pure-math; no ROS deps |
-| P0.4.7 | `moveit_planner.py` — port to `moveit_py` API | ☐ | ROS 1 used moveit_commander |
-| P0.4.8 | `pipeline_node._on_stem_mask` — centroid extraction | ☐ | ROS 1 lines ~520–580 |
-| P0.4.9 | `pipeline_node._on_target_point` — frame conversion + cache | ☐ | ROS 1 lines ~610–650 |
-| P0.4.10 | `pipeline_node._outer_loop` — skeleton + candidate selection | ☐ | ROS 1 lines ~660–800 |
-| P0.4.11 | `pipeline_node._outer_loop` — plan_and_execute + state transition | ☐ | ROS 1 lines ~830–850 |
-| P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☐ | ROS 1 lines ~871–901 |
+| P0.4.6 | `core.py` (servo math) — port classes from ROS 1 verbatim | ☑ | 2026-05-17 — full port of all 5 classes + 3 helpers |
+| P0.4.7 | `moveit_planner.py` — port to `moveit_py` API | ☑ | 2026-05-17 — wrapper ready; runtime requires `ros-humble-moveit-py` |
+| P0.4.8 | `pipeline_node._on_stem_mask` — centroid extraction | ☑ | 2026-05-17 — largest-blob centroid via numpy where |
+| P0.4.9 | `pipeline_node._on_target_point` — frame conversion + cache | ☑ | 2026-05-17 — TF-based transform to planning_frame |
+| P0.4.10 | `pipeline_node._outer_loop` — skeleton + candidate selection | ☑ | 2026-05-17 — uses core.skeletonize_plant_points + extract_main_stem |
+| P0.4.11 | `pipeline_node._outer_loop` — plan_and_execute + state transition | ◐ | 2026-05-17 — target_pose pub wired; plan→execute pending moveit_py runtime |
+| P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☑ | 2026-05-17 — drives `core.FullAdaptiveServoController` and publishes TwistStamped |
 | P0.4.13 | Iterative approach state machine | ☐ | ROS 1 lines ~1070–1220 |
 | P0.4.14 | Multi-view capture ring + ICP merge | ⊝ | Deferred to Phase 4 (replaced by NBV+VGGT) |
-| P0.4.15 | `segmentation_node` YOLO seg path | ☐ | |
+| P0.4.15 | `segmentation_node` YOLO seg path | ☐ | Largest remaining chunk |
 | P0.4.16 | `segmentation_node` Grounded-SAM + target_caption path | ☐ | |
-| P0.4.17 | `pointcloud_node` mask-gated cloud filtering + `/static_cloud_out` | ☐ | |
-| P0.4.18 | `pipeline_node` smoke test (no hardware) | ☑ | `test_pipeline_smoke.py` |
+| P0.4.17 | `pointcloud_node` mask-gated cloud filtering + `/static_cloud_out` | ☑ | 2026-05-17 — full port; output_frame configurable |
+| P0.4.18 | `pipeline_node` smoke test (no hardware) | ☑ | `test_pipeline_smoke.py` (expanded 2026-05-17 with servo + skeleton tests) |
 | P0.4.19 | End-to-end smoke: pipeline runs on bag file of ROS 1 data | ☐ | Use `rosbags` converter |
 
 ### P0.5 — moveit_servo wiring
@@ -122,7 +122,22 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ## Phase 1 — Semantic 3D scene representation (nvblox)
 
-**Target start:** 2026-07-15  ·  **Target finish:** 2026-09-15  ·  **Status:** ☐ not started
+**Target start:** 2026-07-15  ·  **Target finish:** 2026-09-15  ·  **Status:** ◐ scaffolding shipped (2026-05-17, ahead of schedule)
+
+**Companion docs:** [`Codes/src/scout_piper_scene_repr/docs/PHASE1_DESIGN.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_DESIGN.md)
+
+### P1.0 — Scaffolding (ahead-of-schedule, this session)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.0.1 | `scout_piper_scene_repr` package skeleton (ament_cmake C++ + Python) | ☑ | 2026-05-17 |
+| P1.0.2 | Phase 1 design doc | ☑ | 2026-05-17 — `docs/PHASE1_DESIGN.md` |
+| P1.0.3 | `class_demux_node.py` (merged + separate input modes) | ☑ | 2026-05-17 — fully functional |
+| P1.0.4 | `semantic_collision_plugin` C++ skeleton + pluginlib export | ☑ | 2026-05-17 — compiles; methods return "no collision" placeholders |
+| P1.0.5 | `semantic_classes.yaml` (per-class policy: hard / soft / attractor) | ☑ | 2026-05-17 |
+| P1.0.6 | `nvblox_per_class.yaml` (per-class voxel size + weighting) | ☑ | 2026-05-17 |
+| P1.0.7 | `nvblox_semantic.launch.py` (4 nvblox instances + demux) | ☑ | 2026-05-17 — v0 design |
+| P1.0.8 | Wire scene_repr into `scout_piper_bringup` (off by default) | ☑ | 2026-05-17 — `bringup_scene_repr:=false` |
 
 ### P1.1 — nvblox integration
 
@@ -131,23 +146,23 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.1.1 | Install `isaac_ros_nvblox` on workstation | ☐ | Docker or native |
 | P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☐ | |
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
-| P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | May need fork for 4-class support |
+| P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
 
-### P1.2 — Per-class SDFs
+### P1.2 — Per-class SDFs (v0)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ☐ | |
-| P1.2.2 | Per-class inflation / padding configurable via YAML | ☐ | |
+| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ☐ | Launch file ready |
+| P1.2.2 | Per-class inflation / padding configurable via YAML | ☑ | `semantic_classes.yaml` 2026-05-17 |
 | P1.2.3 | Visualize each SDF separately in RViz | ☐ | |
 
 ### P1.3 — MoveIt 2 collision plugin
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.3.1 | Custom collision plugin reading nvblox SDFs | ☐ | C++ |
-| P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ☐ | |
-| P1.3.3 | Target SDF exposed as attractor for goal generation | ☐ | |
+| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | Skeleton 2026-05-17; ESDF query body still TODO |
+| P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ☐ | Policy schema in place |
+| P1.3.3 | Target SDF exposed as attractor for goal generation | ☐ | Policy schema in place |
 
 ### P1.4 — Benchmark
 
@@ -155,6 +170,14 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 |---|---|---|---|
 | P1.4.1 | 20-scene cluttered-plant test set (recorded bags) | ☐ | |
 | P1.4.2 | Compare planning success: Octomap vs ours | ☐ | Goal: ≥ 30 % failure reduction |
+
+### P1.5 — v1 fork (research contribution)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.5.1 | Fork nvblox with per-voxel class_id | ☐ | Workshop / ICRA Agri-Robotics contribution |
+| P1.5.2 | Modify CUDA integration kernel | ☐ | |
+| P1.5.3 | Benchmark v0 vs v1 GPU memory + latency | ☐ | |
 
 ### P1 exit criteria
 

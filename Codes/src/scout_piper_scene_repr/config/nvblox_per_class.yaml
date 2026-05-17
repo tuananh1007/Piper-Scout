@@ -1,0 +1,19 @@
+# Per-class nvblox tuning. Each class gets its own nvblox node instance
+# (Phase 1 v0). Override by appending per-class args in the launch file.
+
+stem:
+  voxel_size_m: 0.003                  # 3 mm — recover thin stems
+  max_integration_distance_m: 0.8
+  weighting: constant
+branch:
+  voxel_size_m: 0.005
+  max_integration_distance_m: 1.0
+  weighting: constant
+leaf:
+  voxel_size_m: 0.010
+  max_integration_distance_m: 1.0
+  weighting: inverse_square
+target:
+  voxel_size_m: 0.003
+  max_integration_distance_m: 0.5
+  weighting: constant

@@ -1,0 +1,25 @@
+# Per-class collision behavior for the semantic_collision_plugin.
+# Loaded by the C++ plugin at allocator construction and by class_demux_node
+# when policy_yaml_path is set (the demux re-publishes this verbatim on
+# /scene_repr/policy).
+
+classes:
+  stem:
+    label_id: 1
+    behavior: hard
+    padding_m: 0.005           # 5 mm: a hair tighter than the gripper finger tip
+  branch:
+    label_id: 2
+    behavior: hard
+    padding_m: 0.008           # 8 mm: branches are sturdier; less risky to clip
+  leaf:
+    label_id: 3
+    behavior: soft
+    padding_m: 0.0
+    cost_weight: 50.0          # cost units per metre of penetration
+    max_penetration_m: 0.02    # > 2 cm of leaf push-through treated as hard
+  target:
+    label_id: 4
+    behavior: attractor
+    attract_radius_m: 0.10     # within 10 cm, pull the EE in
+    attract_weight: -20.0      # negative cost (lower is better)

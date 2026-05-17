@@ -64,6 +64,12 @@ def _declare_args():
             description="Launch the stem_grasp pipeline node.",
         ),
         DeclareLaunchArgument(
+            "bringup_scene_repr",
+            default_value="false",
+            description="Phase 1 semantic SDF stack (nvblox per-class). Off by "
+                        "default until nvblox is installed.",
+        ),
+        DeclareLaunchArgument(
             "bringup_rviz",
             default_value="true",
             description="Open RViz with the integrated config.",
@@ -209,6 +215,19 @@ def _launch_setup(context, *args, **kwargs):
     )
 
     # ----------------------------------------------------------------------
+    # 6b. Phase 1 semantic scene representation (off by default)
+    # ----------------------------------------------------------------------
+    scene_repr = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [FindPackageShare("scout_piper_scene_repr"),
+                 "launch", "nvblox_semantic.launch.py"]
+            )
+        ),
+        condition=IfCondition(LaunchConfiguration("bringup_scene_repr")),
+    )
+
+    # ----------------------------------------------------------------------
     # 7. RViz
     # ----------------------------------------------------------------------
     rviz = Node(
@@ -229,6 +248,7 @@ def _launch_setup(context, *args, **kwargs):
         base_driver,
         camera,
         nav2,
+        scene_repr,
         segmentation,
         pointcloud,
         pipeline,
