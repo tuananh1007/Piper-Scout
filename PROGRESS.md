@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-17 (workspace builds; Piper arm forked + integrated into unified URDF)
+**Last updated:** 2026-05-17 (P0.3 verified — bringup runs end-to-end on the dev container)
 
 ## Legend
 
@@ -62,7 +62,7 @@
 | P0.3.7 | Verify both drivers run simultaneously without CAN contention | ☐ | |
 | P0.3.8 | RealSense launches with aligned depth + point cloud | ☐ | |
 | P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☐ | Run separately: `ros2 launch piper_with_gripper_moveit demo.launch.py` |
-| P0.3.10 | All six subsystems running concurrently with stable TF tree | ☐ | Phase 0 exit gate |
+| P0.3.10 | All six subsystems running concurrently with stable TF tree | ◐ | 2026-05-17 — verified for: RSP (unified URDF), stem_grasp (pipeline/segmentation/pointcloud), RViz, jsp_gui. Pending: arm/base/camera (need hardware). Phase 0 exit gate. |
 | P0.3.11 | Hardware-free defaults — `full_system.launch.py` boots without CAN/USB | ☑ | 2026-05-17 — bringup_arm/base/camera default false; jsp_gui auto-spawned for URDF sliders |
 | P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3 unifies via cuMotion |
 
