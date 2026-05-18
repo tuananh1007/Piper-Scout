@@ -78,6 +78,17 @@ RUN curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
     apt-get install -y --no-install-recommends libnvvpi4 vpi4-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# magic_enum — single-header C++ reflection-for-enums library. Required by
+# isaac_ros_nitros (links target magic_enum::magic_enum). Not in jammy apt;
+# source-install from GitHub.
+RUN git clone --depth 1 -b v0.9.7 https://github.com/Neargye/magic_enum.git /tmp/magic_enum && \
+    cmake -S /tmp/magic_enum -B /tmp/magic_enum/build \
+      -DMAGIC_ENUM_OPT_INSTALL=ON \
+      -DMAGIC_ENUM_OPT_BUILD_EXAMPLES=OFF \
+      -DMAGIC_ENUM_OPT_BUILD_TESTS=OFF && \
+    cmake --install /tmp/magic_enum/build && \
+    rm -rf /tmp/magic_enum
+
 # Optional Grounded-SAM stack — installed lazily by the user when they have
 # the checkpoints (see the README in scout_piper_bringup). Heavy install,
 # skipped by default to keep the dev container svelte.
