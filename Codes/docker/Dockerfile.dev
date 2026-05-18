@@ -80,13 +80,18 @@ RUN curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
 
 # magic_enum — single-header C++ reflection-for-enums library. Required by
 # isaac_ros_nitros (links target magic_enum::magic_enum). Not in jammy apt;
-# source-install from GitHub.
+# source-install from GitHub. v0.9 changed the install layout to put the
+# header in /usr/local/include/magic_enum/magic_enum.hpp (nested), but
+# NVIDIA's GXF release-3.2 source does `#include "magic_enum.hpp"` expecting
+# it at the include root. Symlink fixes the mismatch without downgrading.
 RUN git clone --depth 1 -b v0.9.7 https://github.com/Neargye/magic_enum.git /tmp/magic_enum && \
     cmake -S /tmp/magic_enum -B /tmp/magic_enum/build \
       -DMAGIC_ENUM_OPT_INSTALL=ON \
       -DMAGIC_ENUM_OPT_BUILD_EXAMPLES=OFF \
-      -DMAGIC_ENUM_OPT_BUILD_TESTS=OFF && \
+      -DMAGIC_ENUM_OPT_BUILD_TESTS=OFF \
+      -DCMAKE_INSTALL_PREFIX=/usr/local && \
     cmake --install /tmp/magic_enum/build && \
+    ln -sfn /usr/local/include/magic_enum/magic_enum.hpp /usr/local/include/magic_enum.hpp && \
     rm -rf /tmp/magic_enum
 
 # Optional Grounded-SAM stack — installed lazily by the user when they have
