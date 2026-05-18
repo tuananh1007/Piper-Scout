@@ -46,7 +46,24 @@ if [[ -f "${VPI_UTILS}" ]]; then
 fi
 
 # ----------------------------------------------------------------------------
-# 3. isaac_ros_nvblox vendors the nvblox CUDA library as a submodule at
+# 3. isaac_ros_nitros: CMakeLists.txt links to magic_enum::magic_enum but
+#    doesn't `find_package(magic_enum)`. The target name gets inherited from
+#    GXF's exported targets but won't resolve until find_package is called
+#    in the consuming project too. Add it next to the other find_packages.
+# ----------------------------------------------------------------------------
+NITROS_CMAKE="${SRC_DIR}/isaac_ros_nitros/isaac_ros_nitros/CMakeLists.txt"
+if [[ -f "${NITROS_CMAKE}" ]]; then
+  if grep -q 'find_package(magic_enum' "${NITROS_CMAKE}"; then
+    echo "isaac_ros_nitros: magic_enum find_package already patched. Skipping."
+  else
+    echo "Patching ${NITROS_CMAKE} → add find_package(magic_enum REQUIRED)"
+    sed -i 's|^\(find_package(vpi REQUIRED)\)$|\1\nfind_package(magic_enum REQUIRED)|' \
+      "${NITROS_CMAKE}"
+  fi
+fi
+
+# ----------------------------------------------------------------------------
+# 4. isaac_ros_nvblox vendors the nvblox CUDA library as a submodule at
 #    nvblox_ros/nvblox_core. vcs import doesn't init submodules; do it here.
 # ----------------------------------------------------------------------------
 NVBLOX_REPO="${SRC_DIR}/isaac_ros_nvblox"
