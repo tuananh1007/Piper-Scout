@@ -10,7 +10,6 @@ src/scout_nav2/
 src/realsense-ros/
 src/ugv_sdk/
 src/isaac_ros_common/
-src/nvblox/
 src/isaac_ros_nvblox/
 
 # tf2_tools view_frames artifacts (often dumped into Codes/)

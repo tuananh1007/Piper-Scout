@@ -22,16 +22,14 @@ repositories:
 
   # ---- NVIDIA Isaac ROS (Phase 1: nvblox semantic SDF) ----
   # Source builds because the apt repo dropped jammy/Humble in Q4 2025.
-  # Tags `release-3.2` (or thereabouts) are the last Humble-targeted ones;
-  # adjust if `release-3.x` tags get deleted from the repos.
+  # Tags `release-3.2` are the last Humble-targeted ones; the nvblox CUDA
+  # library is vendored as a submodule under nvblox_ros/nvblox_core
+  # (pinned to nvblox v0.0.7 by upstream). After `vcs import`, run
+  # `./scripts/patch_upstream.sh` to init that submodule.
   isaac_ros_common:
     type: git
     url: https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_common.git
     version: release-3.2
-  nvblox:
-    type: git
-    url: https://github.com/nvidia-isaac/nvblox.git
-    version: public-v0.0.7
   isaac_ros_nvblox:
     type: git
     url: https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox.git
