@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Installs the NVIDIA Isaac ROS apt repository inside a ROS 2 Humble container
-# and pulls down ros-humble-isaac-ros-nvblox (the precompiled CUDA TSDF + ESDF
+# Installs NVIDIA's Isaac ROS apt repo on Ubuntu 22.04 + ROS 2 Humble and
+# pulls down `ros-humble-isaac-ros-nvblox` (the precompiled CUDA TSDF + ESDF
 # package used by Phase 1).
 #
-# Run this INSIDE the dev container (or as part of Dockerfile.dev once we're
-# happy it works). Requires sudo (the dev user has NOPASSWD configured).
+# Canonical URL pattern (verified against the NVIDIA Isaac ROS docs,
+# 2025-12 release-3.x line):
+#   GPG key : https://isaac.download.nvidia.com/isaac-ros/repos.key
+#   Source  : https://isaac.download.nvidia.com/isaac-ros/release-X.X jammy main
 #
-# Usage:
-#   ./scripts/install_isaac_ros_apt.sh
+# Run INSIDE the piper-scout-dev container (the dev user has NOPASSWD sudo).
 #
-# Reference:
-#   https://nvidia-isaac-ros.github.io/getting_started/setup.html
+# Override the release via env var if needed:
+#   ISAAC_ROS_RELEASE=release-3.1 ./scripts/install_isaac_ros_apt.sh
+#
+# Reference: https://nvidia-isaac-ros.github.io/getting_started/index.html
 
 set -euo pipefail
 
@@ -20,51 +23,60 @@ if [[ ! -f /opt/ros/humble/setup.bash ]]; then
   exit 1
 fi
 
-# Ubuntu 22.04 only — Isaac ROS doesn't ship binaries for 20.04.
 . /etc/os-release
-if [[ "${VERSION_ID}" != "22.04" ]]; then
-  echo "ERROR: Isaac ROS apt requires Ubuntu 22.04 (got ${VERSION_ID})." >&2
+if [[ "${VERSION_CODENAME}" != "jammy" ]]; then
+  echo "ERROR: Isaac ROS apt requires Ubuntu 22.04 (jammy)." >&2
+  echo "       Found ${VERSION_CODENAME} (${VERSION_ID}). Bail out." >&2
   exit 1
 fi
 
-echo "==> Adding NVIDIA Isaac ROS apt key + repository"
-sudo apt-get update -y
-sudo apt-get install -y --no-install-recommends curl gnupg ca-certificates
+ISAAC_ROS_RELEASE="${ISAAC_ROS_RELEASE:-release-3.2}"
+KEYRING="/usr/share/keyrings/nvidia-isaac-ros.gpg"
+SOURCES_LIST="/etc/apt/sources.list.d/nvidia-isaac-ros.list"
 
-# Public Isaac ROS apt repo (anonymous; no NGC key required for release-3.x).
-curl -fsSL https://isaac.download.nvidia.com/isaac-ros/release-3/$(. /etc/os-release && echo "${ID}${VERSION_ID//./}")/isaac-ros.list \
-  | sudo tee /etc/apt/sources.list.d/isaac-ros.list > /dev/null || {
-    echo "WARN: failed to fetch release-3 list, falling back to manual form" >&2
-    echo "deb [trusted=yes] https://isaac.download.nvidia.com/isaac-ros/release-3/ubuntu/$(lsb_release -cs) main" \
-      | sudo tee /etc/apt/sources.list.d/isaac-ros.list > /dev/null
-}
+echo "==> Updating apt cache (preflight)"
+sudo apt-get update -y >/dev/null
 
-curl -fsSL https://isaac.download.nvidia.com/isaac-ros/release-3/isaac-ros.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/isaac-ros-archive-keyring.gpg 2>/dev/null || \
-    echo "(Skipping signed-by key install; trusted=yes used as fallback.)"
+echo "==> Installing prerequisites"
+sudo apt-get install -y --no-install-recommends \
+  curl gnupg ca-certificates
 
-echo "==> Updating apt cache"
-sudo apt-get update -y || {
-  echo "ERROR: apt-get update failed. The Isaac ROS repo URL may have changed." >&2
-  echo "Visit https://nvidia-isaac-ros.github.io/getting_started/setup.html for the current URL." >&2
+echo "==> Adding NVIDIA Isaac ROS GPG key → ${KEYRING}"
+sudo rm -f "${KEYRING}"
+curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key \
+  | sudo gpg --dearmor -o "${KEYRING}"
+sudo chmod 644 "${KEYRING}"
+
+echo "==> Writing apt source: ${SOURCES_LIST} (${ISAAC_ROS_RELEASE} / jammy)"
+echo "deb [signed-by=${KEYRING}] https://isaac.download.nvidia.com/isaac-ros/${ISAAC_ROS_RELEASE} jammy main" \
+  | sudo tee "${SOURCES_LIST}" > /dev/null
+
+echo "==> Updating apt cache (with Isaac ROS)"
+if ! sudo apt-get update -y; then
+  echo >&2
+  echo "ERROR: apt-get update failed AFTER adding the Isaac ROS repo." >&2
+  echo "Most likely the release version is wrong. Try one of:" >&2
+  echo "  ISAAC_ROS_RELEASE=release-3.1 $0" >&2
+  echo "  ISAAC_ROS_RELEASE=release-3.0 $0" >&2
+  echo "Or check the current release list at:" >&2
+  echo "  https://nvidia-isaac-ros.github.io/getting_started/index.html" >&2
   exit 1
+fi
+
+echo "==> Installing ros-humble-isaac-ros-nvblox (pulls CUDA libs + TensorRT)"
+sudo apt-get install -y ros-humble-isaac-ros-nvblox
+
+echo "==> Sanity check — ROS 2 sees the package"
+source /opt/ros/humble/setup.bash
+ros2 pkg list | grep isaac_ros_nvblox || {
+  echo "WARN: ros2 pkg list did not show isaac_ros_nvblox. The install likely" >&2
+  echo "      succeeded but you may need to re-source /opt/ros/humble/setup.bash." >&2
 }
-
-echo "==> Installing nvblox + visual SLAM (optional but useful for Scout Nav)"
-sudo apt-get install -y \
-  ros-humble-isaac-ros-nvblox \
-  || {
-    echo "ERROR: apt install failed. Try: apt list --installed 2>/dev/null | grep isaac" >&2
-    exit 1
-  }
+ros2 pkg executables isaac_ros_nvblox 2>&1 | head -5 || true
 
 echo
-echo "==> Smoke test: locate the nvblox node executable"
-ros2 pkg executables isaac_ros_nvblox 2>&1 | head -3 || \
-  echo "WARN: ros2 pkg executables didn't find isaac_ros_nvblox; check the install."
-
+echo "Done. The nvblox node is at:"
+echo "  \$(ros2 pkg prefix isaac_ros_nvblox)/lib/isaac_ros_nvblox/nvblox_node"
 echo
-echo "Done. Verify with:"
-echo "  source /opt/ros/humble/setup.bash"
-echo "  ros2 pkg list | grep isaac_ros_nvblox"
-echo "  ros2 run isaac_ros_nvblox nvblox_node --help    (or similar)"
+echo "Next:"
+echo "  ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=merged"
