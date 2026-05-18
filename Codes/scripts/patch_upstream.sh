@@ -49,20 +49,24 @@ for VPI_UTILS in \
 done
 
 # ----------------------------------------------------------------------------
-# 3. isaac_ros_nitros: CMakeLists.txt links to magic_enum::magic_enum but
-#    doesn't `find_package(magic_enum)`. The target name gets inherited from
-#    GXF's exported targets but won't resolve until find_package is called
-#    in the consuming project too. Add it next to the other find_packages.
+# 3. isaac_ros_nitros: CMakeLists.txt links to magic_enum::magic_enum and
+#    includes negotiated/negotiated_publisher.hpp, but doesn't call
+#    find_package() for either. ament_auto_find_build_dependencies in NITROS
+#    SHOULD pick them up from package.xml automatically — but doesn't, for
+#    reasons that look like an ament_auto bug. Add explicit find_package
+#    calls next to the existing ones. Idempotent.
 # ----------------------------------------------------------------------------
 NITROS_CMAKE="${SRC_DIR}/isaac_ros_nitros/isaac_ros_nitros/CMakeLists.txt"
 if [[ -f "${NITROS_CMAKE}" ]]; then
-  if grep -q 'find_package(magic_enum' "${NITROS_CMAKE}"; then
-    echo "isaac_ros_nitros: magic_enum find_package already patched. Skipping."
-  else
-    echo "Patching ${NITROS_CMAKE} → add find_package(magic_enum REQUIRED)"
-    sed -i 's|^\(find_package(vpi REQUIRED)\)$|\1\nfind_package(magic_enum REQUIRED)|' \
-      "${NITROS_CMAKE}"
-  fi
+  for PKG in magic_enum negotiated; do
+    if grep -q "find_package(${PKG} " "${NITROS_CMAKE}"; then
+      echo "isaac_ros_nitros: ${PKG} find_package already present. Skipping."
+    else
+      echo "Patching ${NITROS_CMAKE} → add find_package(${PKG} REQUIRED)"
+      sed -i "s|^\(find_package(vpi REQUIRED)\)\$|\1\nfind_package(${PKG} REQUIRED)|" \
+        "${NITROS_CMAKE}"
+    fi
+  done
 fi
 
 # ----------------------------------------------------------------------------
