@@ -46,6 +46,26 @@ RUN pip3 install --no-cache-dir \
       ultralytics \
       'transforms3d>=0.4'
 
+# CUDA toolkit + nvblox build-time deps.
+# Needed because NVIDIA dropped the Isaac ROS apt builds for Ubuntu 22.04 +
+# Humble (Q4 2025 — only release-4.0 / noble + Jazzy is shipping). We build
+# nvblox from source. The runtime CUDA libs come from the host via
+# nvidia-container-toolkit; here we add the toolkit headers + nvcc.
+RUN curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+    -o /tmp/cuda-keyring.deb && \
+    dpkg -i /tmp/cuda-keyring.deb && \
+    rm /tmp/cuda-keyring.deb && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+      cuda-toolkit-12-4 \
+      libgflags-dev libgoogle-glog-dev libsqlite3-dev libbenchmark-dev \
+      libgtest-dev libgmock-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_HOME=/usr/local/cuda-12.4
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
+
 # Optional Grounded-SAM stack — installed lazily by the user when they have
 # the checkpoints (see the README in scout_piper_bringup). Heavy install,
 # skipped by default to keep the dev container svelte.

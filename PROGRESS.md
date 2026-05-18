@@ -150,7 +150,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P1.1.0 | Plumbing smoke test (synthetic mask + class_demux, no nvblox) | ☑ | 2026-05-17 — `test_class_demux.launch.py` + `test_mask_publisher.py` |
-| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ◐ | 2026-05-17 — `scripts/install_isaac_ros_apt.sh` ready; user runs inside dev container. NVIDIA Isaac ROS now apt-distributed, not docker-image-distributed (changed mid-2024) |
+| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ◐ | 2026-05-17 — apt path dead (NVIDIA dropped jammy/Humble Q4 2025; only release-4.0/noble live). Pivoted to source build: Dockerfile.dev now ships CUDA 12.4 dev libs; repos.yaml clones nvblox + isaac_ros_nvblox + isaac_ros_common (release-3.2 tags) for colcon-built. See docs/PHASE1_RUNTIME.md. |
 | P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☐ | Needs P1.1.1 done + RealSense plugged in |
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
 | P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
