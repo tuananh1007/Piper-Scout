@@ -30,7 +30,23 @@ fi
 
 
 # ----------------------------------------------------------------------------
-# 2. isaac_ros_nvblox vendors the nvblox CUDA library as a submodule at
+# 2. isaac_ros_common@release-3.2 was built against VPI 3 and references
+#    VPI_BACKEND_NVENC, which VPI 4 dropped. We have VPI 4 installed (the
+#    only x86_64 jammy VPI NVIDIA still ships). Comment out the NVENC entry.
+# ----------------------------------------------------------------------------
+VPI_UTILS="${SRC_DIR}/isaac_ros_common/isaac_ros_common/src/vpi_utilities.cpp"
+if [[ -f "${VPI_UTILS}" ]]; then
+  if grep -q 'VPI_BACKEND_NVENC' "${VPI_UTILS}" && \
+     ! grep -q '// NVENC removed in VPI 4' "${VPI_UTILS}"; then
+    echo "Patching ${VPI_UTILS} → removing VPI_BACKEND_NVENC entry"
+    sed -i 's|^\(\s*\){"NVENC", VPI_BACKEND_NVENC},$|\1// {"NVENC", VPI_BACKEND_NVENC},  // NVENC removed in VPI 4|' "${VPI_UTILS}"
+  else
+    echo "vpi_utilities.cpp NVENC patch already applied (or upstream changed). Skipping."
+  fi
+fi
+
+# ----------------------------------------------------------------------------
+# 3. isaac_ros_nvblox vendors the nvblox CUDA library as a submodule at
 #    nvblox_ros/nvblox_core. vcs import doesn't init submodules; do it here.
 # ----------------------------------------------------------------------------
 NVBLOX_REPO="${SRC_DIR}/isaac_ros_nvblox"
