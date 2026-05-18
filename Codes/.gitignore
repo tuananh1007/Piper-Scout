@@ -11,6 +11,8 @@ src/realsense-ros/
 src/ugv_sdk/
 src/isaac_ros_common/
 src/isaac_ros_nvblox/
+src/isaac_ros_nitros/
+src/isaac_ros_gxf/
 
 # tf2_tools view_frames artifacts (often dumped into Codes/)
 frames*.gv

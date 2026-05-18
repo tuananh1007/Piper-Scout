@@ -34,3 +34,16 @@ repositories:
     type: git
     url: https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox.git
     version: release-3.2
+  # NITROS = NVIDIA's zero-copy GPU transport for ROS 2. nvblox_ros uses it
+  # for the depth/color image input pipeline (see nvblox_node.hpp).
+  isaac_ros_nitros:
+    type: git
+    url: https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nitros.git
+    version: release-3.2
+  # The NVIDIA Graph Execution Framework. Note: the package is named
+  # `isaac_ros_gxf` (and CMake's find_package looks for that), but the
+  # REPO is just `gxf`. The package.xml inside declares the right name.
+  isaac_ros_gxf:
+    type: git
+    url: https://github.com/NVIDIA-ISAAC-ROS/gxf.git
+    version: release-3.2
