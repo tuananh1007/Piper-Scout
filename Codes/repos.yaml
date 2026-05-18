@@ -47,3 +47,9 @@ repositories:
     type: git
     url: https://github.com/NVIDIA-ISAAC-ROS/gxf.git
     version: release-3.2
+  # ROS topic-format negotiation library — pulled in by isaac_ros_nitros's
+  # nitros_format_agent for selecting compatible publishers/subscribers.
+  negotiated:
+    type: git
+    url: https://github.com/osrf/negotiated.git
+    version: master

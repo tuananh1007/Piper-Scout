@@ -30,20 +30,23 @@ fi
 
 
 # ----------------------------------------------------------------------------
-# 2. isaac_ros_common@release-3.2 was built against VPI 3 and references
-#    VPI_BACKEND_NVENC, which VPI 4 dropped. We have VPI 4 installed (the
-#    only x86_64 jammy VPI NVIDIA still ships). Comment out the NVENC entry.
+# 2. VPI 3→4 NVENC removal. Both isaac_ros_common and isaac_ros_nitros have
+#    their own copy of vpi_utilities.cpp; both reference VPI_BACKEND_NVENC,
+#    which VPI 4 dropped. Comment out the NVENC entry in each.
 # ----------------------------------------------------------------------------
-VPI_UTILS="${SRC_DIR}/isaac_ros_common/isaac_ros_common/src/vpi_utilities.cpp"
-if [[ -f "${VPI_UTILS}" ]]; then
-  if grep -q 'VPI_BACKEND_NVENC' "${VPI_UTILS}" && \
-     ! grep -q '// NVENC removed in VPI 4' "${VPI_UTILS}"; then
-    echo "Patching ${VPI_UTILS} → removing VPI_BACKEND_NVENC entry"
-    sed -i 's|^\(\s*\){"NVENC", VPI_BACKEND_NVENC},$|\1// {"NVENC", VPI_BACKEND_NVENC},  // NVENC removed in VPI 4|' "${VPI_UTILS}"
-  else
-    echo "vpi_utilities.cpp NVENC patch already applied (or upstream changed). Skipping."
+for VPI_UTILS in \
+    "${SRC_DIR}/isaac_ros_common/isaac_ros_common/src/vpi_utilities.cpp" \
+    "${SRC_DIR}/isaac_ros_nitros/isaac_ros_nitros/src/utils/vpi_utilities.cpp" ; do
+  if [[ -f "${VPI_UTILS}" ]]; then
+    if grep -q 'VPI_BACKEND_NVENC' "${VPI_UTILS}" && \
+       ! grep -q '// NVENC removed in VPI 4' "${VPI_UTILS}"; then
+      echo "Patching ${VPI_UTILS} → removing VPI_BACKEND_NVENC entry"
+      sed -i 's|^\(\s*\){"NVENC", VPI_BACKEND_NVENC},$|\1// {"NVENC", VPI_BACKEND_NVENC},  // NVENC removed in VPI 4|' "${VPI_UTILS}"
+    else
+      echo "${VPI_UTILS}: NVENC patch already applied (or upstream changed). Skipping."
+    fi
   fi
-fi
+done
 
 # ----------------------------------------------------------------------------
 # 3. isaac_ros_nitros: CMakeLists.txt links to magic_enum::magic_enum but
