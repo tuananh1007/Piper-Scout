@@ -66,6 +66,18 @@ ENV CUDA_HOME=/usr/local/cuda-12.4
 ENV PATH=${CUDA_HOME}/bin:${PATH}
 ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}
 
+# NVIDIA VPI 4 — required by isaac_ros_common (which is a build-dep of
+# nvblox_ros). VPI x86_64 ships via NVIDIA's Jetson apt repo (counter-
+# intuitively; the Jetson repo is the canonical x86_64 source too per
+# docs.nvidia.com/vpi/installation.html).
+RUN curl -fsSL https://repo.download.nvidia.com/jetson/jetson-ota-public.asc \
+    | gpg --dearmor -o /usr/share/keyrings/nvidia-jetson-ota.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/nvidia-jetson-ota.gpg] https://repo.download.nvidia.com/jetson/x86_64/jammy r38.4 main" \
+    > /etc/apt/sources.list.d/nvidia-vpi.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends libnvvpi4 vpi4-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Optional Grounded-SAM stack — installed lazily by the user when they have
 # the checkpoints (see the README in scout_piper_bringup). Heavy install,
 # skipped by default to keep the dev container svelte.
