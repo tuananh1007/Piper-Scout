@@ -10,7 +10,7 @@ The companion design doc is [`PHASE1_DESIGN.md`](PHASE1_DESIGN.md).
 |---|---|---|
 | `class_demux_node` (Python) | Our dev container | ☑ Built, fully testable today |
 | Synthetic mask publisher (test) | Our dev container | ☑ For plumbing tests without nvblox |
-| `nvblox_node` (Isaac ROS) | Our dev container, **built from source** | ◐ Source build path — see Step 2 below |
+| `nvblox_node` (Isaac ROS) | Our dev container, **built from source** | ☑ Built and validated with RealSense D405 |
 | `semantic_collision_plugin` (C++) | MoveIt 2's move_group | ☑ Built; needs nvblox ESDF API wiring (P1.4) |
 
 ## Why source build, not apt
@@ -92,7 +92,7 @@ accordingly. After it completes:
 ```bash
 source install/setup.bash
 ros2 pkg list | grep nvblox
-ros2 pkg executables isaac_ros_nvblox
+ros2 pkg executables nvblox_ros
 ```
 
 ### 2d — Smoke test nvblox
@@ -101,12 +101,43 @@ Use a sample dataset (one of the publicly available kitti / euroc bags) or
 the included tests:
 
 ```bash
-ros2 run isaac_ros_nvblox nvblox_node --ros-args -p use_static_tf:=true
+ros2 run nvblox_ros nvblox_node --ros-args -p use_tf_transforms:=false
 ```
 
-Look for `/nvblox_node/static_esdf_layer` or similar topics appearing.
+This only verifies that the executable can start; the live reconstruction check
+is Step 2e.
 
-## Step 3 — Wire class_demux → 4× nvblox
+### 2e — RealSense D405 -> nvblox smoke test (P1.1.2)
+
+This is the validated single-camera reconstruction path. It anchors the map in
+`camera_link` so the test does not depend on VSLAM, odometry, Nav2, or the
+Scout TF tree.
+
+```bash
+# Inside the dev container:
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 launch scout_piper_scene_repr realsense_nvblox.launch.py
+```
+
+Verify the camera input and nvblox outputs:
+
+```bash
+ros2 topic hz /camera/aligned_depth_to_color/image_raw
+ros2 topic list | grep nvblox_node
+```
+
+Expected observations on this workstation:
+
+- `/camera/aligned_depth_to_color/image_raw` runs around 29-30 Hz.
+- nvblox publishes `/nvblox_node/tsdf_layer`, `/nvblox_node/mesh`,
+  `/nvblox_node/static_esdf_pointcloud`, and related debug topics.
+- nvblox logs show GPU TSDF block allocation after the first live depth frames.
+
+Use `initial_reset:=true` only when the RealSense driver is stuck; after a
+reset the D405 can take several seconds to re-enumerate.
+
+## Step 3 — Wire class_demux -> 4x nvblox
 
 Phase 1 v0 design (see `PHASE1_DESIGN.md` §5): instantiate four nvblox
 nodes, each consuming the mask-gated depth from one class. Already wired in

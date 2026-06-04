@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-17 (Phase 1 plumbing smoke test ready; Isaac ROS apt install script ready)
+**Last updated:** 2026-05-18 (P1.1.2 RealSense -> nvblox smoke test validated)
 
 ## Legend
 
@@ -150,8 +150,8 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P1.1.0 | Plumbing smoke test (synthetic mask + class_demux, no nvblox) | ☑ | 2026-05-17 — `test_class_demux.launch.py` + `test_mask_publisher.py` |
-| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ◐ | 2026-05-17 — apt path dead (NVIDIA dropped jammy/Humble Q4 2025; only release-4.0/noble live). Pivoted to source build: Dockerfile.dev now ships CUDA 12.4 dev libs; repos.yaml clones nvblox + isaac_ros_nvblox + isaac_ros_common (release-3.2 tags) for colcon-built. See docs/PHASE1_RUNTIME.md. |
-| P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☐ | Needs P1.1.1 done + RealSense plugged in |
+| P1.1.1 | Install `isaac_ros_nvblox` on workstation | ☑ | 2026-05-18 — source build validated in dev container; `nvblox_ros`, `nvblox_msgs`, and example bringup packages discoverable after sourcing `install/setup.bash`. |
+| P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☑ | 2026-05-18 — added `realsense_nvblox.launch.py` + camera-frame nvblox config; D405 aligned depth runs ~29-30 Hz and nvblox publishes TSDF/mesh/ESDF topics while allocating GPU TSDF blocks from live depth. |
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
 | P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
 

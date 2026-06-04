@@ -14,6 +14,7 @@ src/isaac_ros_nvblox/
 src/isaac_ros_nitros/
 src/isaac_ros_gxf/
 src/negotiated/
+src/nvblox/
 
 # tf2_tools view_frames artifacts (often dumped into Codes/)
 frames*.gv

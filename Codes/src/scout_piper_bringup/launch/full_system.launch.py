@@ -169,6 +169,9 @@ def _launch_setup(context, *args, **kwargs):
         ),
         condition=IfCondition(LaunchConfiguration("bringup_camera")),
         launch_arguments={
+            # Keep topics at /camera/color/... and /camera/depth/...
+            # rather than the driver default /camera/camera/... nesting.
+            "camera_namespace": "/",
             "align_depth.enable": "true",
             "pointcloud.enable": "true",
             "initial_reset": "true",

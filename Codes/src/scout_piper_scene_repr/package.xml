@@ -26,6 +26,9 @@
 
   <!-- Pulled via vcs / Isaac ROS install — not via rosdep -->
   <exec_depend>isaac_ros_nvblox</exec_depend>
+  <exec_depend>nvblox_ros</exec_depend>
+  <exec_depend>nvblox_examples_bringup</exec_depend>
+  <exec_depend>realsense2_camera</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

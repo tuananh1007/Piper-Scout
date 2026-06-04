@@ -1,0 +1,50 @@
+/**:
+  ros__parameters:
+    # Single-camera smoke-test profile for P1.1.2. The map is anchored in the
+    # RealSense root frame, so this validates TSDF/ESDF reconstruction before
+    # depending on VSLAM, odometry, or the Scout TF tree.
+    global_frame: "camera_link"
+    pose_frame: "camera_link"
+    map_clearing_frame_id: "camera_link"
+    esdf_slice_bounds_visualization_attachment_frame_id: "camera_link"
+    workspace_height_bounds_visualization_attachment_frame_id: "camera_link"
+
+    num_cameras: 1
+    use_tf_transforms: true
+    use_depth: true
+    use_color: true
+    use_lidar: false
+    use_segmentation: false
+    input_qos: "SENSOR_DATA"
+
+    mapping_type: "static_tsdf"
+    esdf_mode: "3d"
+    voxel_size: 0.01
+    map_clearing_radius_m: 2.0
+
+    integrate_depth_rate_hz: 30.0
+    integrate_color_rate_hz: 5.0
+    update_mesh_rate_hz: 5.0
+    update_esdf_rate_hz: 5.0
+    publish_layer_rate_hz: 5.0
+    publish_debug_vis_rate_hz: 2.0
+    print_rates_to_console: true
+    print_statistics_on_console_period_ms: 10000
+
+    max_back_projection_distance: 1.5
+    layer_visualization_exclusion_radius_m: 2.0
+    layer_visualization_exclusion_height_m: 2.0
+    esdf_slice_bounds_visualization_side_length: 2.0
+    workspace_height_bounds_visualization_side_length: 2.0
+
+    static_mapper:
+      projective_integrator_max_integration_distance_m: 1.2
+      projective_integrator_truncation_distance_vox: 4.0
+      projective_integrator_weighting_mode: "inverse_square_tsdf_distance_penalty"
+      projective_integrator_max_weight: 5.0
+      projective_tsdf_integrator_invalid_depth_decay_factor: -1.0
+      esdf_integrator_min_weight: 0.1
+      esdf_integrator_max_distance_m: 1.0
+      esdf_slice_height: 0.0
+      esdf_slice_min_height: -0.4
+      esdf_slice_max_height: 0.8

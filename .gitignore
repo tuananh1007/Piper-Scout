@@ -1,6 +1,9 @@
 # Repo-root ignores (the `Codes/` subdir has its own .gitignore too)
 
 # colcon outputs
+build/
+install/
+log/
 Codes/build/
 Codes/install/
 Codes/log/
@@ -10,6 +13,7 @@ Codes/src/piper_ros/
 Codes/src/scout_ros2/
 Codes/src/scout_nav2/
 Codes/src/realsense-ros/
+Codes/src/nvblox/
 
 # Python
 __pycache__/
