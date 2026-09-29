@@ -29,22 +29,34 @@ class FitResult:
 
 
 class PlantTwinFitter:
-    def __init__(self, leaf: LeafModel, stem: StemModel, max_nfev: int = 40):
+    def __init__(self, leaf: LeafModel, stem: StemModel, max_nfev: int = 10,
+                 analytic_jac: bool = True, predict: bool = True):
         self.leaf, self.stem = leaf, stem
+        # Tracking budget: ~10 Gauss-Newton evaluations per frame, warm-started
+        # from a constant-velocity prediction of the previous two solutions.
         self.max_nfev = max_nfev
+        self.predict = predict
+        self._prev_leaf = None
+        # Analytic Jacobians hold ICP correspondences fixed per evaluation;
+        # numerical ('2-point') is kept as a reference / fallback.
+        self.leaf_jac = leaf.jacobian if analytic_jac else "2-point"
+        self.stem_jac = stem.jacobian if analytic_jac else "2-point"
         self.leaf_params = leaf.initial_params()
         self.stem_params = stem.initial_params()
         self._first = True
 
-    def step(self, obs: FrameObservation, outer_iters: int = 2) -> FitResult:
+    def step(self, obs: FrameObservation, outer_iters: int = 1) -> FitResult:
         prev_leaf = None if self._first else self.leaf_params.copy()
         prev_stem = None if self._first else self.stem_params.copy()
+        if self.predict and self._prev_leaf is not None:
+            self.leaf_params = self.leaf_params + (self.leaf_params - self._prev_leaf)
+        self._prev_leaf = prev_leaf
         leaf_cost = stem_cost = 0.0
 
         for _ in range(outer_iters):
             r = least_squares(
                 self.leaf.residuals, self.leaf_params, method="trf",
-                max_nfev=self.max_nfev,
+                jac=self.leaf_jac, max_nfev=self.max_nfev,
                 args=(obs.leaf_points, prev_leaf, obs.contact_point),
             )
             self.leaf_params, leaf_cost = r.x, float(r.cost)
@@ -52,7 +64,7 @@ class PlantTwinFitter:
             tip = self.leaf.tip_point(self.leaf_params)
             r = least_squares(
                 self.stem.residuals, self.stem_params, method="trf",
-                max_nfev=self.max_nfev,
+                jac=self.stem_jac, max_nfev=self.max_nfev,
                 args=(obs.stem_points, tip, prev_stem, obs.pulling),
             )
             self.stem_params, stem_cost = r.x, float(r.cost)

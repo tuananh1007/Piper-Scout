@@ -26,15 +26,18 @@ from typing import Optional, Sequence
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .geometry import apply_rigid, bump_basis, point_in_polygon
+from .geometry import (apply_rigid, bump_basis, point_in_polygon,
+                       rotation_jacobian, rotvec_to_matrix)
 
 
 @dataclass
 class LeafWeights:
-    data: float = 1.0
+    data: float = 1.0          # point-to-plane (obs -> mesh)
+    p2p: float = 0.3           # point-to-point obs -> mesh, relative to data
+    reverse: float = 0.5       # point-to-point mesh -> obs, relative to data
     stretch: float = 20.0
     prior: float = 0.5
-    temporal: float = 2.0
+    temporal: float = 0.5      # > ~1 makes in-plane motion lag the data
     contact: float = 10.0
 
 
@@ -155,9 +158,9 @@ class LeafModel:
             _, nn = cKDTree(v).query(observed)
             diff = observed - v[nn]
             blocks.append(w.data * np.einsum("ij,ij->i", diff, nrm[nn]))
-            blocks.append(0.1 * w.data * diff.ravel())
+            blocks.append(w.p2p * w.data * diff.ravel())
             _, mn = cKDTree(observed).query(v)
-            blocks.append(0.1 * w.data * (v - observed[mn]).ravel())
+            blocks.append(w.reverse * w.data * (v - observed[mn]).ravel())
 
         el = np.linalg.norm(v[self.edges[:, 0]] - v[self.edges[:, 1]], axis=1)
         blocks.append(w.stretch * (el - self.rest_edge_len))
@@ -173,6 +176,69 @@ class LeafModel:
             blocks.append(w.contact * (cp - v[nn]))
 
         return np.concatenate(blocks)
+
+    # -------------------------------------------------------------- jacobian
+    def vertex_jacobian(self, params: np.ndarray) -> np.ndarray:
+        """d v_i / d params for every vertex -> (V, 3, n_params).
+
+        v_i = R(rv) l_i(bend) + t with l_i = [x_i, y_i, (Φ bend)_i]:
+          d/dt    = I
+          d/drv   = rotation_jacobian(rv, l)
+          d/dbend = R e_z ⊗ Φ_i
+        """
+        rv, _, bend = self.split(params)
+        local = self.local_vertices(bend)
+        R = rotvec_to_matrix(rv)
+        D = np.zeros((len(local), 3, self.n_params))
+        D[:, :, 0:3] = rotation_jacobian(rv, local)
+        D[:, :, 3:6] = np.eye(3)
+        D[:, :, 6:] = R[:, 2][None, :, None] * self._basis[:, None, :]
+        return D
+
+    def jacobian(
+        self,
+        params: np.ndarray,
+        observed: np.ndarray,
+        prev_params: Optional[np.ndarray] = None,
+        contact_point: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Analytic Jacobian of ``residuals`` with the same arguments.
+
+        Correspondences and normals are held fixed (Gauss-Newton ICP
+        linearisation); block order matches ``residuals`` exactly.
+        """
+        w = self.weights
+        v = self.vertices(params)
+        D = self.vertex_jacobian(params)               # (V, 3, P)
+        P = self.n_params
+        blocks = []
+
+        observed = np.asarray(observed, dtype=float).reshape(-1, 3)
+        if len(observed):
+            nrm = self.normals(params)
+            _, nn = cKDTree(v).query(observed)
+            # d/dp [n·(obs - v_nn)] = -n^T D_nn
+            blocks.append(-w.data * np.einsum("ij,ijk->ik", nrm[nn], D[nn]))
+            blocks.append(-w.p2p * w.data * D[nn].reshape(-1, P))
+            blocks.append(w.reverse * w.data * D.reshape(-1, P))
+
+        a, b = self.edges[:, 0], self.edges[:, 1]
+        d = v[a] - v[b]
+        u = d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
+        blocks.append(w.stretch * np.einsum("ij,ijk->ik", u, D[a] - D[b]))
+
+        Jp = np.zeros((self.n_bend, P))
+        Jp[:, 6:] = w.prior * np.eye(self.n_bend)
+        blocks.append(Jp)
+
+        if prev_params is not None:
+            blocks.append(w.temporal * np.eye(P))
+
+        if contact_point is not None:
+            _, nn = cKDTree(v).query(np.asarray(contact_point, dtype=float))
+            blocks.append(-w.contact * D[nn])
+
+        return np.vstack(blocks)
 
     # --------------------------------------------------------------- exports
     def set_petiole(self, xy: np.ndarray) -> None:

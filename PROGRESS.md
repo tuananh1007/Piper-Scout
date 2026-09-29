@@ -197,7 +197,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.5 | Leaf outline + holes from segmentation mask contours (replace disc init) | ☑ | 2026-09-29 — `plant_twin/outline.py`, RETR_CCOMP + depth back-projection into PCA plane |
 | P1.6.6 | Texture from first frame | ☑ | 2026-09-29 — per-vertex colour from the rgb cloud (`texture_from_cloud`); UV image map still open |
 | P1.6.7 | Per-class clouds | ☑ | 2026-09-29 — reuse `pointcloud_node`'s `/stem_grasp/{leaf_filtered,filtered}_cloud`, TF'd to planning frame |
-| P1.6.8 | Analytic Jacobians / GPU for 30 Hz | ☐ | ~50–100 ms/frame CPU now |
+| P1.6.8 | Analytic Jacobians | ☑ | 2026-09-29 — leaf (SO(3) right Jacobian + RBF bend) and stem (linear basis), FD-verified; ~60 ms/frame at 10 evals with velocity warm start, ~4 mm tracking error at 5 mm/frame. 30 Hz still needs custom GN or GPU |
 | P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
 
 ### P1 exit criteria
