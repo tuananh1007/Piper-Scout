@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-18 (P1.1.2 RealSense -> nvblox smoke test validated)
+**Last updated:** 2026-09-29 (P1.6 plant_twin leaf + stem twin core + node)
 
 ## Legend
 
@@ -185,6 +185,19 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.5.1 | Fork nvblox with per-voxel class_id | ☐ | Workshop / ICRA Agri-Robotics contribution |
 | P1.5.2 | Modify CUDA integration kernel | ☐ | |
 | P1.5.3 | Benchmark v0 vs v1 GPU memory + latency | ☐ | |
+
+### P1.6 — Deformable leaf + stem twin (`plant_twin`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.6.1 | Leaf model: outline+holes mesh, rigid/bend split, stretch + rest + temporal + contact residuals | ☑ | 2026-09-29 — `plant_twin/leaf.py`; point-to-plane data term needed (nearest-vertex stalls half a cell) |
+| P1.6.2 | Stem model: Catmull-Rom centreline, base anchor, tip→leaf, length, smooth, stationary-before-pull | ☑ | 2026-09-29 — `plant_twin/stem.py` |
+| P1.6.3 | Alternating leaf/stem fitter + synthetic pull-sequence tests | ☑ | 2026-09-29 — 7 tests, no ROS needed |
+| P1.6.4 | ROS 2 node: clouds + F/T + `piper_joint7` + fingertip TF → RViz markers | ☑ | 2026-09-29 — `twin_node.py`; untested on hardware |
+| P1.6.5 | Leaf outline + holes from segmentation mask contours (replace disc init) | ☐ | |
+| P1.6.6 | Texture from first RGB frame via `LeafModel.uv` | ☐ | |
+| P1.6.7 | Per-class clouds from `class_demux_node` (`/stem_grasp/{leaf,stem}_cloud`) | ☐ | Depends on P1.2 |
+| P1.6.8 | Analytic Jacobians / GPU for 30 Hz | ☐ | ~50–100 ms/frame CPU now |
 
 ### P1 exit criteria
 
