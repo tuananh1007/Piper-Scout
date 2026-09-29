@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-05-18 (P1.1.2 RealSense -> nvblox smoke test validated)
+**Last updated:** 2026-09-29 (P1.6 plant_twin leaf + stem twin core + node)
 
 ## Legend
 
@@ -185,6 +185,21 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.5.1 | Fork nvblox with per-voxel class_id | ☐ | Workshop / ICRA Agri-Robotics contribution |
 | P1.5.2 | Modify CUDA integration kernel | ☐ | |
 | P1.5.3 | Benchmark v0 vs v1 GPU memory + latency | ☐ | |
+
+### P1.6 — Deformable leaf + stem twin (`plant_twin`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.6.1 | Leaf model: outline+holes mesh, rigid/bend split, stretch + rest + temporal + contact residuals | ☑ | 2026-09-29 — `plant_twin/leaf.py`; point-to-plane data term needed (nearest-vertex stalls half a cell) |
+| P1.6.2 | Stem model: Catmull-Rom centreline, base anchor, tip→leaf, length, smooth, stationary-before-pull | ☑ | 2026-09-29 — `plant_twin/stem.py` |
+| P1.6.3 | Alternating leaf/stem fitter + synthetic pull-sequence tests | ☑ | 2026-09-29 — 7 tests, no ROS needed |
+| P1.6.4 | ROS 2 node: clouds + F/T + `piper_joint7` + fingertip TF → RViz markers | ☑ | 2026-09-29 — `twin_node.py`; untested on hardware |
+| P1.6.5 | Leaf outline + holes from segmentation mask contours (replace disc init) | ☑ | 2026-09-29 — `plant_twin/outline.py`, RETR_CCOMP + depth back-projection into PCA plane |
+| P1.6.6 | Texture from first frame | ☑ | 2026-09-29 — per-vertex colour from the rgb cloud (`texture_from_cloud`); UV image map still open |
+| P1.6.7 | Per-class clouds | ☑ | 2026-09-29 — reuse `pointcloud_node`'s `/stem_grasp/{leaf_filtered,filtered}_cloud`, TF'd to planning frame |
+| P1.6.8 | Analytic Jacobians | ☑ | 2026-09-29 — leaf (SO(3) right Jacobian + RBF bend) and stem (linear basis), FD-verified; ~60 ms/frame at 10 evals with velocity warm start, ~4 mm tracking error at 5 mm/frame. 30 Hz still needs custom GN or GPU |
+| P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
+| P1.6.10 | Fused residual+Jacobian `evaluate` + own LM solver on normal equations | ☑ | 2026-09-29 — `solver.py`; ~28 ms/frame, 1.6 mm at 5 mm/frame; TRF/FD kept as references |
 
 ### P1 exit criteria
 
