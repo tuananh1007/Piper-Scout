@@ -21,7 +21,7 @@ fitter):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 import numpy as np
 from scipy.spatial import cKDTree
@@ -132,52 +132,7 @@ class LeafModel:
             np.add.at(vn, self.faces[:, k], fn)
         return vn / np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-12)
 
-    # -------------------------------------------------------------- residuals
-    def residuals(
-        self,
-        params: np.ndarray,
-        observed: np.ndarray,
-        prev_params: Optional[np.ndarray] = None,
-        contact_point: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        w = self.weights
-        rv, t, bend = self.split(params)
-        v = self.vertices(params)
-        blocks = []
-
-        observed = np.asarray(observed, dtype=float).reshape(-1, 3)
-        if len(observed):
-            # Point-to-plane ICP term (obs -> nearest vertex, projected on that
-            # vertex's normal) plus a lightly weighted point-to-point term.
-            # Pure point-to-point on a lattice stalls half a cell away from the
-            # true pose because in-plane offsets produce no gradient; the plane
-            # term lets interior points slide and leaves in-plane alignment to
-            # the outline vertices. The reverse term (vertex -> nearest obs)
-            # stops the mesh from drifting off the observed region.
-            nrm = self.normals(params)
-            _, nn = cKDTree(v).query(observed)
-            diff = observed - v[nn]
-            blocks.append(w.data * np.einsum("ij,ij->i", diff, nrm[nn]))
-            blocks.append(w.p2p * w.data * diff.ravel())
-            _, mn = cKDTree(observed).query(v)
-            blocks.append(w.reverse * w.data * (v - observed[mn]).ravel())
-
-        el = np.linalg.norm(v[self.edges[:, 0]] - v[self.edges[:, 1]], axis=1)
-        blocks.append(w.stretch * (el - self.rest_edge_len))
-
-        blocks.append(w.prior * bend)
-
-        if prev_params is not None:
-            blocks.append(w.temporal * (params - prev_params))
-
-        if contact_point is not None:
-            cp = np.asarray(contact_point, dtype=float)
-            _, nn = cKDTree(v).query(cp)
-            blocks.append(w.contact * (cp - v[nn]))
-
-        return np.concatenate(blocks)
-
-    # -------------------------------------------------------------- jacobian
+    # ---------------------------------------------------- residuals + jacobian
     def vertex_jacobian(self, params: np.ndarray) -> np.ndarray:
         """d v_i / d params for every vertex -> (V, 3, n_params).
 
@@ -195,50 +150,101 @@ class LeafModel:
         D[:, :, 6:] = R[:, 2][None, :, None] * self._basis[:, None, :]
         return D
 
-    def jacobian(
+    def evaluate(
         self,
         params: np.ndarray,
         observed: np.ndarray,
         prev_params: Optional[np.ndarray] = None,
         contact_point: Optional[np.ndarray] = None,
-    ) -> np.ndarray:
-        """Analytic Jacobian of ``residuals`` with the same arguments.
+        want_jac: bool = True,
+    ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """Stacked residual vector and (optionally) its analytic Jacobian.
 
-        Correspondences and normals are held fixed (Gauss-Newton ICP
-        linearisation); block order matches ``residuals`` exactly.
+        One pass shares the KD-tree queries and normals between the two.
+        Correspondences and normals are held fixed in the Jacobian
+        (Gauss-Newton ICP linearisation).
+
+        Blocks, in order:
+          data      point-to-plane (obs -> nearest vertex, along its normal),
+                    point-to-point obs -> mesh (weight p2p), and mesh -> obs
+                    (weight reverse). Pure point-to-point on a lattice stalls
+                    half a cell from the true pose because in-plane offsets
+                    give no gradient; the plane term lets interior points
+                    slide and leaves in-plane alignment to the outline. The
+                    reverse term stops the mesh drifting off the observed
+                    region.
+          stretch   edge lengths vs rest lengths.
+          prior     bending heights -> 0.
+          temporal  params -> previous frame.
+          contact   fingertip must lie on the surface.
         """
         w = self.weights
+        _, _, bend = self.split(params)
         v = self.vertices(params)
-        D = self.vertex_jacobian(params)               # (V, 3, P)
         P = self.n_params
-        blocks = []
+        D = self.vertex_jacobian(params) if want_jac else None
+        r_blocks, J_blocks = [], []
 
-        observed = np.asarray(observed, dtype=float).reshape(-1, 3)
+        observed, obs_tree = self._observed(observed)
         if len(observed):
             nrm = self.normals(params)
             _, nn = cKDTree(v).query(observed)
-            # d/dp [n·(obs - v_nn)] = -n^T D_nn
-            blocks.append(-w.data * np.einsum("ij,ijk->ik", nrm[nn], D[nn]))
-            blocks.append(-w.p2p * w.data * D[nn].reshape(-1, P))
-            blocks.append(w.reverse * w.data * D.reshape(-1, P))
+            diff = observed - v[nn]
+            _, mn = obs_tree.query(v)
+            r_blocks.append(w.data * np.einsum("ij,ij->i", diff, nrm[nn]))
+            r_blocks.append(w.p2p * w.data * diff.ravel())
+            r_blocks.append(w.reverse * w.data * (v - observed[mn]).ravel())
+            if want_jac:
+                Dnn = D[nn]
+                J_blocks.append(-w.data * np.einsum("ij,ijk->ik", nrm[nn], Dnn))
+                J_blocks.append(-w.p2p * w.data * Dnn.reshape(-1, P))
+                J_blocks.append(w.reverse * w.data * D.reshape(-1, P))
 
         a, b = self.edges[:, 0], self.edges[:, 1]
         d = v[a] - v[b]
-        u = d / np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-12)
-        blocks.append(w.stretch * np.einsum("ij,ijk->ik", u, D[a] - D[b]))
+        el = np.linalg.norm(d, axis=1)
+        r_blocks.append(w.stretch * (el - self.rest_edge_len))
+        if want_jac:
+            u = d / np.maximum(el, 1e-12)[:, None]
+            J_blocks.append(w.stretch * np.einsum("ij,ijk->ik", u, D[a] - D[b]))
 
-        Jp = np.zeros((self.n_bend, P))
-        Jp[:, 6:] = w.prior * np.eye(self.n_bend)
-        blocks.append(Jp)
+        r_blocks.append(w.prior * bend)
+        if want_jac:
+            Jp = np.zeros((self.n_bend, P))
+            Jp[:, 6:] = w.prior * np.eye(self.n_bend)
+            J_blocks.append(Jp)
 
         if prev_params is not None:
-            blocks.append(w.temporal * np.eye(P))
+            r_blocks.append(w.temporal * (params - prev_params))
+            if want_jac:
+                J_blocks.append(w.temporal * np.eye(P))
 
         if contact_point is not None:
-            _, nn = cKDTree(v).query(np.asarray(contact_point, dtype=float))
-            blocks.append(-w.contact * D[nn])
+            cp = np.asarray(contact_point, dtype=float)
+            _, nn = cKDTree(v).query(cp)
+            r_blocks.append(w.contact * (cp - v[nn]))
+            if want_jac:
+                J_blocks.append(-w.contact * D[nn])
 
-        return np.vstack(blocks)
+        r = np.concatenate(r_blocks)
+        return r, (np.vstack(J_blocks) if want_jac else None)
+
+    def _observed(self, observed):
+        """Observations are fixed within a frame but ``evaluate`` runs many
+        times per frame, so the KD-tree over them is cached by identity."""
+        cache = getattr(self, "_obs_cache", None)
+        if cache is not None and cache[0] is observed:
+            return cache[1], cache[2]
+        arr = np.asarray(observed, dtype=float).reshape(-1, 3)
+        tree = cKDTree(arr) if len(arr) else None
+        self._obs_cache = (observed, arr, tree)
+        return arr, tree
+
+    def residuals(self, params, observed, prev_params=None, contact_point=None):
+        return self.evaluate(params, observed, prev_params, contact_point, want_jac=False)[0]
+
+    def jacobian(self, params, observed, prev_params=None, contact_point=None):
+        return self.evaluate(params, observed, prev_params, contact_point, want_jac=True)[1]
 
     # --------------------------------------------------------------- exports
     def set_petiole(self, xy: np.ndarray) -> None:
