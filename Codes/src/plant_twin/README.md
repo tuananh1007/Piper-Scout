@@ -42,17 +42,34 @@ K control points of a Catmull-Rom centreline plus a fixed radius.
 
 ### Fitter (`PlantTwinFitter`)
 
-Alternates two `scipy.optimize.least_squares` (TRF) solves per frame: leaf
-first, then stem with the leaf's tip as the attachment target. Both use
-**analytic Jacobians** (`LeafModel.jacobian`, `StemModel.jacobian`): ICP
-correspondences and normals are held fixed per evaluation (Gauss-Newton
-ICP); the leaf's per-vertex derivative uses the SO(3) right Jacobian for the
-rotation vector, and the stem is linear in its control points
-(`curve = M @ ctrl`). Each frame runs ~10 evaluations warm-started from a
-constant-velocity prediction; on a laptop CPU that is ~60 ms/frame for a
-600-point leaf (was ~130 ms with numerical Jacobians and 40 evaluations), with
-~4 mm steady error while tracking 5 mm/frame motion. `export()` gives
-`leaf_vertices`, `leaf_faces`, `stem_curve`, `stem_radius`.
+Alternates a leaf solve and a stem solve per frame (stem uses the leaf's
+tip as its attachment target). Both models expose `evaluate(params, ...)`
+returning the stacked residual **and** its analytic Jacobian in one pass
+(shared KD-tree queries and normals; ICP correspondences and normals are held
+fixed per evaluation — Gauss-Newton ICP). The leaf's per-vertex derivative
+uses the SO(3) right Jacobian for the rotation vector; the stem is linear in
+its control points (`curve = M @ ctrl`).
+
+The solver (`solver.py`) is a small Marquardt-damped Gauss-Newton on the
+normal equations: the problems are thousands of residuals by ~20 unknowns, so
+one fused evaluation plus a P×P Cholesky solve per step is far cheaper than
+scipy TRF's per-step SVD. `PlantTwinFitter(solver=...)` picks `'lm'`
+(default), `'trf'` (scipy + analytic Jacobian) or `'fd'` (scipy +
+finite differences, for debugging). Each frame is warm-started from a
+constant-velocity prediction and stops at a 1e-3 relative cost drop (a
+tracking tolerance; most frames take 3–5 steps).
+
+Measured on a 4-core laptop-class CPU, 600 leaf points, `mesh_res=20`,
+tracking 5 mm/frame in-plane motion:
+
+| fitter | ms/frame | steady error |
+|---|---|---|
+| numerical Jacobian, TRF, 40 evals (v1) | ~130 | 22 mm (lagged) |
+| analytic Jacobian, TRF, 10 evals | ~60 | 3.7 mm |
+| fused evaluate + LM, `ftol=1e-3` | **~28** | 1.6 mm |
+
+Expect roughly 2–3× slower on the Orin's CPU cores; `max_iter` and `ftol`
+are the knobs.
 
 ## ROS 2 node
 
@@ -106,9 +123,9 @@ motion and stem–leaf attachment.
   handled; the rest shape stays whatever the first frame gave.
 - **Texture is per-vertex**, not a UV image; fine for RViz, coarse for a
   render. `LeafModel.uv` is there for a proper texture map.
-- **Speed.** ~60 ms/frame on CPU (≈16 Hz). The remaining cost is split
-  between residual/Jacobian evaluation (~4 ms each) and TRF's SVD per
-  iteration; a custom Gauss-Newton with normal equations, or a GPU port, is
-  the route to 30 Hz.
+- **Speed on the Jetson.** ~28 ms/frame here is ≈35 Hz; on the Orin CPU
+  it will be nearer 10–15 Hz. Each evaluation is ~3.7 ms of which the two
+  KD-tree queries are ~1 ms and the (V,3,P) Jacobian assembly the rest — a
+  CuPy/torch port of `evaluate` is the next lever if that is not enough.
 - **Untested on hardware** — no ROS in the dev container; only the numpy core
   is covered by tests.
