@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 from scipy.spatial import cKDTree
 
-from .geometry import catmull_rom, polyline_length
+from .geometry import catmull_rom_basis, polyline_length
 
 
 @dataclass
@@ -48,6 +48,7 @@ class StemModel:
         self.K = len(self.rest_ctrl)
         self.n_params = 3 * self.K
         self.anchor = self.rest_ctrl[0].copy()
+        self._basis = catmull_rom_basis(self.K, self.samples_per_seg)
         self.rest_length = polyline_length(self.curve(self.rest_ctrl.ravel()))
 
     def initial_params(self) -> np.ndarray:
@@ -57,7 +58,7 @@ class StemModel:
         return np.asarray(params, dtype=float).reshape(self.K, 3)
 
     def curve(self, params: np.ndarray) -> np.ndarray:
-        return catmull_rom(self.ctrl(params), self.samples_per_seg)
+        return self._basis @ self.ctrl(params)
 
     def residuals(
         self,
@@ -93,3 +94,53 @@ class StemModel:
             blocks.append(w.stationary * (params - self.rest_ctrl.ravel()))
 
         return np.concatenate(blocks)
+
+    # -------------------------------------------------------------- jacobian
+    def jacobian(
+        self,
+        params: np.ndarray,
+        observed: np.ndarray,
+        tip_target: Optional[np.ndarray] = None,
+        prev_params: Optional[np.ndarray] = None,
+        pulling: bool = False,
+    ) -> np.ndarray:
+        """Analytic Jacobian of ``residuals``. The curve is linear in the
+        control points (curve = M @ ctrl), so d curve / d params = M ⊗ I3."""
+        w = self.weights
+        P = self.n_params
+        curve = self.curve(params)
+        M = self._basis                                      # (S, K)
+        Dc = np.kron(M, np.eye(3))                           # (3S, 3P/3)
+        blocks = []
+
+        observed = np.asarray(observed, dtype=float).reshape(-1, 3)
+        if len(observed):
+            _, nn = cKDTree(curve).query(observed)
+            rows = (3 * nn[:, None] + np.arange(3)[None, :]).ravel()
+            blocks.append(-w.data * Dc[rows])
+
+        Jb = np.zeros((3, P)); Jb[:, :3] = np.eye(3)
+        blocks.append(w.base * Jb)
+        if tip_target is not None:
+            Jt = np.zeros((3, P)); Jt[:, -3:] = np.eye(3)
+            blocks.append(w.tip * Jt)
+
+        seg = np.diff(curve, axis=0)
+        u = seg / np.maximum(np.linalg.norm(seg, axis=1, keepdims=True), 1e-12)
+        dL_dcurve = np.zeros_like(curve)
+        dL_dcurve[1:] += u
+        dL_dcurve[:-1] -= u
+        blocks.append(w.length * (dL_dcurve.ravel() @ Dc)[None, :])
+
+        if self.K >= 3:
+            S2 = np.zeros((self.K - 2, self.K))
+            for i in range(self.K - 2):
+                S2[i, i:i + 3] = [1.0, -2.0, 1.0]
+            blocks.append(w.smooth * np.kron(S2, np.eye(3)))
+
+        if prev_params is not None:
+            blocks.append(w.temporal * np.eye(P))
+        if not pulling:
+            blocks.append(w.stationary * np.eye(P))
+
+        return np.vstack(blocks)
