@@ -1,0 +1,10 @@
+plant_twin:
+  ros__parameters:
+    planning_frame: "piper_base_link"
+    fingertip_frame: "piper_link7"
+    contact_threshold_n: 0.15      # same as stem_grasp pipeline
+    gripper_closed_m: 0.01         # piper_joint7 < this => grasped => pull allowed
+    rate_hz: 10.0
+    leaf_outline_radius_m: 0.06    # initial disc outline; replaced by mask outline later
+    stem_ctrl_points: 6
+    stem_radius_m: 0.003

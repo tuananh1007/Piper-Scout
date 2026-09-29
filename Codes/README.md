@@ -13,6 +13,7 @@ Codes/
 ├── repos.yaml              # vcs-import manifest for upstream packages
 ├── .gitignore
 └── src/
+    ├── plant_twin/                 # NEW: deformable leaf + stem twin fitted during grasps
     ├── scout_piper_bringup/        # NEW: integrated system launch + system config
     ├── scout_piper_description/    # NEW: unified URDF (Piper on Scout) + RViz
     └── stem_grasp/                 # NEW: ROS 2 port of stem_grasp_ros1 (rclpy)
