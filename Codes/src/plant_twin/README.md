@@ -54,8 +54,10 @@ ros2 launch plant_twin plant_twin.launch.py
 
 | Direction | Topic | Type | Role |
 |---|---|---|---|
-| in | `/stem_grasp/leaf_cloud` | PointCloud2 | leaf points, planning frame |
-| in | `/stem_grasp/stem_cloud` | PointCloud2 | stem points |
+| in | `/stem_grasp/leaf_filtered_cloud` | PointCloud2 (xyz+rgb) | leaf points, from `stem_grasp/pointcloud_node`; TF'd into the planning frame |
+| in | `/stem_grasp/filtered_cloud` | PointCloud2 | stem points |
+| in | `/stem_grasp/target_mask` | Image mono8 | leaf mask → outline + holes |
+| in | `/camera/depth/image_rect_raw`, `/camera/color/camera_info` | Image, CameraInfo | back-project the mask contour |
 | in | `/ft_sensor/raw` | WrenchStamped | \|F\| > `contact_threshold_n` ⇒ touching |
 | in | `/joint_states` | JointState | `piper_joint7` < `gripper_closed_m` ⇒ grasped |
 | in (TF) | `piper_base_link → piper_link7` | | fingertip = contact point |
@@ -65,9 +67,17 @@ ros2 launch plant_twin plant_twin.launch.py
 `pulling` = touching **and** gripper closed; before that the stem's
 stationary prior holds it at rest.
 
-On the first frame with both clouds, the node initialises the leaf plane by
-PCA of the leaf points (disc outline of `leaf_outline_radius_m`) and the stem
-as a straight line from the lowest stem point to the leaf tip.
+On the first frame with clouds, mask, depth and intrinsics, the node
+(`outline.py`):
+
+1. fits a PCA plane to the leaf points, normal facing the camera;
+2. takes the mask's largest outer contour and its hole contours
+   (`cv2.RETR_CCOMP`), simplifies them, back-projects with the nearest valid
+   depth and projects into the plane → `LeafModel(outline, holes)`;
+3. sets the petiole to the outline vertex nearest the lowest stem point and
+   textures each mesh vertex with the nearest cloud point's colour
+   (`LeafModel.texture_from_cloud`), published as per-vertex marker colours;
+4. initialises the stem as a straight line from that base to the petiole.
 
 ## Tests
 
@@ -83,14 +93,12 @@ motion and stem–leaf attachment.
 
 ## What is still stubbed
 
-- **Outline from the mask.** The node starts from a disc; replacing it with the
-  segmentation mask's contour (+ hole contours from `cv2.findContours`
-  hierarchy) projected into the PCA plane is the next step.
-- **Texture.** `export()` returns geometry only; UV = `LeafModel.uv`, so
-  texturing is a matter of sampling the RGB image at the projected rest
-  vertices on the first frame.
-- **Per-class clouds.** `/stem_grasp/leaf_cloud` and `/stem_grasp/stem_cloud`
-  are expected from the Phase 1 `class_demux_node`; `pointcloud_node` currently
-  publishes a single masked cloud.
+- **Outline is fixed after the first frame.** Re-initialisation when the mask
+  changes substantially (occlusion by the gripper, a second leaf) is not
+  handled; the rest shape stays whatever the first frame gave.
+- **Texture is per-vertex**, not a UV image; fine for RViz, coarse for a
+  render. `LeafModel.uv` is there for a proper texture map.
 - **Speed.** Numerical Jacobians; ~50–100 ms per frame at `mesh_res=20` on a
   laptop CPU. Analytic Jacobians or a GPU port are needed for 30 Hz.
+- **Untested on hardware** — no ROS in the dev container; only the numpy core
+  is covered by tests.
