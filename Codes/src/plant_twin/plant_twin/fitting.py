@@ -67,4 +67,5 @@ class PlantTwinFitter:
             "leaf_faces": self.leaf.faces,
             "stem_curve": self.stem.curve(self.stem_params),
             "stem_radius": np.array(self.stem.radius_m),
+            "leaf_colors": self.leaf.colors,          # None until textured
         }

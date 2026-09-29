@@ -55,6 +55,11 @@ class LeafModel:
         self.n_bend = self.grid * self.grid
         self.n_params = 6 + self.n_bend
         self._basis = bump_basis(self.uv, self.grid)
+        # Where the stem attaches (index into rest_xy). Defaults to the vertex
+        # nearest the rest-plane origin; ``set_petiole`` overrides it from the
+        # mask/stem-base geometry.
+        self.petiole_idx = int(np.argmin(np.linalg.norm(self.rest_xy, axis=1)))
+        self.colors: Optional[np.ndarray] = None   # (V, 3) RGB in [0, 1]
 
     # ------------------------------------------------------------------ mesh
     def _build_mesh(self) -> None:
@@ -170,8 +175,28 @@ class LeafModel:
         return np.concatenate(blocks)
 
     # --------------------------------------------------------------- exports
+    def set_petiole(self, xy: np.ndarray) -> None:
+        """Pick the mesh vertex nearest a rest-plane point as the attachment."""
+        self.petiole_idx = int(np.argmin(np.linalg.norm(self.rest_xy - xy, axis=1)))
+
     def tip_point(self, params: np.ndarray) -> np.ndarray:
-        """World-space point where the stem attaches (outline vertex nearest
-        the rest-plane origin, i.e. the petiole; callers may override)."""
-        i = int(np.argmin(np.linalg.norm(self.rest_xy, axis=1)))
-        return self.vertices(params)[i]
+        """World-space point where the stem attaches."""
+        return self.vertices(params)[self.petiole_idx]
+
+    def texture_from_cloud(self, params: np.ndarray, points: np.ndarray,
+                           colors: np.ndarray, max_dist_m: float = 0.01) -> None:
+        """Per-vertex colour = colour of the nearest cloud point (first frame).
+
+        Vertices with no cloud point within ``max_dist_m`` take the mean colour
+        so outline-fill triangles don't show up black.
+        """
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        colors = np.asarray(colors, dtype=float).reshape(-1, 3)
+        if colors.max() > 1.0:
+            colors = colors / 255.0
+        v = self.vertices(params)
+        d, nn = cKDTree(points).query(v)
+        col = colors[nn]
+        far = d > max_dist_m
+        col[far] = colors.mean(0)
+        self.colors = col

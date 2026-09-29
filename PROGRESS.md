@@ -194,10 +194,11 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.2 | Stem model: Catmull-Rom centreline, base anchor, tip→leaf, length, smooth, stationary-before-pull | ☑ | 2026-09-29 — `plant_twin/stem.py` |
 | P1.6.3 | Alternating leaf/stem fitter + synthetic pull-sequence tests | ☑ | 2026-09-29 — 7 tests, no ROS needed |
 | P1.6.4 | ROS 2 node: clouds + F/T + `piper_joint7` + fingertip TF → RViz markers | ☑ | 2026-09-29 — `twin_node.py`; untested on hardware |
-| P1.6.5 | Leaf outline + holes from segmentation mask contours (replace disc init) | ☐ | |
-| P1.6.6 | Texture from first RGB frame via `LeafModel.uv` | ☐ | |
-| P1.6.7 | Per-class clouds from `class_demux_node` (`/stem_grasp/{leaf,stem}_cloud`) | ☐ | Depends on P1.2 |
+| P1.6.5 | Leaf outline + holes from segmentation mask contours (replace disc init) | ☑ | 2026-09-29 — `plant_twin/outline.py`, RETR_CCOMP + depth back-projection into PCA plane |
+| P1.6.6 | Texture from first frame | ☑ | 2026-09-29 — per-vertex colour from the rgb cloud (`texture_from_cloud`); UV image map still open |
+| P1.6.7 | Per-class clouds | ☑ | 2026-09-29 — reuse `pointcloud_node`'s `/stem_grasp/{leaf_filtered,filtered}_cloud`, TF'd to planning frame |
 | P1.6.8 | Analytic Jacobians / GPU for 30 Hz | ☐ | ~50–100 ms/frame CPU now |
+| P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
 
 ### P1 exit criteria
 

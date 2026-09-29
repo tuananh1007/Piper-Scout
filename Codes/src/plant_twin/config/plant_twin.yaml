@@ -2,9 +2,15 @@ plant_twin:
   ros__parameters:
     planning_frame: "piper_base_link"
     fingertip_frame: "piper_link7"
+    # From stem_grasp/pointcloud_node (xyz + packed rgb, in its output_frame)
+    leaf_cloud_topic: "/stem_grasp/leaf_filtered_cloud"
+    stem_cloud_topic: "/stem_grasp/filtered_cloud"
+    # From stem_grasp/segmentation_node; outline + holes are read off this mask
+    mask_topic: "/stem_grasp/target_mask"
+    depth_topic: "/camera/depth/image_rect_raw"
+    camera_info_topic: "/camera/color/camera_info"
     contact_threshold_n: 0.15      # same as stem_grasp pipeline
     gripper_closed_m: 0.01         # piper_joint7 < this => grasped => pull allowed
     rate_hz: 10.0
-    leaf_outline_radius_m: 0.06    # initial disc outline; replaced by mask outline later
     stem_ctrl_points: 6
     stem_radius_m: 0.003
