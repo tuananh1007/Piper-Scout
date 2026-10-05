@@ -1,385 +1,863 @@
 # Piper + Scout Research & Development Roadmap
 
-**Platform:** AgileX Piper 6-DoF arm + RealSense camera mounted on AgileX Scout 2.0 UGV
-**Compute:** NVIDIA Jetson Orin AGX 64 GB (on-robot) + operator laptop (GUI)
-**Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting
-**Document owner:** TBD
-**Last updated:** 2026-05-16
+**Platform:** AgileX Piper 6-DoF arm + RealSense camera mounted on AgileX Scout 2.0 UGV  
+**Compute:** NVIDIA Jetson AGX Orin 64 GB (on-robot) + operator laptop (GUI)  
+**Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting  
+**Last updated:** 2026-10-05
 
 ---
 
 ## 0. End-state vision
 
-A non-expert operator stands next to the Scout, opens a laptop GUI, and types or speaks something like:
+A non-expert operator stands next to the Scout and types or speaks:
 
-> *"Go to the second row of plants on your left, find the flower with the longest peduncle, and grasp it just below the bud."*
+> “Go to the second row of plants on your left, find the flower with the longest peduncle, and grasp it just below the bud.”
 
 The system:
 
-1. **Parses the instruction** with a Vision-Language model running on the laptop (with Orin as fallback).
-2. **Navigates the Scout** to the row using Nav2 + nvblox.
-3. **Approaches the plant** using whole-body MPC that coordinates arm + base when the arm alone can't reach.
-4. **Acquires geometry** with a learned active-perception loop (multi-view → feed-forward Gaussian).
-5. **Selects the grasp** via a VLA-guided perception module that resolves "longest peduncle" against the scene.
-6. **Executes the grasp** with an MPC visual servo that handles foliage occlusion and force feedback.
-7. **Reports back** in plain language: *"Grasped the third flower. Force at contact: 0.4 N. Confidence 0.92. Want me to try another?"*
+1. **Parses and grounds the instruction** into a structured query: semantic class, ordinal/spatial relation, optional attribute, and requested action.
+2. **Navigates the Scout** to the work area with Nav2.
+3. **Initializes the requested target** with open-vocabulary segmentation, then hands target identity to a V-JEPA 2.1 dense temporal representation so the same flower/peduncle persists through camera motion, robot motion, plant sway, and temporary occlusion.
+4. **Maintains explicit metric geometry** with RealSense + semantic nvblox SDFs. V-JEPA does not replace depth or collision geometry.
+5. **Maintains explicit deformation state where useful** using the existing `plant_twin` leaf/stem fitter during contact and pull interactions.
+6. **Approaches the plant** with geometry-only whole-body MPC coordinating the Scout differential-drive base and Piper arm.
+7. **Adds predictive whole-body planning** with a Piper-Scout action-conditioned JEPA model that forecasts whether candidate base+arm motions preserve target identity, visibility, and future manipulability.
+8. **Hands off near contact** to a high-rate safety-bounded local MPPI / visual-servo controller with force, velocity, confidence, and semantic-clearance gates.
+9. **Reports back** in plain language.
 
-The roadmap below is the engineering path to that end state, structured so that **every phase produces a publishable contribution AND a deployable capability** — no dead-end research.
+The architectural rule is:
+
+> **JEPA predicts; geometry constrains; MPC decides; the safety layer executes.**
+
+The headline research claim is therefore not “V-JEPA applied to agriculture,” but **task-conditioned dense prediction for visibility-aware whole-body manipulation of thin, deformable plant structures**.
 
 ---
 
 ## 1. Architecture overview
 
+```text
+                         OPERATOR LAPTOP
+                  text / voice + confirmation
+                            |
+                            v
+                  Language / VLM grounding
+             q = (class, ordinal, relation,
+                   attribute, action)
+                            |
+                            v
+ RealSense RGB ---> Grounded-SAM / SAM-2 -----------+
+       |               target initialization         |
+       |                                             |
+       v                                             v
+ V-JEPA 2.1 dense video encoder               RealSense depth
+ temporal target memory                       + camera geometry
+       |                                             |
+       |                                   semantic nvblox SDF
+       |                                stem / branch / leaf / target
+       |                                             |
+       +--------------------+------------------------+
+                            |
+                            v
+                  persistent task state
+        target ID + 2-D distribution + 3-D estimate
+              + visibility / uncertainty
+                            |
+                +-----------+------------+
+                |                        |
+                v                        v
+      action-conditioned JEPA       plant_twin
+       future dense rollouts    deformation/contact state
+                |                        |
+                +-----------+------------+
+                            |
+                    explicit robot
+                 dynamics + kinematics
+                            |
+                            v
+                whole-body predictive MPC
+           controls [v_base, omega_base, qdot_1:6]
+       reach + target visibility + identity + SDF + limits
+                            |
+                            v
+                      safety projection
+             hard clearance / velocity / force / watchdog
+                            |
+                    near-target switch
+                            |
+                            v
+               bounded MPPI / visual servo
+                            |
+                            v
+                          GRASP
 ```
-                           ┌────────────────────────────────────┐
-                           │   OPERATOR LAPTOP (GUI + LLM/VLM)  │
-                           │   • Natural-language input         │
-                           │   • Live scene view + grasp picks  │
-                           │   • Confirmation / abort           │
-                           └──────────────┬─────────────────────┘
-                                          │ ROS 2 DDS (Wi-Fi)
-                                          ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                       JETSON ORIN AGX 64GB                       │
-│                                                                  │
-│  ┌──────────────────┐  ┌──────────────────────────────────────┐  │
-│  │ Perception       │  │ Reasoning                             │  │
-│  │ • YOLO/SAM seg   │──▶ VLA target picker (π0/OpenVLA-class) │  │
-│  │ • VGGT 3D recon  │  │ VLM grounding for open-vocab labels  │  │
-│  │ • nvblox sem.SDF │  │                                       │  │
-│  └────────┬─────────┘  └──────────────┬───────────────────────┘  │
-│           │                            │                          │
-│           ▼                            ▼                          │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │ Whole-body MPC (cuRobo + MPPI extensions)                │    │
-│  │ • 8-DoF (arm 6 + base 2)                                 │    │
-│  │ • Semantic-class-aware cost                              │    │
-│  │ • Visibility + manipulability + joint-limit constraints  │    │
-│  └────────┬─────────────────────────────────────────────────┘    │
-│           │                                                       │
-│           ▼                                                       │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │ Low-level ros2_control                                    │    │
-│  │ • Piper joint trajectory controller (CAN via piper_sdk)  │    │
-│  │ • Scout differential-drive velocity controller            │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+### Separation of responsibility
+
+| Layer | Responsible for | Must not be responsible for |
+|---|---|---|
+| Language / VLM | Interpret operator intent and initialize the requested target | Direct motor actuation |
+| V-JEPA 2.1 | Dense temporal representation, target persistence, predictive visual state | Metric collision distance or final safety authority |
+| RealSense + nvblox | Metric 3-D geometry and semantic clearance | Long-horizon semantic target identity |
+| `plant_twin` | Explicit fitted leaf/stem deformation and contact-conditioned geometry | Replacing perception when fitting is invalid |
+| Whole-body MPC | Optimize feasible Scout + Piper motion | Override hard safety constraints |
+| Local MPPI / servo | Final centimeter-scale closed-loop approach | Open-ended semantic reasoning |
+| Safety layer | Enforce hard clearance, velocity, force, freshness and abort rules | Optimize task reward |
 
 ---
 
-## 2. Current baseline (what we're replacing)
+## 2. Current baseline and gaps
 
-| Component | Current | Pain point |
+| Component | Current repository state | Remaining gap |
 |---|---|---|
-| Middleware | ROS 1 Noetic | EOL May 2025; blocks cuMotion, moveit_servo2, nvblox |
-| Planner | MoveIt 1 + OMPL (8 attempts × 3 s budget) | Slow, non-deterministic, KDL IK fails near singularities |
-| World model | Octomap from raw point cloud | No semantics; thin stems vanish in voxels |
-| Servo | Custom IBVS (`core.py`), publishes TwistStamped to nowhere | No consumer; no horizon; no constraint handling |
-| Mobile base | None | 6-DoF arm reach is the hard limit |
-| Operator interface | RViz + terminal | Expert-only |
+| ROS 2 | Humble workspace and bringup scaffolded | Hardware regression and final wiring |
+| Semantic perception | YOLO / Grounded-SAM paths | Robust open-vocabulary target initialization |
+| Geometry | RealSense → nvblox path validated | Per-class SDF completion and planner query path |
+| Target persistence | Framewise mask centroid + cached 3-D skeleton | Identity can jump under motion, sway, occlusion, or segmentation dropout |
+| Servo | `FullAdaptiveServoController` | No explicit horizon or semantic constraints |
+| Whole-body control | Planned | No coordinated non-holonomic base + arm MPC yet |
+| Prediction | None | Planner cannot forecast whether motion preserves target visibility |
+| Deformation | `plant_twin` exists | Not yet coupled to planning/control |
+| Language interface | Planned | No persistent linkage between grounded language target and execution target |
 
 ---
 
 ## 3. Phased plan
 
-The phases are sequenced so that each one **unblocks the next** and **delivers an independent demo**.
+The revised sequence separates **representation**, **local control**, **geometry-only whole-body control**, and **learned predictive whole-body control** so every learned claim has a deterministic comparator.
 
 ### Phase 0 — ROS 2 Humble migration + Scout integration (Months 1–2)
 
-**Goal:** Get the existing pipeline running on ROS 2 Humble with the Scout 2.0 as the mobile base, with no functional regression.
+**Goal:** complete and validate the ROS 2 hardware baseline.
 
-**Why first:** Every downstream contribution (cuMotion, nvblox, moveit_servo, recent VLA stacks) is ROS 2 only. AgileX already ships [piper_ros on a `humble` branch](https://github.com/agilexrobotics/piper_ros/tree/humble) with ros2_control + MoveIt 2, so the driver risk is low.
+**Current status:** ROS 2 workspace, Piper+Scout description, segmentation path, masked point cloud, skeleton/candidate logic, bringup scaffolding, and live RealSense→nvblox smoke path are present.
 
-**Technical approach**
-- Adopt `agilexrobotics/piper_ros@humble` as the arm driver baseline.
-- Adopt [scout_nav2](https://github.com/AIRLab-POLIMI/scout_nav2) (ROS 2 Humble, Nav2-ready) as the base driver.
-- Port [stem_grasp_ros1](../src/stem_grasp_ros1) → `stem_grasp` (ROS 2):
-  - `rospy` → `rclpy`; node lifecycle managed by `Node`/`LifecycleNode`.
-  - tf1 → tf2_ros (mostly mechanical).
-  - service/action calls → `rclpy.action.ActionClient`.
-- Build a unified URDF `piper_on_scout.urdf.xacro` with a 2-DoF planar virtual joint between `scout_base_link` and `piper_base_link`.
-- Re-do hand-eye calibration on the integrated rig (existing [calibration_transform.py](../calibration_transform.py) logic ports cleanly; switch sample collection to ROS 2 actions).
-- Stand up Nav2 on Scout with a basic 2D costmap so the base can be driven from a goal pose.
+**Remaining work**
+- moveit_servo wiring;
+- Nav2 hardware validation;
+- Piper + Scout + RealSense synchronized hardware bringup;
+- ROS 1 → ROS 2 regression;
+- E-stop / stop-and-zero validation.
 
-**Deliverables**
-- New colcon workspace at `Piper_Scout_ws/` with `src/{piper, piper_description, piper_moveit, piper_msgs, scout_base, scout_nav2, stem_grasp, scout_piper_bringup}`.
-- `scout_piper_bringup/launch/full_system.launch.py` brings up arm + base + camera + Nav2 + MoveIt 2.
-- Regression test: existing scan/plan/servo pipeline produces the same grasp candidates as the ROS 1 version on a static plant.
-- Updated CLAUDE.md / README for the new workspace.
+**Exit criteria**
+- Arm + base + camera + TF operate together on hardware.
+- Servo commands reach the arm through moveit_servo.
+- Scout executes a basic Nav2 goal.
+- Candidate poses reproduce the legacy stack within documented tolerance.
+- Safety stop path is validated before any learned controller is allowed to command motion.
 
-**Success criteria**
-- Full system boots and runs to "candidate grasp selected" on a real plant within 10 s.
-- Scout drives 2 m to a goal pose with arm folded, then unfolds without self-collision.
-- TF tree validated end-to-end (`scout_odom → scout_base_link → piper_base_link → camera_link`).
-
-**Risks**
-- Driver behavioral parity gaps between Noetic and Humble branches → mitigate with smoke tests on day 1 of each port.
-- CAN bus contention between Piper SDK and Scout SDK → use distinct interfaces; verified by [piper_sdk](https://github.com/agilexrobotics/piper_sdk) usage of named CAN routes.
-
-**Publications:** None expected from this phase — it's enabling work. (Possible "Open-source agricultural mobile-manipulation platform" tech report at end.)
+**Publication role:** enabling/platform work.
 
 ---
 
-### Phase 1 — Semantic 3D scene representation (Idea 4, Months 3–4)
+### Phase 1 — Semantic RGB-D scene representation + deformable plant state (Months 3–4)
 
-**Goal:** Replace MoveIt's Octomap with a GPU-accelerated **per-class signed distance field** that distinguishes stem / branch / leaf / pot / target, fed by the existing YOLO+SAM segmentation.
+**Goal:** establish explicit metric geometry and deformation baselines before learned prediction.
 
-**Why now:** Solves the open TODO in your codebase ("add leaf as collision object" from commit `e8cdfc7`), is a *prerequisite* for whole-body MPC in Phase 3 (the cost terms need semantic SDFs), and delivers an immediate demo improvement.
+#### 1A — Semantic nvblox
 
-**Technical approach**
-- Deploy [isaac_ros_nvblox](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox) on Orin AGX with the RealSense feed.
-- Feed semantic masks (your existing segmentation node, ported to ROS 2) to nvblox's semantic channel.
-- Maintain four parallel TSDFs: `stem`, `branch`, `leaf`, `target`.
-- Expose a custom MoveIt 2 collision plugin that:
-  - Treats `stem` + `branch` as **hard collision**.
-  - Treats `leaf` as **soft cost** (allow brushing, log contact force budget).
-  - Treats `target` as an **attractor** for goal generation.
-- Add a configurable **inflation per class** (e.g., 5 mm padding around stems, 0 mm around leaves).
+- RealSense depth → nvblox TSDF/ESDF.
+- Semantic classes: stem, branch, leaf, target.
+- Non-target stem/branch: hard collision policy.
+- Leaf: soft cost with configurable clearance/contact budget.
+- Selected target: grasp attractor and removable from the non-target hard field only in final grasp mode.
+- Complete semantic-mask integration.
+- Finish collision-plugin ESDF query path.
+- Measure update latency, GPU memory and sustained rate on the actual AGX Orin.
 
-**Deliverables**
-- `stem_grasp/scene_repr/` ROS 2 package wrapping nvblox + custom plugin.
-- `stem_grasp/config/semantic_classes.yaml` declarative class → behavior map.
-- Comparative benchmark: planning success rate on the same 20 hand-picked cluttered scenes, Octomap vs. semantic SDF.
+#### 1B — `plant_twin` integration
 
-**Success criteria**
-- ≥ 30 % reduction in "no plan found" failures in cluttered scenes.
-- Per-frame nvblox update < 33 ms on Orin AGX.
-- Leaf-aware planning visibly avoids treating leaves as solid obstacles.
+The repository now contains a deformable leaf + stem digital twin with:
+- leaf mesh + bending state;
+- stem centerline + length/smoothness constraints;
+- temporal priors;
+- gripper-contact residuals;
+- warm-started LM / Gauss-Newton fitting.
 
-**Risks**
-- nvblox's semantic channel API may need a custom fork to support 4 classes — budget 1 week for that.
-- Segmentation latency could drag down nvblox update rate → run segmentation at half-rate, fuse temporally.
+Use it for:
+1. deformation-state analysis during contact;
+2. optional local MPC deformation costs;
+3. simulation-style perturbation experiments;
+4. testing whether JEPA latent changes correlate with explicit deformation state.
 
-**Publications (target):** Workshop paper at ICRA Agri-Robotics or CASE — *"Semantic Signed Distance Fields for Thin-Structure Agricultural Manipulation."*
+`plant_twin` is **not** a hard dependency for tracking or safety. Invalid/stale fits are ignored.
 
-**Key references:** [isaac_ros_nvblox](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox), [Isaac ROS cuMotion + nvblox integration](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_cumotion/index.html), [Self-Supervised Robotic Leaf Manipulation (2025)](https://arxiv.org/html/2505.03702v3).
-
----
-
-### Phase 2 — MPPI visual-predictive servo (Idea 2, Months 5–7)
-
-**Goal:** Replace the current adaptive IBVS in [core.py](../src/stem_grasp_ros1/src/stem_grasp_ros1/core.py) with a **sampling-based MPC over image-plane features** that handles visibility, manipulability, joint-limit, and force constraints jointly.
-
-**Why now:** It's an isolated module (arm-only, single-frame inputs/outputs) — low integration risk. Validates MPPI on the platform before scaling to whole-body in Phase 3. Already plugs into the Phase 1 semantic SDF as a soft cost term.
-
-**Technical approach**
-- Re-implement [MPPI-VS](https://arxiv.org/abs/2104.04925) on Jetson Orin in CUDA + PyTorch.
-- State: joint config q, EE pose, current image features (stem centroid, leaf bounding boxes).
-- Inputs: 6-DoF joint velocity.
-- Horizon: 20 steps × 50 ms = 1 s lookahead.
-- Cost terms:
-  - Image-plane error to desired stem centroid (existing).
-  - Visibility (penalize leaving FoV).
-  - Manipulability (Yoshikawa index, penalize singularities).
-  - Joint-limit barrier.
-  - Force prediction (use linearized arm dynamics + F/T history).
-  - Soft-cost from Phase 1 leaf SDF.
-- Sample 512 trajectories × 20 steps in parallel; converge in ~5 ms/step on Orin.
-- Output `JointJog` to MoveIt 2 Servo (which now actually has a subscriber, unlike the ROS 1 stack).
-
-**Deliverables**
-- `stem_grasp/servo/mppi_vs/` package with CUDA kernels + Python wrapper.
-- A/B test harness vs. current adaptive IBVS on 50 scripted approach trials.
-- Public benchmark dataset (anonymized) of approach trajectories with force traces.
-
-**Success criteria**
-- ≥ 20 % improvement in approach success rate vs. baseline IBVS.
-- ≥ 30 % reduction in average max-force at contact.
-- Maintains 100 Hz outer loop on Orin AGX.
-
-**Risks**
-- MPPI tuning (sampling covariance, temperature) is finicky → reserve 2 weeks for tuning.
-- Image-Jacobian linearization can be inaccurate at close range → fall back to your online-Jacobian estimator as a residual.
-
-**Publications (target):** IROS or RA-L — *"Constraint-Aware MPPI Visual Servoing for Foliage-Rich Manipulation."*
-
-**Key references:** [MPPI-VS](https://arxiv.org/abs/2104.04925), [Real-Time Constrained Visual Servoing for Agricultural Harvesting](https://www.mdpi.com/2673-2688/7/4/124), [Visual Predictive Control for Mobile Manipulator](https://www.sciencedirect.com/science/article/abs/pii/S0921889024001386).
+**Exit criteria**
+- Semantic clearance queries available to controllers.
+- Thin structures measurably better represented than the legacy Octomap baseline.
+- `plant_twin` synchronized with the manipulation pipeline and exposing fit confidence/freshness.
+- Orin timing measured rather than assumed.
 
 ---
 
-### Phase 3 — Whole-body GPU MPC for Piper + Scout (Idea 1, Months 8–11) ★ headline contribution
+### Phase 2A — V-JEPA 2.1 dense temporal target state (Months 5–6) ★ NEW
 
-**Goal:** Treat the 6-DoF arm + 2-DoF differential-drive base as a **unified 8-DoF system** under one MPC, so the robot can drive *while* the arm approaches and recover from local-minima that an arm-only planner can't (the "can't go around the obstacle" pain point).
+**Goal:** replace framewise target-persistence heuristics with a temporally consistent representation of the exact flower/peduncle selected by the operator.
 
-**Why now:** Phases 0–2 have de-risked the building blocks (ROS 2, semantic SDFs, MPPI on Orin). This phase ties them together and is the strongest standalone publication.
+**Research question**
 
-**Technical approach**
-- Extend [cuRobo](https://curobo.org/) / [cuMotion](https://github.com/nvidia-isaac/cumotion) to include the base degrees of freedom in its kinematic chain.
-  - Approach 1: add a planar virtual joint at the chain root and let cuRobo's existing optimizer treat it as 2 additional DoF.
-  - Approach 2: fork cuRobo's CUDA kernels to add a wheeled-base layer with non-holonomic constraint penalties — cleaner, more publishable.
-- Custom cost terms (built on Phase 1 semantic SDFs):
-  - Reach objective (Phase 2 image cost transplanted).
-  - Manipulability of arm subset (avoid driving when the arm could solve it cleanly).
-  - Base motion penalty (gentle preference for "arm first, base only if needed").
-  - Visibility of target throughout the trajectory (so we don't drive past the plant).
-  - Leaf soft-cost, stem/branch hard cost.
-- 200 Hz whole-body replan target on Orin AGX.
-- Safety filter: clip whole-body command through a Phase 2 short-horizon MPPI as a final layer.
+Can dense V-JEPA 2.1 features preserve small-instance identity through eye-in-hand motion, Scout motion, plant sway, temporary occlusion and segmentation dropout better than practical trackers and V-JEPA 2?
 
-**Comparison baselines**
-- Arm-only MoveIt 2 + cuMotion (no base motion).
-- Sequential planner: navigate base to fixed pose, then plan arm.
-- Holistic QP (Haviland & Corke's NEO, reimplemented).
-- Ours: whole-body MPPI.
+**Initial deployment**
+- V-JEPA 2.1 ViT-B/16, 384 px (80M) first.
+- Frozen encoder for the first benchmark.
+- ViT-L/16 only after the ViT-B end-to-end path works.
+- JEPA consumes RGB; RealSense remains the metric geometry source.
 
-**Deliverables**
-- `stem_grasp/whole_body_mpc/` package.
-- Quantitative benchmark on 30 cluttered plant scenes, measuring: time-to-grasp, success rate, % of "arm-unreachable" targets converted to "reachable via base motion."
-- Open-source release of the wheeled-base cuRobo extension (the *upstream-able* contribution).
+Given a video window:
 
-**Success criteria**
-- ≥ 50 % of previously-unreachable targets become reachable via coordinated base motion.
-- End-to-end time-to-grasp ≤ baseline.
-- ≤ 0 % regression on previously-reachable targets.
+\[
+F_t = E_\theta(I_{t-L+1:t})
+\]
 
-**Risks**
-- Differential-drive non-holonomy is awkward inside cuRobo's gradient framework — MPPI handles it natively, so lean MPPI if cuRobo fights us.
-- Localization quality on Scout in outdoor / cluttered scenes — depend on nvblox + Nav2 fusion from Phase 0.
+where \(F_t\) is a dense token grid.
 
-**Publications (target):** ICRA / IROS full paper — *"Whole-Body GPU-Parallel MPC for Mobile Manipulation in Thin-Structure Agricultural Settings."* Possibly T-RO extended version.
+Grounding initializes target mask \(M_t^*\). Define target descriptor
 
-**Key references:** [Haviland & Corke holistic mobile manipulation](https://jhavl.github.io/holistic/), [EHC-MM](https://arxiv.org/html/2409.08527), [RMMI](https://arxiv.org/html/2408.16206), [cuRobo report](https://curobo.org/reports/curobo_report.pdf), [Industrial Motion Planning with GPUs](https://arxiv.org/html/2508.04146v2).
+\[
+r_t =
+\frac{\sum_p M_t^*(p)F_t(p)}
+{\sum_p M_t^*(p)+\epsilon}.
+\]
+
+Dense similarity:
+
+\[
+C_{t+1}(p)=\cos(F_{t+1}(p),r_t)
+\]
+
+and spatial target distribution:
+
+\[
+P_{t+1}(p)=\mathrm{softmax}(C_{t+1}(p)/\tau).
+\]
+
+Target image position:
+
+\[
+\hat u_{t+1}=\sum_p P_{t+1}(p)p
+\]
+
+and uncertainty:
+
+\[
+H_{t+1}=-\sum_p P_{t+1}(p)\log P_{t+1}(p).
+\]
+
+Back-project valid depth to obtain a 3-D target estimate and uncertainty.
+
+**Implementation rule**
+
+Keep dense tensors inside one GPU process. Publish compact ROS state:
+- target image mean/covariance;
+- target 3-D mean/covariance;
+- target-ID confidence;
+- entropy / visibility;
+- occluded/lost flag;
+- timestamp + maximum-valid-age.
+
+**Suggested package**
+
+```text
+Codes/src/scout_piper_jepa/
+  scout_piper_jepa/
+    encoder.py
+    target_memory.py
+    target_state_node.py
+    rosbag_dataset.py
+    eval_tracking.py
+  config/vjepa2_1.yaml
+```
+
+**Suggested topics**
+
+```text
+/piper_jepa/target_state
+/piper_jepa/target_uncertainty
+/piper_jepa/target_visible
+/piper_jepa/debug_similarity
+```
+
+**Dataset v0**
+
+Record synchronized rosbag2 episodes containing:
+- RGB, depth, CameraInfo;
+- TF;
+- Piper joint state;
+- Scout odometry;
+- target masks and selected target identity;
+- executed base/arm commands;
+- force/contact;
+- `plant_twin` state when valid;
+- final outcome.
+
+Factors:
+- static target;
+- natural / induced sway;
+- partial occlusion;
+- temporary full occlusion;
+- arm-only camera motion;
+- base-only motion;
+- combined base+arm motion;
+- lighting variation;
+- thin-structure depth dropout.
+
+**Baselines**
+1. Framewise Grounded-SAM / SAM.
+2. Conventional optical / feature tracking.
+3. Strong dense self-supervised visual-feature tracking.
+4. V-JEPA 2.
+5. V-JEPA 2.1.
+
+**Metrics**
+- target-ID retention;
+- false target-switch rate;
+- 2-D center error;
+- 3-D target error;
+- mask IoU where visible;
+- occlusion recovery;
+- temporal jitter;
+- latency / FPS / memory / power on Orin.
+
+**Go/no-go gate**
+
+Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue only if it gives a meaningful target-persistence or occlusion-recovery gain over the strongest practical baseline.
 
 ---
 
-### Phase 4 — Active perception with feed-forward Gaussians (Idea 3, Months 11–13)
+### Phase 2B — Safety-bounded local MPPI visual servo (Months 6–8)
 
-**Goal:** Replace the existing fixed "multi-view capture ring" with a **next-best-view loop** driven by feed-forward 3D reconstruction, cutting the number of captures needed by 3–5× and improving stem reconstruction quality near occlusions.
+**Goal:** replace the legacy adaptive IBVS with a constrained final-approach controller while keeping the current controller as a fallback baseline.
 
-**Why now:** Phase 3 makes the platform mobile; mobile-rig views unlock NBV's value. By this point we have a stable whole-body controller, so positioning for an NBV viewpoint is "free."
+**State**
+- Piper joint state + EE pose;
+- target distribution/uncertainty from Phase 2A;
+- RealSense depth;
+- semantic SDF clearance;
+- force/contact;
+- optional `plant_twin` deformation state.
 
-**Technical approach**
-- Integrate [VGGT](https://github.com/facebookresearch/vggt) (CVPR 2025 Best Paper) for sub-second posed 3D reconstruction from 3–8 views.
-- Implement [FisherRF-style NBV](https://arm.stanford.edu/next-best-sense) but with a **task-aware information gain**:
-  - Standard NBV maximizes generic surface coverage entropy.
-  - Ours maximizes variance reduction *on the skeleton joint nearest the user-specified target* — the only geometry that matters for grasp selection.
-- Closed loop: VGGT → skeletonize → score candidate viewpoints → command Phase 3 whole-body MPC to fly to the best one → re-VGGT.
+**Control**
+- Piper arm joint velocity;
+- Scout frozen by default during near-contact mode.
 
-**Deliverables**
-- `stem_grasp/active_perception/` package.
-- Ablation: random viewpoints vs. fixed ring vs. ours, measured on reconstruction quality at the grasp site + downstream grasp success.
+**Costs**
+- image target error;
+- target uncertainty / visibility;
+- joint limits;
+- manipulability;
+- semantic clearance;
+- smoothness;
+- force/contact penalty;
+- optional deformation penalty.
 
-**Success criteria**
-- Reach equivalent reconstruction quality (Chamfer distance at stem) in 3 views vs. 9 fixed-ring views.
-- Total perception time per plant ≤ 10 s.
+**Hard gates**
+- stop/re-ground after persistent target-confidence loss;
+- stop/retract on force-limit violation;
+- stop on hard semantic-clearance violation;
+- enforce velocity/acceleration bounds independently of JEPA.
 
-**Risks**
-- VGGT memory budget on Orin (need careful sparse-view batching).
-- NBV optimization can get stuck in equally-good local minima → add small random jitter.
-
-**Publications (target):** RA-L or T-RO short — *"Task-Aware Next-Best-View for Thin-Structure Reconstruction with Feed-Forward 3D Gaussians."*
-
-**Key references:** [VGGT](https://github.com/facebookresearch/vggt), [Next Best Sense (Stanford ARM)](https://arm.stanford.edu/next-best-sense), [ActiveSplat (RA-L 2025)](https://li-yuetao.github.io/ActiveSplat/ActiveSplat.pdf).
+**Ablation**
+- current `FullAdaptiveServoController`;
+- constrained conventional servo;
+- MPPI with framewise target state;
+- MPPI with V-JEPA 2.1 target state;
+- with/without `plant_twin` deformation cost.
 
 ---
 
-### Phase 5 — VLA + operator GUI for non-expert use (Months 13–18) ★ application capstone
+### Phase 3A — Geometry-only whole-body GPU MPC (Months 8–11)
 
-**Goal:** The end-state application. A laptop GUI lets a non-expert user issue natural-language instructions ("grasp the third flower from the left"), the system grounds them against the live scene, and the underlying Phase 1–4 stack executes safely.
+**Goal:** build the strongest deterministic mobile-manipulation baseline before learned prediction.
 
-**Why last:** VLAs are the *least* mature layer and benefit most from a deterministic, safety-bounded controller underneath. By Phase 5 we have that — the VLA can hallucinate freely; Phase 3's MPC won't let it crash the arm.
+Scout configuration:
 
-**Technical approach**
+\[
+x_b=[x,y,\theta]
+\]
 
-**5a — VLA integration on Orin (Months 13–14)**
-- Pick the deployment model based on Orin AGX budget (~8 GB GPU headroom from prior phases):
-  - **Default:** π₀ (3 B params, ~6 GB after INT8/TRT-LLM) — runs at ~5–8 Hz on Orin.
-  - **Lighter fallback:** Octo-Small (30 M params), if π₀ pushes Orin too hard.
-  - **Hybrid option:** Run the 7B-class VLA on the laptop, stream sub-goals to Orin over DDS at 2–5 Hz.
-- Frame the VLA as a **sub-goal generator**, not a low-level controller:
-  - Input: scene image + natural-language instruction.
-  - Output: structured target (SE(3) pose + class label + textual rationale).
-  - The whole-body MPC remains the safety-bounded executor.
-- Add a [PhysVLM](https://openaccess.thecvf.com/content/CVPR2025/papers/Zhou_PhysVLM_Enabling_Visual_Language_Models_to_Understand_Robotic_Physical_Reachability_CVPR_2025_paper.pdf)-style reachability check: gate every VLA-proposed target through a forward-kinematics-aware filter before the MPC sees it.
+with differential-drive controls
 
-**5b — Open-vocabulary perception (Month 14)**
-- Replace the fixed YOLO "branch/stem" prompt with a VLM-grounded segmentation (e.g., Grounding-DINO + SAM-2) so the system can handle new plant species ("the yellow flower," "the wilted leaf") without retraining.
+\[
+u_b=[v,\omega].
+\]
 
-**5c — Operator GUI on laptop (Months 15–16)**
-- Tauri or Electron app (Tauri preferred for size + native feel).
-- Tabs:
-  - **Drive**: live camera, click-to-go-here on the costmap (drives Scout).
-  - **Inspect**: live 3D Gaussian preview of the current plant from VGGT, with candidate grasp poses overlaid.
-  - **Command**: text/voice prompt box; the VLA's parsed interpretation shown back to the user ("I think you mean: the flower at position X, do you confirm?").
-  - **Watch**: live force/joint readouts, abort button, plain-language status feed.
-- ROS 2 ↔ GUI communication: `rclpy` bridge or [Foxglove Studio](https://foxglove.dev) as the underlying transport (fast track for prototyping).
-- Voice input via whisper-cpp on the laptop (no cloud).
-- Voice output via Piper TTS (the *other* Piper, ironically) for status reports.
+Combined configuration:
 
-**5d — Confirmation loop + safety affordances (Month 17)**
-- Every VLA decision surfaces in the GUI with a 2-second "are you sure?" countdown the operator can override.
-- Plain-language explanations of why a target was rejected ("That flower is behind a leaf I can't safely brush through. Try another?").
-- Hot-key e-stop wired to both the GUI and the existing hotkey watcher.
+\[
+x=[x_b,y_b,\theta_b,q_1,\ldots,q_6]^T
+\]
 
-**5e — User study (Month 18)**
-- 10 non-expert participants, 3 task families: identify a flower, grasp it, abort mid-grasp.
-- Metrics: task success, time-to-grasp, NASA-TLX cognitive load, operator trust score.
+and control
 
-**Deliverables**
-- `stem_grasp/vla_bridge/` package (model serving + sub-goal grounding).
-- `piper_scout_gui/` desktop app (Tauri).
-- Public dataset of language-grounded plant manipulation episodes.
-- User study report.
+\[
+u=[v,\omega,\dot q_1,\ldots,\dot q_6]^T\in\mathbb R^8.
+\]
 
-**Success criteria**
-- A first-time user can issue and confirm a successful grasp instruction within 5 minutes of meeting the system.
-- ≥ 80 % language-to-grasp success rate on a 100-trial test set.
-- All VLA-proposed targets are reachability-filtered; 0 unsafe commands reach the arm.
+Base dynamics:
 
-**Risks**
-- VLA latency on Orin — mitigation: run on laptop, sub-goals only.
-- Operator trust collapse on a single failure — mitigation: confirmation loop + plain-language explanations.
-- Open-vocabulary segmentation drift on new plant species — mitigation: keep YOLO fallback for known classes.
+\[
+x_{t+1}=x_t+\Delta t\,v_t\cos\theta_t
+\]
 
-**Publications (target):**
-- HRI or RO-MAN — *"Plain-Language Mobile Manipulation: Bridging VLA Reasoning and Safety-Bounded Control for Agricultural Robots."*
-- Application paper at IROS Agri-Robotics workshop with the user study.
+\[
+y_{t+1}=y_t+\Delta t\,v_t\sin\theta_t
+\]
 
-**Key references:** [Vision-Language-Action Models Survey](https://arxiv.org/html/2505.04769v1), [Large VLM-based VLA Models Survey](https://arxiv.org/html/2508.13073v1), [PhysVLM](https://openaccess.thecvf.com/content/CVPR2025/papers/Zhou_PhysVLM_Enabling_Visual_Language_Models_to_Understand_Robotic_Physical_Reachability_CVPR_2025_paper.pdf), [Vision-Guided Robotic Pollination](https://arxiv.org/html/2510.06146).
+\[
+\theta_{t+1}=\theta_t+\Delta t\,\omega_t.
+\]
+
+Arm:
+
+\[
+q_{t+1}=q_t+\Delta t\,\dot q_t.
+\]
+
+Do **not** model the Scout as independently actuated Cartesian \(x/y\) joints in the final formulation.
+
+Geometry-only objective:
+
+\[
+J_{\rm geo}
+=
+w_gJ_{\rm goal}
++w_cJ_{\rm collision}
++w_lJ_{\rm leaf}
++w_mJ_{\rm manip}
++w_bJ_{\rm base}
++w_sJ_{\rm smooth}
++w_dJ_{\rm deform}.
+\]
+
+\(J_{\rm deform}\) is optional and comes from valid `plant_twin` state.
+
+**Baselines**
+- arm-only;
+- sequential Scout → Piper;
+- holistic/reactive QP;
+- geometry-only whole-body MPC.
+
+**Scene categories**
+1. comfortably arm reachable;
+2. near workspace boundary;
+3. unreachable without base motion;
+4. geometrically reachable but visibility-sensitive.
+
+Do not commit to a 200 Hz claim until the controller is measured on Orin.
+
+---
+
+### Phase 3B — Piper-JEPA predictive whole-body MPC (Months 10–14) ★ HEADLINE
+
+**Goal:** predict whether candidate whole-body motions preserve the identity and visibility of the selected thin plant target, and use that prediction as a soft planning signal inside explicit geometry-constrained MPC.
+
+**Novelty boundary**
+
+V-JEPA 2-AC already performs action-conditioned latent prediction for robot planning. V-JEPA 2.1 provides stronger dense representations. Therefore the contribution is **not** simply “use V-JEPA 2.1 with actions.”
+
+The intended claim is:
+
+> **A task-conditioned dense predictive world model improves whole-body manipulation of small deformable plant structures by forecasting target identity, visibility and uncertainty under coordinated mobile-base + arm motion, while explicit RGB-D semantic geometry and a separate safety layer remain authoritative for collision and contact constraints.**
+
+#### Action representation
+
+Optimizer action:
+
+\[
+u_t=[v_b,\omega_b,\dot q_{1:6}].
+\]
+
+Map to an embodiment-normalized JEPA action:
+
+\[
+a_t=\Gamma(x_t,u_t)
+\]
+
+with
+
+\[
+a_t=[
+\Delta s_b,
+\Delta\theta_b,
+\Delta p_{ee}^{(3)},
+\Delta r_{ee}^{(3)},
+\Delta g].
+\]
+
+#### Action-conditioned predictor
+
+\[
+\hat Z_{t+1}
+=
+P_\phi(Z_{t-K+1:t},a_t,s_t).
+\]
+
+Rollout:
+
+\[
+\hat Z_{t+1:t+H}
+=
+P_\phi(Z_t,a_{t:t+H-1},s_t).
+\]
+
+#### Target-weighted prediction loss
+
+Thin peduncles occupy few patches, so global latent loss can ignore the task-relevant region.
+
+\[
+w_t(p)=
+1+\lambda_T M_{\rm target}(p)
++\lambda_P M_{\rm plant}(p).
+\]
+
+Teacher-forced loss:
+
+\[
+\mathcal L_{\rm TF}
+=
+\sum_p
+w_t(p)
+\|
+\hat Z_{t+1}(p)-\mathrm{sg}[Z_{t+1}(p)]
+\|_1.
+\]
+
+Rollout loss:
+
+\[
+\mathcal L_{\rm roll}
+=
+\sum_{k=1}^H
+\gamma^{k-1}
+\sum_p
+w_{t+k}(p)
+\|
+\hat Z_{t+k}(p)-\mathrm{sg}[Z_{t+k}(p)]
+\|_1.
+\]
+
+Total:
+
+\[
+\mathcal L_{\rm AC}
+=
+\mathcal L_{\rm TF}
++\lambda_R\mathcal L_{\rm roll}.
+\]
+
+#### Predict future target state
+
+\[
+\hat C_{t+k}(p)
+=
+\cos(\hat Z_{t+k}(p),r_t)
+\]
+
+\[
+\hat P_{t+k}(p)
+=
+\mathrm{softmax}(\hat C_{t+k}(p)/\tau).
+\]
+
+Then:
+
+\[
+\hat u_{t+k}
+=
+\sum_p \hat P_{t+k}(p)p
+\]
+
+and
+
+\[
+\hat H_{t+k}
+=
+-\sum_p
+\hat P_{t+k}(p)\log\hat P_{t+k}(p).
+\]
+
+#### JEPA-aware whole-body objective
+
+\[
+J=
+w_gJ_{\rm goal}
++w_vJ_{\rm visibility}
++w_iJ_{\rm identity}
++w_cJ_{\rm collision}
++w_lJ_{\rm leaf}
++w_mJ_{\rm manip}
++w_bJ_{\rm base}
++w_sJ_{\rm smooth}
++w_dJ_{\rm deform}.
+\]
+
+Predictive visibility:
+
+\[
+J_{\rm visibility}
+=
+\sum_k
+\left[
+\|\hat u_{t+k}-u_{\rm des}\|^2
++\lambda_H\hat H_{t+k}
++B_{\rm FoV}(\hat u_{t+k})
+\right].
+\]
+
+Identity preservation:
+
+\[
+J_{\rm identity}
+=
+\sum_k
+\left[
+1-\cos(\hat r_{t+k},r_t)
+\right].
+\]
+
+Optional explicit deformation from `plant_twin`:
+
+\[
+J_{\rm deform}
+=
+\sum_k
+[
+\alpha_sE_{\rm stem\ strain}
++\alpha_lE_{\rm leaf\ stretch}
++\alpha_bE_{\rm leaf\ bend}
+].
+\]
+
+Roles remain distinct:
+- JEPA predicts future visual target state.
+- `plant_twin` provides explicit fitted deformation quantities.
+
+#### Hard safety
+
+For robot collision primitives \(c_j\):
+
+\[
+\phi_{\rm hard}(c_j(x_{t+k}))\ge d_{\rm safe}.
+\]
+
+The learned predictor never relaxes this condition.
+
+Safety projection:
+
+\[
+u_{\rm safe}
+=
+\arg\min_u
+\|u-u_{\rm MPC}\|_2^2
+\]
+
+subject to:
+- semantic hard clearance;
+- joint/base velocity and acceleration limits;
+- force limit;
+- state freshness;
+- watchdog / abort conditions.
+
+#### Near-contact handoff
+
+Switch to Phase 2B when:
+- EE-target distance < \(d_{\rm switch}\);
+- target entropy < \(H_{\max}\);
+- confidence > \(c_{\min}\);
+- semantic clearance is valid.
+
+Freeze or strongly penalize Scout motion after handoff.
+
+#### Training-data study
+
+Evaluate increasing Piper-Scout data budgets:
+
+\[
+1\,{\rm h}, 2\,{\rm h}, 5\,{\rm h}, 10\,{\rm h}
+\]
+
+or the closest feasible balanced subsets. Report data efficiency.
+
+#### Core ablations
+
+1. V-JEPA 2 vs V-JEPA 2.1.
+2. pooled/global vs dense state.
+3. no target weighting vs target weighting.
+4. no action conditioning vs action conditioning.
+5. arm-only actions vs whole-body actions.
+6. rollout \(H=1,2,4,8\).
+7. learned RGB state alone vs learned state + RGB-D geometry.
+8. geometry-only MPC vs JEPA-aware MPC.
+9. without vs with `plant_twin` deformation cost.
+10. without vs with local safety-servo handoff.
+11. ViT-B vs ViT-L accuracy/latency trade-off.
+
+#### Primary robot metrics
+
+- first-attempt grasp success;
+- final grasp success;
+- target-ID retention;
+- target-loss events;
+- completion time;
+- Scout distance;
+- EE path length;
+- minimum non-target clearance;
+- maximum contact force;
+- safety-filter activations;
+- predictor/MPC latency;
+- GPU memory.
+
+#### Critical experiment
+
+Create scenes where several trajectories are geometrically feasible but some cause self-occlusion or foliage occlusion of the requested target. This is the experiment that must demonstrate value beyond Phase 3A geometry-only MPC.
+
+**Success criterion:** improve task outcome or target retention without worsening safety metrics, and beat the geometry-only whole-body controller.
+
+**Working title:** *Piper-JEPA: Task-Conditioned Dense World Models for Safe Whole-Body Plant Manipulation*
+
+---
+
+### Phase 4 — Uncertainty-driven active perception (Months 13–15)
+
+**Goal:** acquire new viewpoints only when the persistent target state or metric geometry is uncertain.
+
+Combine:
+- JEPA target uncertainty;
+- RGB-D / VGGT geometry uncertainty;
+- `plant_twin` fit uncertainty where deformation matters.
+
+\[
+U_{\rm total}
+=
+\alpha U_{\rm JEPA}
++\beta U_{\rm geometry}
++\gamma U_{\rm twin}.
+\]
+
+**Ablations**
+- fixed ring;
+- random reachable viewpoints;
+- geometry-only NBV;
+- JEPA-only uncertainty;
+- fused task-aware NBV.
+
+**Exit criterion:** fewer views or lower acquisition time at equal or better grasp performance.
+
+---
+
+### Phase 5 — Language/VLM + operator GUI for non-experts (Months 15–18) ★ APPLICATION CAPSTONE
+
+**Goal:** expose the validated stack through natural-language interaction without making the VLM the motor controller.
+
+Map instruction \(\ell\) to:
+
+\[
+q_\ell=
+({\rm class,ordinal,spatial\ relation,attribute,action}).
+\]
+
+Example:
+
+> “grasp the third flower from the left”
+
+becomes:
+
+```text
+class = flower
+ordinal = 3
+relation = left-to-right
+action = grasp
+```
+
+The VLM initializes the target; Phase 2A maintains its identity afterward.
+
+**VLM responsibilities**
+- parse instruction;
+- ground candidates;
+- ask for clarification when ambiguous;
+- generate readable state/rejection explanations.
+
+**VLM must not**
+- bypass semantic SDF constraints;
+- bypass reachability checks;
+- bypass safety projection;
+- send raw motor commands.
+
+**GUI**
+- RGB/RGB-D live view;
+- selected target overlay + confidence;
+- target-loss/occlusion state;
+- grasp pose + planned path;
+- force/clearance/safety state;
+- `plant_twin` deformation overlay when valid;
+- confirm/abort;
+- text + local speech input.
 
 ---
 
 ## 4. Timeline at a glance
 
-```
-Month  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18
-P0    ████
-P1          ████
-P2                ██████
-P3                          ████████████
-P4                                      ██████
-P5                                            ████████████
+```text
+Month   1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18
+P0     ██████
+P1           ██████
+P2A                ██████
+P2B                   ████████
+P3A                         ████████████
+P3B                               ██████████████
+P4                                           ████████
+P5                                                 ████████████
 ```
 
-| Phase | Months | Lead milestone | Paper venue |
+| Phase | Relative months | Lead milestone | Publication role |
 |---|---|---|---|
-| 0 — ROS 2 + Scout | 1–2 | Full system on Humble | Tech report |
-| 1 — Semantic SDF | 3–4 | ≥30 % plan-failure reduction | ICRA-W / CASE |
-| 2 — MPPI-VS | 5–7 | ≥20 % servo-success gain | IROS / RA-L |
-| 3 — Whole-body MPC | 8–11 | ≥50 % unreachable→reachable | ICRA / IROS / T-RO |
-| 4 — Active perception | 11–13 | 3× fewer views | RA-L / T-RO |
-| 5 — VLA + GUI | 13–18 | Novice-user study | HRI / RO-MAN |
+| 0 — ROS 2 + Scout | 1–2 | Hardware-integrated baseline | Platform / tech report |
+| 1 — Semantic + deformable geometry | 3–4 | Valid clearance + `plant_twin` state | Workshop / baseline |
+| 2A — V-JEPA 2.1 target state | 5–6 | Target persistence under motion/occlusion | Representation benchmark |
+| 2B — Bounded local MPPI servo | 6–8 | Safer final approach | IROS / RA-L if independently strong |
+| 3A — Geometry whole-body MPC | 8–11 | Non-holonomic base+arm control | Deterministic baseline / possible full paper |
+| 3B — Piper-JEPA predictive MPC | 10–14 | Predict future target visibility/identity | **Headline ICRA / IROS / RSS / RA-L** |
+| 4 — Active perception | 13–15 | Uncertainty-driven NBV | Follow-on if clear gain |
+| 5 — Language + GUI | 15–18 | Non-expert language-grounded grasping | HRI / RO-MAN |
 
-**Total: 6 publishable contributions over 18 months on a single coherent platform.** Each phase is independently demonstrable — if the program ends early, every completed phase still ships a usable capability.
+The objective is **not** to force one paper per phase. Phases 2A–3B should converge into one coherent Piper-JEPA paper if the ablations support the combined claim.
 
 ---
 
-## 5. Compute budget on Jetson Orin AGX (64 GB)
+## 5. Compute and real-time budget on Jetson AGX Orin 64 GB
 
-Steady-state during Phase 5 operation:
+Do not treat projected desktop-GPU throughput as an Orin result.
 
-| Component | GPU mem | GPU SM | Latency | Source |
-|---|---|---|---|---|
-| nvblox semantic SDF @ 30 Hz | ~2 GB | 1 SM | < 33 ms | Phase 1 |
-| YOLO + SAM segmentation (TRT) | ~1 GB | 2 SMs | ~10 ms | existing |
-| VGGT sparse 4-view recon (on-demand) | ~3 GB | 4 SMs | ~800 ms | Phase 4 |
-| MPPI visual servo @ 100 Hz | ~0.5 GB | 1 SM | ~5 ms | Phase 2 |
-| Whole-body MPC @ 200 Hz | ~1 GB | 2 SMs | ~5 ms | Phase 3 |
-| π₀ VLA inference (sub-goal) | ~6 GB | 4 SMs (intermittent) | ~150 ms | Phase 5 |
-| **Total peak** | **~13.5 GB** | **~10 SMs / 16** | — | — |
+| Component | Initial choice | Required measurement |
+|---|---|---|
+| RealSense + nvblox | Existing Phase 1 path | latency, memory, sustained rate |
+| Segmentation / grounding | current YOLO/Grounded-SAM | invocation latency, duty cycle, memory |
+| V-JEPA 2.1 encoder | ViT-B/16 384 first; ViT-L second | clip latency, FPS, memory, power |
+| Target-memory matching | same process as encoder | incremental latency, jitter |
+| Action predictor | compact predictor first | rollout latency vs horizon, accuracy |
+| `plant_twin` | current CPU fitter first | fit rate, confidence, CPU/GPU cost |
+| Geometry whole-body MPC | GPU-batched | solve-time distribution, missed deadlines |
+| JEPA-aware MPC | asynchronous predictor + faster controller | prediction age at command time |
+| Local MPPI / servo | highest-rate bounded loop | sustained rate, jitter, stop latency |
+| Language / VLM | laptop default if needed | instruction latency, network dependency |
 
-64 GB unified memory headroom is comfortable; SM contention is the real constraint and is staggered (VLA fires once per instruction; MPC runs continuously).
+### Scheduling principle
+
+- language grounding: event driven;
+- segmentation refresh: event/uncertainty driven;
+- V-JEPA target state: moderate rate from profiling;
+- action-conditioned rollout: asynchronous if needed;
+- whole-body control: faster loop using freshest valid prediction;
+- `plant_twin`: only when deformation/contact state is useful;
+- local safety/servo: highest-rate loop.
+
+All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
+
+### Model scaling
+
+1. Complete the system with V-JEPA 2.1 ViT-B.
+2. Measure whether ViT-L improves target persistence/prediction enough to justify cost.
+3. Do not target ViT-g/ViT-G for embedded deployment without measured benefit.
 
 ---
 
@@ -387,77 +865,136 @@ Steady-state during Phase 5 operation:
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| AgileX `piper_ros@humble` branch becomes unmaintained | Medium | Fall back to [Reimagine-Robotics/piper_ros](https://github.com/Reimagine-Robotics/piper_ros) (MIT) or wrap the bare [piper_sdk](https://github.com/agilexrobotics/piper_sdk) directly. |
-| Scout 2.0 outdoor localization drift | Medium | Fuse wheel odom + IMU + nvblox ICP + (optional) GPS in Nav2. |
-| cuRobo can't be extended cleanly to wheeled base | Medium | MPPI-only fallback for Phase 3; loses some optimality but ships. |
-| VLA hallucinations reach the arm | Low (by design) | PhysVLM-style reachability filter + safety MPC + operator confirm. |
-| Schedule slip on any one phase | High | Each phase has a standalone "publishable scope" floor and a "full scope" ceiling — ship the floor, defer the ceiling. |
-| ROS 2 Humble EOL (May 2027) during Phase 5 | Low-medium | Plan a Jazzy upgrade in Month 18 if needed; AgileX is likely to track. |
+| V-JEPA 2.1 does not beat simpler tracking | Medium | Phase 2A go/no-go; retain strongest tracker |
+| Dense features preserve class but not exact instance | Medium | target initialization + explicit target-switch metric |
+| Predictor learns ego-motion but not plant deformation | Medium-high | collect sway/contact episodes; stratify with `plant_twin` state |
+| `plant_twin` fit invalid under severe occlusion | Medium | confidence/freshness gating |
+| Action predictor too slow on Orin | High | asynchronous rollout, shorter horizon, distillation |
+| Learned prediction conflicts with safe geometry | Low by design | JEPA is soft cost only |
+| Thin peduncle depth failure | High | temporal fusion + active perception |
+| Scout localization drift | Medium | odom + IMU + local RGB-D alignment |
+| Non-holonomic base awkward in optimizer | Medium | explicit differential-drive dynamics |
+| GPU contention | High | asynchronous scheduling, ViT-B first |
+| Target silently changes identity | Medium | persistent descriptor + abort/re-ground |
+| Scope expands into too many papers | High | Phase 3B remains headline |
 
 ---
 
 ## 7. Open-source strategy
 
-Each phase produces upstream-able artifacts. Suggested release schedule:
-
-| Artifact | Phase | License | Notes |
+| Artifact | Phase | Proposed license | Notes |
 |---|---|---|---|
-| `piper_on_scout` URDF + bringup | 0 | Apache 2.0 | Lowers bar for other Piper+Scout users |
-| Semantic SDF MoveIt collision plugin | 1 | Apache 2.0 | Useful beyond agriculture |
-| MPPI-VS CUDA kernels | 2 | BSD | Reusable for any IBVS user |
-| Wheeled-base cuRobo extension | 3 | Apache 2.0 | Pitch to NVIDIA Isaac team upstream |
-| Task-aware NBV with VGGT | 4 | Apache 2.0 | — |
-| VLA bridge + operator GUI | 5 | MIT (GUI), Apache 2.0 (bridge) | — |
+| Piper-on-Scout URDF + bringup | 0 | Apache 2.0 | Platform baseline |
+| Semantic SDF collision/query layer | 1 | Apache 2.0 | Useful beyond agriculture |
+| `plant_twin` | 1 | repository license | Add confidence/planner interface |
+| Rosbag benchmark schema | 1–3 | dataset-specific | annotations/splits where permitted |
+| `scout_piper_jepa` target-memory package | 2A | Apache 2.0 | wrappers/evaluation code |
+| Bounded MPPI servo | 2B | BSD / Apache 2.0 | reusable |
+| Non-holonomic whole-body controller | 3A | Apache 2.0 | Scout/Piper reference |
+| Piper-JEPA predictor + MPC integration | 3B | Apache 2.0 | main research release |
+| Task-aware NBV | 4 | Apache 2.0 | optional |
+| Language bridge + GUI | 5 | MIT / Apache 2.0 | no direct motor bypass |
+
+Suggested layout:
+
+```text
+Codes/src/
+  scout_piper_bringup/
+  scout_piper_description/
+  scout_piper_scene_repr/
+  plant_twin/
+  stem_grasp/
+  scout_piper_jepa/
+    scout_piper_jepa/
+      encoder.py
+      target_memory.py
+      predictor.py
+      target_state_node.py
+      predictive_cost.py
+    config/
+    launch/
+    test/
+  scout_piper_whole_body_mpc/
+    dynamics/
+    costs/
+    safety/
+    launch/
+```
 
 ---
 
-## 8. References (consolidated)
+## 8. Core experiment / ablation plan
 
-### Motion planning / GPU
-- [cuRobo project](https://curobo.org/) · [cuRobo technical report](https://curobo.org/reports/curobo_report.pdf)
-- [cuMotion (Isaac ROS)](https://github.com/nvidia-isaac/cumotion) · [Isaac ROS cuMotion docs](https://nvidia-isaac-ros.github.io/repositories_and_packages/isaac_ros_cumotion/index.html)
-- [NVIDIA: CUDA-Accelerated Robot Motion Generation](https://developer.nvidia.com/blog/cuda-accelerated-robot-motion-generation-in-milliseconds-with-curobo/)
-- [Industrial Robot Motion Planning with GPUs (extended cuRobo)](https://arxiv.org/html/2508.04146v2)
-- [Black Coffee Robotics — cuRobo + ROS 2](https://www.blackcoffeerobotics.com/blog/curobo-nvidia-and-ros2-for-motion-planning)
+| ID | Method | Dense 2.1 | Action predictor | Target weighting | Semantic SDF | plant_twin | Whole-body | Safety servo |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| A | Legacy/current pipeline | – | – | – | – | – | – | yes |
+| B | Geometry whole-body MPC | – | – | – | yes | optional | yes | yes |
+| C | V-JEPA 2 action-conditioned | no | yes | no | yes | no | yes | yes |
+| D | V-JEPA 2.1 dense + generic predictor | yes | yes | no | yes | no | yes | yes |
+| E | Piper-JEPA, no final handoff | yes | yes | yes | yes | optional | yes | no |
+| F | **Piper-JEPA full** | **yes** | **yes** | **yes** | **yes** | **optional** | **yes** | **yes** |
 
-### Scene representation
-- [isaac_ros_nvblox](https://github.com/NVIDIA-ISAAC-ROS/isaac_ros_nvblox)
-- [nvblox on Jetson AGX Orin](https://wiki.seeedstudio.com/deploy_nvblox_jetson_agx_orin/)
+Key comparisons:
+- C → D: benefit of V-JEPA 2.1 dense representation.
+- D → E: contribution of target-conditioned / target-weighted prediction.
+- B → F: value beyond geometry-only whole-body MPC.
+- E → F: value of bounded local-control handoff.
+- F without vs with `plant_twin`: contribution of explicit deformation state.
 
-### Whole-body mobile manipulation
-- [Haviland & Corke — Holistic Mobile Manipulation](https://jhavl.github.io/holistic/)
-- [A Holistic Approach to Reactive Mobile Manipulation (arXiv 2109.04749)](https://www.arxiv-vanity.com/papers/2109.04749/)
-- [NEO algorithm](https://www.researchgate.net/publication/348970144_NEO_A_Novel_Expeditious_Optimisation_Algorithm_for_Reactive_Motion_Control_of_Manipulators)
-- [EHC-MM: Embodied Holistic Control](https://arxiv.org/html/2409.08527)
-- [RMMI: Reactive Mobile Manipulation with Implicit Neural Map](https://arxiv.org/html/2408.16206)
-- [Local Reactive Control for Mobile Manipulators (2025)](https://arxiv.org/html/2501.02815v1)
-- [Reactive Whole-body Locomotion-integrated Manipulation (Springer 2025)](https://link.springer.com/article/10.1007/s11633-024-1538-9)
+### Full-system scene factors
 
-### Visual servoing / MPC
-- [MPPI-VS (arXiv 2104.04925)](https://arxiv.org/abs/2104.04925)
-- [MPC-Guided RL Visual Servoing for Tomato Harvesting (MDPI AI 2024)](https://www.mdpi.com/2673-2688/7/4/124)
-- [Visual Predictive Control for Mobile Manipulator (RAS 2024)](https://www.sciencedirect.com/science/article/abs/pii/S0921889024001386)
-- [U-MPPI (T-RO 2025)](https://dl.acm.org/doi/10.1109/TRO.2025.3526078)
+- foliage density;
+- target thickness;
+- number of similar flowers;
+- occlusion severity;
+- induced plant motion;
+- start pose;
+- reachability class;
+- illumination/background.
 
-### Active perception
-- [VGGT (CVPR 2025 Best Paper)](https://github.com/facebookresearch/vggt)
-- [Next Best Sense (Stanford ARM, ICRA 2025)](https://arm.stanford.edu/next-best-sense)
-- [ActiveSplat (RA-L 2025)](https://li-yuetao.github.io/ActiveSplat/ActiveSplat.pdf)
+### Primary metrics
+
+- first-attempt grasp success;
+- final grasp success;
+- target-ID retention;
+- false target switches;
+- target-loss events;
+- 2-D / 3-D tracking error;
+- occlusion recovery;
+- completion time;
+- base distance;
+- EE path length;
+- minimum non-target clearance;
+- maximum contact force;
+- safety-filter activations;
+- encoder/predictor/MPC latency;
+- memory and power.
+
+---
+
+## 9. Key references
+
+### V-JEPA / predictive world models
+- V-JEPA 2: *Self-Supervised Video Models Enable Understanding, Prediction and Planning* — arXiv:2506.09985
+- V-JEPA 2.1: *Unlocking Dense Features in Video Self-Supervised Learning* — arXiv:2603.14482
+- Official code: `facebookresearch/vjepa2`
+
+### Motion planning / control
+- cuRobo
+- NVIDIA Isaac ROS cuMotion
+- MPPI-VS
+- Haviland & Corke holistic mobile manipulation
+- NEO
+- EHC-MM
+- RMMI
+
+### Scene representation / active perception
+- isaac_ros_nvblox
+- VGGT
+- Next Best Sense
+- ActiveSplat
 
 ### Agricultural manipulation
-- [Self-Supervised Robotic Leaf Manipulation (2025)](https://arxiv.org/html/2505.03702v3)
-- [Autonomous Selective Harvesting Review — JFR 2024](https://onlinelibrary.wiley.com/doi/full/10.1002/rob.22230)
-- [Vision-Guided Robotic Pollination (2025)](https://arxiv.org/html/2510.06146)
-- [Peduncle Collision-Free Grasping with DRL (Compag 2023)](https://dl.acm.org/doi/10.1016/j.compag.2023.108488)
-- [Key Technologies of Robotic Arms in Unmanned Greenhouse (MDPI 2025)](https://www.mdpi.com/2073-4395/15/11/2498)
-
-### VLA / language-conditioned robotics
-- [Vision-Language-Action Models Survey (arXiv 2505.04769)](https://arxiv.org/html/2505.04769v1)
-- [Large VLM-based VLA Models Survey (arXiv 2508.13073)](https://arxiv.org/html/2508.13073v1)
-- [PhysVLM (CVPR 2025) — physical reachability for VLMs](https://openaccess.thecvf.com/content/CVPR2025/papers/Zhou_PhysVLM_Enabling_Visual_Language_Models_to_Understand_Robotic_Physical_Reachability_CVPR_2025_paper.pdf)
-- [Foundation Models in Robotics — Comprehensive Review (2025)](https://arxiv.org/html/2507.10087v1)
-
-### Hardware / platforms
-- [AgileX Piper](https://global.agilex.ai/products/piper) · [piper_sdk (Python)](https://github.com/agilexrobotics/piper_sdk) · [piper_ros @ humble](https://github.com/agilexrobotics/piper_ros/tree/humble) · [Reimagine-Robotics/piper_ros (alt ROS 2 driver)](https://github.com/Reimagine-Robotics/piper_ros)
-- [AgileX Scout 2.0](https://global.agilex.ai/products/scout-2-0) · [scout_ros (ROS 1)](https://github.com/agilexrobotics/scout_ros) · [scout_nav2 (ROS 2)](https://github.com/AIRLab-POLIMI/scout_nav2)
-- [MoveIt 2 Realtime Servo Tutorial](https://moveit.picknik.ai/main/doc/examples/realtime_servo/realtime_servo_tutorial.html) · [Manipulation in ROS 2 — 2025 discourse thread](https://discourse.openrobotics.org/t/manipulation-in-ros2-2025-what-s-everyone-using-these-days/43683)
+- autonomous selective harvesting literature
+- peduncle collision-free grasping
+- robotic pollination
