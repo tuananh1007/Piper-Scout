@@ -1,6 +1,6 @@
 # Piper + Scout Research & Development Roadmap
 
-**Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense (model to be confirmed: D435 in URDF, D405 in the Phase 1 smoke test) on an AgileX Scout 2.0 skid-steer UGV  
+**Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense D405 on an AgileX Scout 2.0 skid-steer UGV  
 **Compute:** NVIDIA Jetson AGX Orin 64 GB (on-robot) + operator laptop (GUI)  
 **Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting  
 **Last updated:** 2026-10-07  
@@ -357,7 +357,7 @@ Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue
 - force/contact penalty;
 - optional deformation penalty.
 
-**Sensing near contact:** with an eye-in-hand camera the target approaches the sensor's minimum depth during the last centimetres. With a D435 this happens before contact, so the servo must run on image-space target state plus the last valid metric estimate; with a D405 depth stays usable much closer. Confirm the camera model before fixing the handoff distance.
+**Sensing near contact:** the eye-in-hand camera is a D405, whose depth stays usable down to ≈7 cm, so live depth is available for most of the final approach; below that the servo runs on image-space target state plus the last valid metric estimate.
 
 **Hard gates**
 - stop/re-ground after persistent target-confidence loss;
@@ -891,7 +891,7 @@ All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
 | Target silently changes identity | Medium | persistent descriptor + abort/re-ground |
 | Scope expands into too many papers | High | Phase 3B remains headline |
 | No wrist F/T sensor on the platform | High | decide on an added sensor or a calibrated joint-effort estimate before Phase 2B; no force claims until then |
-| Camera minimum range blinds depth near grasp | Medium-high (D435) / low (D405) | confirm camera model; image-space servo + last valid depth for the final approach |
+| Camera minimum range blinds depth near grasp | Low (D405, ≈7 cm minimum) | image-space servo + last valid depth for the last few cm |
 | Skid-steer slip breaks the unicycle model | Medium | identify effective track width/slip (WE1); conservative base velocity near plants |
 | Semantic plugin trusted before validation | Medium | plugin implemented (P1.7.7) but only tested in software; keep it out of execution until the P1.7.6 scene runs pass; it refuses to plan when the field is missing or stale |
 

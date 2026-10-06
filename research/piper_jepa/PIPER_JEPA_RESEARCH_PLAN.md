@@ -1,7 +1,7 @@
 # Piper-JEPA Research Plan
 
 **Working title:** *Piper-JEPA: Task-Conditioned Dense World Models for Safe Whole-Body Plant Manipulation*  
-**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 skid-steer base + eye-in-hand Intel RealSense (D435 or D405, to be confirmed) + NVIDIA Jetson AGX Orin 64 GB; shared facts in [`../README.md`](../README.md)  
+**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 skid-steer base + eye-in-hand Intel RealSense D405 + NVIDIA Jetson AGX Orin 64 GB; shared facts in [`../README.md`](../README.md)  
 **Application:** language-grounded grasping of thin, deformable plant structures (flowers, peduncles, branches)  
 **Status:** scientific plan aligned with `ROADMAP.md` as of 2026-10-05  
 **Role of this document:** authoritative research/paper plan. `ROADMAP.md` remains the engineering sequence.
@@ -999,7 +999,7 @@ c_t>c_{min},
 
 and semantic clearance is valid.
 
-With the eye-in-hand camera, $d_{switch}$ must account for the sensor's minimum depth: below it the local controller runs on the image-space target distribution and the last valid metric estimate (D435), or keeps live depth longer (D405).
+With the eye-in-hand D405, depth stays valid down to ≈7 cm; $d_{switch}$ and the final approach must still handle the last few centimetres on the image-space target distribution and the last valid metric estimate.
 
 After switching:
 - freeze the Scout or heavily penalize base motion;

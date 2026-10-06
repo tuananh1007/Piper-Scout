@@ -89,7 +89,7 @@ cd Codes/src/scout_piper_jepa && python -m pytest test -q    # likewise in the o
 
 - **Arm:** [AgileX Piper](https://global.agilex.ai/products/piper) — 6-DoF, ~1.5 kg payload
 - **Base:** [AgileX Scout 2.0](https://global.agilex.ai/products/scout-2-0) — 4WD skid-steer, 50 kg payload, 1.5 m/s
-- **Camera:** Intel RealSense, eye-in-hand on the Piper EE (D435 in the URDF; the Phase 1 nvblox smoke test used a D405; model to be confirmed)
+- **Camera:** Intel RealSense D405, eye-in-hand on the Piper EE (the URDF still uses the D435 macro — to update)
 - **Compute:** NVIDIA Jetson Orin AGX 64 GB
 
 ## License
