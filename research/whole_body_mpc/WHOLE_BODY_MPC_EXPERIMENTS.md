@@ -44,23 +44,23 @@ Use the same R labels as Piper-JEPA experiments.
 
 ### Base
 
-Execute commanded \((v,\omega)\) sequences and compare predicted versus observed pose.
+Execute commanded $(v,\omega)$ sequences and compare predicted versus observed pose.
 
 Translation error:
 
-\[
+```math
 E_p(k)
 =
 \|\hat p_k-p_k\|_2.
-\]
+```
 
 Yaw error:
 
-\[
+```math
 E_\theta(k)
 =
 |\operatorname{wrap}(\hat\theta_k-\theta_k)|.
-\]
+```
 
 ### Arm
 
@@ -90,9 +90,9 @@ Task/approach success.
 
 R3:
 
-\[
+```math
 W4 \text{ vs } W0/W1.
-\]
+```
 
 ### Secondary
 

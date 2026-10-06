@@ -84,15 +84,15 @@ same safety layer
 
 and add only predictive visual terms:
 
-[
-J_{mathrm{PiperJEPA}}
+```math
+J_{\mathrm{PiperJEPA}}
 =
-J_{mathrm{geo}}
+J_{\mathrm{geo}}
 +
-w_vJ_{mathrm{visibility}}
+w_vJ_{\mathrm{visibility}}
 +
-w_iJ_{mathrm{identity}}.
-]
+w_iJ_{\mathrm{identity}}.
+```
 
 This makes the comparison scientifically clean.
 

@@ -205,43 +205,43 @@ Can dense V-JEPA 2.1 features preserve small-instance identity through eye-in-ha
 
 Given a video window:
 
-\[
+```math
 F_t = E_\theta(I_{t-L+1:t})
-\]
+```
 
-where \(F_t\) is a dense token grid.
+where $F_t$ is a dense token grid.
 
-Grounding initializes target mask \(M_t^*\). Define target descriptor
+Grounding initializes target mask $`M_t^*`$. Define target descriptor
 
-\[
+```math
 r_t =
 \frac{\sum_p M_t^*(p)F_t(p)}
 {\sum_p M_t^*(p)+\epsilon}.
-\]
+```
 
 Dense similarity:
 
-\[
+```math
 C_{t+1}(p)=\cos(F_{t+1}(p),r_t)
-\]
+```
 
 and spatial target distribution:
 
-\[
+```math
 P_{t+1}(p)=\mathrm{softmax}(C_{t+1}(p)/\tau).
-\]
+```
 
 Target image position:
 
-\[
+```math
 \hat u_{t+1}=\sum_p P_{t+1}(p)p
-\]
+```
 
 and uncertainty:
 
-\[
+```math
 H_{t+1}=-\sum_p P_{t+1}(p)\log P_{t+1}(p).
-\]
+```
 
 Back-project valid depth to obtain a 3-D target estimate and uncertainty.
 
@@ -371,53 +371,53 @@ Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue
 
 Scout configuration:
 
-\[
+```math
 x_b=[x,y,\theta]
-\]
+```
 
 with differential-drive controls
 
-\[
+```math
 u_b=[v,\omega].
-\]
+```
 
 Combined configuration:
 
-\[
+```math
 x=[x_b,y_b,\theta_b,q_1,\ldots,q_6]^T
-\]
+```
 
 and control
 
-\[
+```math
 u=[v,\omega,\dot q_1,\ldots,\dot q_6]^T\in\mathbb R^8.
-\]
+```
 
 Base dynamics:
 
-\[
+```math
 x_{t+1}=x_t+\Delta t\,v_t\cos\theta_t
-\]
+```
 
-\[
+```math
 y_{t+1}=y_t+\Delta t\,v_t\sin\theta_t
-\]
+```
 
-\[
+```math
 \theta_{t+1}=\theta_t+\Delta t\,\omega_t.
-\]
+```
 
 Arm:
 
-\[
+```math
 q_{t+1}=q_t+\Delta t\,\dot q_t.
-\]
+```
 
-Do **not** model the Scout as independently actuated Cartesian \(x/y\) joints in the final formulation.
+Do **not** model the Scout as independently actuated Cartesian $x/y$ joints in the final formulation.
 
 Geometry-only objective:
 
-\[
+```math
 J_{\rm geo}
 =
 w_gJ_{\rm goal}
@@ -427,9 +427,9 @@ w_gJ_{\rm goal}
 +w_bJ_{\rm base}
 +w_sJ_{\rm smooth}
 +w_dJ_{\rm deform}.
-\]
+```
 
-\(J_{\rm deform}\) is optional and comes from valid `plant_twin` state.
+$J_{\rm deform}$ is optional and comes from valid `plant_twin` state.
 
 **Baselines**
 - arm-only;
@@ -463,56 +463,56 @@ The intended claim is:
 
 Optimizer action:
 
-\[
+```math
 u_t=[v_b,\omega_b,\dot q_{1:6}].
-\]
+```
 
 Map to an embodiment-normalized JEPA action:
 
-\[
+```math
 a_t=\Gamma(x_t,u_t)
-\]
+```
 
 with
 
-\[
+```math
 a_t=[
 \Delta s_b,
 \Delta\theta_b,
 \Delta p_{ee}^{(3)},
 \Delta r_{ee}^{(3)},
 \Delta g].
-\]
+```
 
 #### Action-conditioned predictor
 
-\[
+```math
 \hat Z_{t+1}
 =
 P_\phi(Z_{t-K+1:t},a_t,s_t).
-\]
+```
 
 Rollout:
 
-\[
+```math
 \hat Z_{t+1:t+H}
 =
 P_\phi(Z_t,a_{t:t+H-1},s_t).
-\]
+```
 
 #### Target-weighted prediction loss
 
 Thin peduncles occupy few patches, so global latent loss can ignore the task-relevant region.
 
-\[
+```math
 w_t(p)=
 1+\lambda_T M_{\rm target}(p)
 +\lambda_P M_{\rm plant}(p).
-\]
+```
 
 Teacher-forced loss:
 
-\[
+```math
 \mathcal L_{\rm TF}
 =
 \sum_p
@@ -520,11 +520,11 @@ w_t(p)
 \|
 \hat Z_{t+1}(p)-\mathrm{sg}[Z_{t+1}(p)]
 \|_1.
-\]
+```
 
 Rollout loss:
 
-\[
+```math
 \mathcal L_{\rm roll}
 =
 \sum_{k=1}^H
@@ -534,51 +534,51 @@ w_{t+k}(p)
 \|
 \hat Z_{t+k}(p)-\mathrm{sg}[Z_{t+k}(p)]
 \|_1.
-\]
+```
 
 Total:
 
-\[
+```math
 \mathcal L_{\rm AC}
 =
 \mathcal L_{\rm TF}
 +\lambda_R\mathcal L_{\rm roll}.
-\]
+```
 
 #### Predict future target state
 
-\[
+```math
 \hat C_{t+k}(p)
 =
 \cos(\hat Z_{t+k}(p),r_t)
-\]
+```
 
-\[
+```math
 \hat P_{t+k}(p)
 =
 \mathrm{softmax}(\hat C_{t+k}(p)/\tau).
-\]
+```
 
 Then:
 
-\[
+```math
 \hat u_{t+k}
 =
 \sum_p \hat P_{t+k}(p)p
-\]
+```
 
 and
 
-\[
+```math
 \hat H_{t+k}
 =
 -\sum_p
 \hat P_{t+k}(p)\log\hat P_{t+k}(p).
-\]
+```
 
 #### JEPA-aware whole-body objective
 
-\[
+```math
 J=
 w_gJ_{\rm goal}
 +w_vJ_{\rm visibility}
@@ -589,11 +589,11 @@ w_gJ_{\rm goal}
 +w_bJ_{\rm base}
 +w_sJ_{\rm smooth}
 +w_dJ_{\rm deform}.
-\]
+```
 
 Predictive visibility:
 
-\[
+```math
 J_{\rm visibility}
 =
 \sum_k
@@ -602,22 +602,22 @@ J_{\rm visibility}
 +\lambda_H\hat H_{t+k}
 +B_{\rm FoV}(\hat u_{t+k})
 \right].
-\]
+```
 
 Identity preservation:
 
-\[
+```math
 J_{\rm identity}
 =
 \sum_k
 \left[
 1-\cos(\hat r_{t+k},r_t)
 \right].
-\]
+```
 
 Optional explicit deformation from `plant_twin`:
 
-\[
+```math
 J_{\rm deform}
 =
 \sum_k
@@ -626,7 +626,7 @@ J_{\rm deform}
 +\alpha_lE_{\rm leaf\ stretch}
 +\alpha_bE_{\rm leaf\ bend}
 ].
-\]
+```
 
 Roles remain distinct:
 - JEPA predicts future visual target state.
@@ -634,22 +634,22 @@ Roles remain distinct:
 
 #### Hard safety
 
-For robot collision primitives \(c_j\):
+For robot collision primitives $c_j$:
 
-\[
+```math
 \phi_{\rm hard}(c_j(x_{t+k}))\ge d_{\rm safe}.
-\]
+```
 
 The learned predictor never relaxes this condition.
 
 Safety projection:
 
-\[
+```math
 u_{\rm safe}
 =
 \arg\min_u
 \|u-u_{\rm MPC}\|_2^2
-\]
+```
 
 subject to:
 - semantic hard clearance;
@@ -661,9 +661,9 @@ subject to:
 #### Near-contact handoff
 
 Switch to Phase 2B when:
-- EE-target distance < \(d_{\rm switch}\);
-- target entropy < \(H_{\max}\);
-- confidence > \(c_{\min}\);
+- EE-target distance < $d_{\rm switch}$;
+- target entropy < $H_{\max}$;
+- confidence > $c_{\min}$;
 - semantic clearance is valid.
 
 Freeze or strongly penalize Scout motion after handoff.
@@ -672,9 +672,9 @@ Freeze or strongly penalize Scout motion after handoff.
 
 Evaluate increasing Piper-Scout data budgets:
 
-\[
+```math
 1\,{\rm h}, 2\,{\rm h}, 5\,{\rm h}, 10\,{\rm h}
-\]
+```
 
 or the closest feasible balanced subsets. Report data efficiency.
 
@@ -685,7 +685,7 @@ or the closest feasible balanced subsets. Report data efficiency.
 3. no target weighting vs target weighting.
 4. no action conditioning vs action conditioning.
 5. arm-only actions vs whole-body actions.
-6. rollout \(H=1,2,4,8\).
+6. rollout $H=1,2,4,8$.
 7. learned RGB state alone vs learned state + RGB-D geometry.
 8. geometry-only MPC vs JEPA-aware MPC.
 9. without vs with `plant_twin` deformation cost.
@@ -726,13 +726,13 @@ Combine:
 - RGB-D / VGGT geometry uncertainty;
 - `plant_twin` fit uncertainty where deformation matters.
 
-\[
+```math
 U_{\rm total}
 =
 \alpha U_{\rm JEPA}
 +\beta U_{\rm geometry}
 +\gamma U_{\rm twin}.
-\]
+```
 
 **Ablations**
 - fixed ring;
@@ -749,12 +749,12 @@ U_{\rm total}
 
 **Goal:** expose the validated stack through natural-language interaction without making the VLM the motor controller.
 
-Map instruction \(\ell\) to:
+Map instruction $\ell$ to:
 
-\[
+```math
 q_\ell=
 ({\rm class,ordinal,spatial\ relation,attribute,action}).
-\]
+```
 
 Example:
 

@@ -195,7 +195,7 @@ This should correspond to Figure 1.
 
 State explicitly:
 
-\[
+```math
 \boxed{
 \text{language selects}
 \rightarrow
@@ -207,7 +207,7 @@ State explicitly:
 \rightarrow
 \text{safety executes}
 }
-\]
+```
 
 ---
 
@@ -215,9 +215,9 @@ State explicitly:
 
 Define:
 
-\[
+```math
 q_\ell=(c,k,r,\rho,a).
-\]
+```
 
 Explain candidate masks and ordinal/spatial selection.
 
@@ -233,43 +233,43 @@ After initialization, the physical instance ID is frozen. Later framewise ground
 
 ### 8.1 Dense encoder
 
-\[
+```math
 F_t=E_\theta(I_{t-L+1:t}).
-\]
+```
 
 ### 8.2 Target descriptor
 
-\[
+```math
 r_t=
 \frac{
 \sum_p\widetilde M_t^*(p)F_t(p)
 }{
 \sum_p\widetilde M_t^*(p)+\epsilon
 }.
-\]
+```
 
 ### 8.3 Similarity distribution
 
-\[
+```math
 P_t(p)
 =
 \operatorname{softmax}
 (
 \cos(F_t(p),r_t)/\tau
 ).
-\]
+```
 
 ### 8.4 State estimate
 
-\[
+```math
 \hat u_t=\sum_pP_t(p)p.
-\]
+```
 
 ### 8.5 Uncertainty
 
-\[
+```math
 H_t=-\sum_pP_t(p)\log P_t(p).
-\]
+```
 
 Explain:
 - why dense rather than pooled features;
@@ -287,13 +287,13 @@ E1 + E2.
 
 ### 9.1 Robot action
 
-\[
+```math
 u_t=[v_b,\omega_b,\dot q_{1:6}].
-\]
+```
 
 ### 9.2 Action embedding
 
-\[
+```math
 a_t=
 [
 \Delta s_b,
@@ -302,13 +302,13 @@ a_t=
 \Delta r_e,
 \Delta g
 ].
-\]
+```
 
 Explain why this is preferable to raw motor commands.
 
 ### 9.3 Predictor
 
-\[
+```math
 \hat Z_{t+1:t+H}
 =
 P_\phi(
@@ -316,11 +316,11 @@ Z_t,
 a_{t:t+H-1},
 s_t
 ).
-\]
+```
 
 ### 9.4 Target-weighted loss
 
-\[
+```math
 w_t(p)
 =
 1
@@ -328,15 +328,15 @@ w_t(p)
 \lambda_T M_t^{target}(p)
 +
 \lambda_P M_t^{plant}(p).
-\]
+```
 
-\[
+```math
 \mathcal L_{AC}
 =
 \mathcal L_{TF}
 +
 \lambda_R\mathcal L_{roll}.
-\]
+```
 
 The text should emphasize that small target regions would otherwise contribute little to a global dense prediction loss.
 
@@ -350,14 +350,14 @@ E3.
 
 From predicted dense state:
 
-\[
+```math
 \hat P_{t+k}(p)
 =
 \operatorname{softmax}
 (
 \cos(\hat Z_{t+k}(p),r_t)/\tau
 ).
-\]
+```
 
 Then derive:
 - predicted target position;
@@ -366,7 +366,7 @@ Then derive:
 
 Define:
 
-\[
+```math
 J_{vis}
 =
 \sum_k
@@ -375,16 +375,16 @@ J_{vis}
 +\lambda_H\hat H_{t+k}
 +B_{FoV}
 ].
-\]
+```
 
-\[
+```math
 J_{id}
 =
 \sum_k
 [
 1-\cos(\hat r_{t+k},r_t)
 ].
-\]
+```
 
 This section should contain the conceptual novelty figure: two geometrically feasible trajectories with different predicted visual outcomes.
 
@@ -414,29 +414,29 @@ Do not let plant_twin dominate the main paper unless E8 is exceptionally strong.
 
 Scout state:
 
-\[
+```math
 [x_b,y_b,\theta_b].
-\]
+```
 
 Control:
 
-\[
+```math
 [v_b,\omega_b].
-\]
+```
 
 Combined control:
 
-\[
+```math
 u=
 [v_b,\omega_b,\dot q_{1:6}]
 \in\mathbb R^8.
-\]
+```
 
 Give differential-drive dynamics explicitly.
 
 Full objective:
 
-\[
+```math
 J
 =
 w_gJ_{goal}
@@ -448,10 +448,10 @@ w_gJ_{goal}
 +w_bJ_{base}
 +w_sJ_{smooth}
 +w_dJ_{deform}.
-\]
+```
 
 Explain:
-- geometry-only baseline removes \(J_{vis}\) and \(J_{id}\);
+- geometry-only baseline removes $J_{vis}$ and $J_{id}$;
 - Piper-JEPA adds them;
 - the comparison is therefore interpretable.
 
@@ -461,12 +461,12 @@ Explain:
 
 ### Safety projection
 
-\[
+```math
 u_{safe}
 =
 \arg\min_u
 \|u-u_{MPC}\|_2^2
-\]
+```
 
 subject to:
 - hard semantic clearance;

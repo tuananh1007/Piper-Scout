@@ -54,26 +54,26 @@ End by positioning the work around **manipulation-specific semantics and thin-st
 
 ### 5.1 Class-specific fields
 
-\[
+```math
 \phi_c(x)
-\]
+```
 
 ### 5.2 Hard field
 
-\[
+```math
 \phi_{\mathrm{hard}}(x)
 =
 \min_{c\in\mathcal C_{\mathrm{hard}}}
 \phi_c(x).
-\]
+```
 
 ### 5.3 Leaf soft cost
 
-\[
+```math
 J_{\mathrm{leaf}}
 =
 \sum\psi(\phi_{\mathrm{leaf}}).
-\]
+```
 
 ### 5.4 Target mode handling
 

@@ -34,66 +34,66 @@ A unified controller can trade base motion against arm motion continuously.
 
 Scout planar configuration:
 
-\[
+```math
 x_b=[x_b,y_b,\theta_b]^T.
-\]
+```
 
 Arm configuration:
 
-\[
+```math
 q\in\mathbb R^6.
-\]
+```
 
 Combined state:
 
-\[
+```math
 x=
 [x_b,y_b,\theta_b,q^T]^T.
-\]
+```
 
 Control:
 
-\[
+```math
 u=
 [v,\omega,\dot q^T]^T
 \in\mathbb R^8.
-\]
+```
 
 Scout dynamics:
 
-\[
+```math
 x_{b,t+1}
 =
 x_{b,t}
 +
 \Delta t\,v_t\cos\theta_t,
-\]
+```
 
-\[
+```math
 y_{b,t+1}
 =
 y_{b,t}
 +
 \Delta t\,v_t\sin\theta_t,
-\]
+```
 
-\[
+```math
 \theta_{t+1}
 =
 \theta_t
 +
 \Delta t\,\omega_t.
-\]
+```
 
 Arm:
 
-\[
+```math
 q_{t+1}
 =
 q_t+\Delta t\,\dot q_t.
-\]
+```
 
-The final controller must preserve this non-holonomic structure rather than treating base \(x,y\) as independently actuated joints.
+The final controller must preserve this non-holonomic structure rather than treating base $x,y$ as independently actuated joints.
 
 ---
 
@@ -125,7 +125,7 @@ GPU-batched MPC/MPPI can sustain a useful receding-horizon rate on Jetson AGX Or
 
 Define
 
-\[
+```math
 J_{\mathrm{geo}}
 =
 w_gJ_{\mathrm{goal}}
@@ -139,15 +139,15 @@ w_mJ_{\mathrm{manip}}
 w_bJ_{\mathrm{base}}
 +
 w_sJ_{\mathrm{smooth}}.
-\]
+```
 
 Optional later term:
 
-\[
+```math
 +w_dJ_{\mathrm{deform}}
-\]
+```
 
-when valid \`plant_twin\` state exists.
+when valid `plant_twin` state exists.
 
 No V-JEPA visibility/identity prediction is allowed in this track's baseline.
 
@@ -155,9 +155,9 @@ No V-JEPA visibility/identity prediction is allowed in this track's baseline.
 
 ## 6. Goal cost
 
-Let desired grasp pose be \((p_g,R_g)\).
+Let desired grasp pose be $`(p_g,R_g)`$.
 
-\[
+```math
 J_{\mathrm{goal}}
 =
 \sum_{k=1}^{H}
@@ -165,7 +165,7 @@ J_{\mathrm{goal}}
 +
 \lambda_R
 d^2_{SO(3)}(R^e_k,R_g).
-\]
+```
 
 If final orientation is underconstrained, use task-specific orientation weighting rather than forcing all axes equally.
 
@@ -175,34 +175,34 @@ If final orientation is underconstrained, use task-specific orientation weightin
 
 Semantic Scene provides
 
-\[
+```math
 \phi_{\mathrm{hard}}(p).
-\]
+```
 
-For collision primitive \(j\),
+For collision primitive $j$,
 
-\[
+```math
 d_{j,k}
 =
 \phi_{\mathrm{hard}}(p_j(x_k))-r_j.
-\]
+```
 
 Require or heavily penalize:
 
-\[
+```math
 d_{j,k}\ge d_{\mathrm{safe}}.
-\]
+```
 
 Leaf soft cost:
 
-\[
+```math
 J_{\mathrm{leaf}}
 =
 \sum_{k,j}
 \psi(
 \phi_{\mathrm{leaf}}(p_j(x_k))
 ).
-\]
+```
 
 Unknown/stale geometry should invoke conservative behavior rather than free-space assumption.
 
@@ -210,24 +210,24 @@ Unknown/stale geometry should invoke conservative behavior rather than free-spac
 
 ## 8. Manipulability
 
-For arm Jacobian \(J_a(q)\),
+For arm Jacobian $J_a(q)$,
 
-\[
+```math
 m(q)
 =
 \sqrt{
 \det(J_aJ_a^T)
 }.
-\]
+```
 
 Use
 
-\[
+```math
 J_{\mathrm{manip}}
 =
 \sum_k
 \frac{1}{m(q_k)+\epsilon}.
-\]
+```
 
 Alternative numerically stable manipulability/singularity measures may be used if the determinant becomes unstable.
 
@@ -237,7 +237,7 @@ Alternative numerically stable manipulability/singularity measures may be used i
 
 Use
 
-\[
+```math
 J_{\mathrm{base}}
 =
 \sum_k
@@ -246,7 +246,7 @@ v_k^2
 +
 \lambda_\omega\omega_k^2
 ).
-\]
+```
 
 This encodes a useful behavioral prior:
 
@@ -258,12 +258,12 @@ A separate base-displacement term may be added if needed.
 
 ## 10. Smoothness
 
-\[
+```math
 J_{\mathrm{smooth}}
 =
 \sum_k
 \|u_k-u_{k-1}\|_R^2.
-\]
+```
 
 This is especially important for the base near plants.
 
@@ -292,18 +292,18 @@ If cuRobo requires fake holonomic base joints, it should not be the final scient
 
 Nominal MPC action:
 
-\[
+```math
 u_{\mathrm{MPC}}.
-\]
+```
 
 Executed action:
 
-\[
+```math
 u_{\mathrm{safe}}
 =
 \arg\min_u
 \|u-u_{\mathrm{MPC}}\|_2^2
-\]
+```
 
 subject to:
 - hard semantic clearance;
@@ -370,7 +370,7 @@ W5 — clutter/reactive replanning.
 W6 — near-contact handoff compatibility.  
 W7 — Orin timing and sustained operation.
 
-Full protocol: \`WHOLE_BODY_MPC_EXPERIMENTS.md\`.
+Full protocol: `WHOLE_BODY_MPC_EXPERIMENTS.md`.
 
 ---
 
@@ -399,15 +399,15 @@ Correct differential-drive dynamics versus fake planar holonomic joints.
 
 ### A2 — base penalty
 
-\[
+```math
 w_b=0
-\]
+```
 
-versus tuned \(w_b>0\).
+versus tuned $`w_b>0`$.
 
 ### A3 — manipulability
 
-With versus without \(J_{\mathrm{manip}}\).
+With versus without $J_{\mathrm{manip}}$.
 
 ### A4 — semantic geometry
 
@@ -446,11 +446,11 @@ Piper-JEPA Stage C should reuse the same:
 
 Then add only:
 
-\[
+```math
 w_vJ_{\mathrm{visibility}}
 +
 w_iJ_{\mathrm{identity}}.
-\]
+```
 
 This creates a clean scientific comparison.
 
@@ -462,11 +462,11 @@ Optional.
 
 If useful:
 
-\[
+```math
 J_{\mathrm{geo}}
 \rightarrow
 J_{\mathrm{geo}}+w_dJ_{\mathrm{deform}}.
-\]
+```
 
 But the deterministic whole-body paper must stand without it.
 
@@ -492,7 +492,7 @@ If Orin timing is inadequate, reduce horizon/sample count or use asynchronous/sp
 
 Proposed package:
 
-\`\`\`text
+```text
 Codes/src/scout_piper_whole_body_mpc/
   dynamics/
     scout_diff_drive.py
@@ -515,7 +515,7 @@ Codes/src/scout_piper_whole_body_mpc/
   config/
   launch/
   benchmarks/
-\`\`\`
+```
 
 ---
 

@@ -17,7 +17,7 @@ The experiments must answer four separate questions without conflating them:
 
 The strongest result is not simply higher grasp success. The paper should demonstrate a causal chain:
 
-\[
+```math
 \text{better target state}
 \rightarrow
 \text{better future target prediction}
@@ -25,7 +25,7 @@ The strongest result is not simply higher grasp success. The paper should demons
 \text{better trajectory choice}
 \rightarrow
 \text{better grasp outcome}
-\]
+```
 
 while explicit geometry and the safety layer remain authoritative.
 
@@ -197,9 +197,9 @@ The benchmark should span independent difficulty axes.
 
 ### 5.1 Number of similar instances
 
-\[
+```math
 N\in\{1,3,5,7\}
-\]
+```
 
 ### 5.2 Reachability class
 
@@ -262,9 +262,9 @@ with all episodes from a plant/arrangement assigned to one split.
 
 Construct nested subsets:
 
-\[
+```math
 D_1 \subset D_2 \subset D_5 \subset D_{10}
-\]
+```
 
 corresponding approximately to 1 h, 2 h, 5 h, and 10 h of robot interaction.
 
@@ -320,9 +320,9 @@ A practical preferred design:
 - 6 motion/occlusion conditions;
 - 5 repeats;
 
-\[
+```math
 12\times6\times5=360
-\]
+```
 
 clips.
 
@@ -348,7 +348,7 @@ T0-T4.
 
 Exact target-ID retention:
 
-\[
+```math
 A_{ID}
 =
 \frac{
@@ -356,25 +356,25 @@ A_{ID}
 }{
 \#\text{evaluated frames}
 }.
-\]
+```
 
 ### 8.6 Secondary endpoints
 
 2-D center error:
 
-\[
+```math
 E_{2D}
 =
 \|\hat u-u^*\|_2.
-\]
+```
 
 3-D error where valid:
 
-\[
+```math
 E_{3D}
 =
 \|\hat p-p^*\|_2.
-\]
+```
 
 Also:
 - false switch rate;
@@ -418,15 +418,15 @@ Use at least 30 distinct scenes with 3, 5, or 7 visually similar targets.
 
 Initial grounding:
 
-\[
+```math
 A_{ground}
 =
 \frac{N_{correct}}{N_{commands}}.
-\]
+```
 
 Persistence after robot motion:
 
-\[
+```math
 A_{persist}(\tau)
 =
 P(
@@ -434,7 +434,7 @@ P(
 =
 i_t^*
 ).
-\]
+```
 
 Report both separately.
 
@@ -476,15 +476,15 @@ Evaluate P1-P3 at approximately:
 
 ### 10.4 Prediction horizons
 
-\[
+```math
 H\in\{1,2,4,8\}.
-\]
+```
 
 The physical time represented by H must be reported explicitly because it depends on sampling rate.
 
 ### 10.5 Primary target metric
 
-\[
+```math
 E_{target}(H)
 =
 \frac1H
@@ -492,7 +492,7 @@ E_{target}(H)
 \|
 \hat u_{t+k}-u_{t+k}
 \|_2.
-\]
+```
 
 ### 10.6 Secondary metrics
 
@@ -611,9 +611,9 @@ First-attempt correct-target grasp success.
 
 The most important statistical comparison is:
 
-\[
+```math
 E\; \text{vs}\; B
-\]
+```
 
 on R4 scenes.
 
@@ -687,13 +687,13 @@ Task metric:
 
 Desired result:
 
-\[
+```math
 \text{success increases}
 \quad \text{without} \quad
 F_{max}\uparrow
 \quad \text{or} \quad
 d_{min}\downarrow.
-\]
+```
 
 Do not intentionally run unsafe variants outside a controlled, low-energy validation regime.
 
@@ -811,7 +811,7 @@ However:
 
 For grasp success / target retained:
 
-\[
+```math
 \operatorname{logit}P(Y=1)
 =
 \beta_0
@@ -827,7 +827,7 @@ For grasp success / target retained:
 b_{plant}
 +
 b_{scene}.
-\]
+```
 
 Use mixed-effects logistic regression where supported by the final dataset.
 

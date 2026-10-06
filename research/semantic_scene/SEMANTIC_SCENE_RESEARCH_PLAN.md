@@ -3,8 +3,8 @@
 **Working title:** *Semantic Metric Fields for Thin-Structure Plant Manipulation*  
 **Track:** deterministic semantic geometry  
 **Role:** provide metric collision/clearance authority for whole-body MPC and Piper-JEPA Stage C  
-**Implementation base:** \`Codes/src/scout_piper_scene_repr/\`, RealSense D435, nvblox  
-**Status:** aligned with \`ROADMAP.md\` as of 2026-10-05
+**Implementation base:** `Codes/src/scout_piper_scene_repr/`, RealSense D435, nvblox  
+**Status:** aligned with `ROADMAP.md` as of 2026-10-05
 
 ---
 
@@ -67,9 +67,9 @@ Freshness/confidence gating will reduce unsafe or unstable planner behavior caus
 
 Maintain class-specific fields
 
-\[
+```math
 \phi_c(x)
-\]
+```
 
 for classes such as:
 - non-target stem;
@@ -109,69 +109,69 @@ Expose deterministic queries:
 
 ## 5. Representation
 
-For semantic class \(c\), maintain a signed-distance field
+For semantic class $c$, maintain a signed-distance field
 
-\[
+```math
 \phi_c:\mathbb R^3\rightarrow\mathbb R.
-\]
+```
 
 Interpretation:
 
-\[
+```math
 \phi_c(x)>0
-\]
+```
 
 outside the surface,
 
-\[
+```math
 \phi_c(x)=0
-\]
+```
 
 on the surface, and
 
-\[
+```math
 \phi_c(x)<0
-\]
+```
 
 inside occupied geometry where the backend supports signed distance.
 
 For hard classes define
 
-\[
+```math
 \phi_{\mathrm{hard}}(x)
 =
 \min_{c\in\mathcal C_{\mathrm{hard}}}\phi_c(x).
-\]
+```
 
-For a robot collision primitive with center \(p_j(x_r)\) and radius \(r_j\),
+For a robot collision primitive with center $`p_j(x_r)`$ and radius $r_j$,
 
-\[
+```math
 d_j
 =
 \phi_{\mathrm{hard}}(p_j)-r_j.
-\]
+```
 
 A hard-clearance constraint is
 
-\[
+```math
 d_j \ge d_{\mathrm{safe}}.
-\]
+```
 
 ---
 
 ## 6. Semantic fusion
 
-Let a depth observation produce a geometric update at voxel \(v\), while semantic perception supplies class posterior \(P(c\mid I_t,p)\).
+Let a depth observation produce a geometric update at voxel $v$, while semantic perception supplies class posterior $P(c\mid I_t,p)$.
 
 A generic confidence-weighted class update can be written
 
-\[
+```math
 w_{c,t}(v)
 =
 w_{c,t-1}(v)
 +
 \alpha_t(v)P(c\mid I_t,p),
-\]
+```
 
 with accumulated evidence used to determine the class-specific field update.
 
@@ -199,9 +199,9 @@ Key parameters to characterize experimentally:
 - semantic mask erosion/dilation;
 - class inflation.
 
-For a thin cylindrical structure of physical diameter \(d_s\), define reconstruction coverage
+For a thin cylindrical structure of physical diameter $d_s$, define reconstruction coverage
 
-\[
+```math
 R_{\mathrm{cover}}
 =
 \frac{
@@ -209,7 +209,7 @@ R_{\mathrm{cover}}
 }{
 \text{ground-truth centerline length}
 }.
-\]
+```
 
 Also measure radial geometry error relative to a reference centerline or high-quality scan.
 
@@ -221,27 +221,27 @@ Leaves should not necessarily produce hard infeasibility.
 
 Define
 
-\[
+```math
 J_{\mathrm{leaf}}
 =
 \sum_{k,j}
 \psi(
 \phi_{\mathrm{leaf}}(p_j(x_k))
 ),
-\]
+```
 
-where \(\psi\) penalizes penetration/proximity smoothly.
+where $\psi$ penalizes penetration/proximity smoothly.
 
 Example:
 
-\[
+```math
 \psi(d)
 =
 \begin{cases}
 (d-d_{\mathrm{soft}})^2, & d<d_{\mathrm{soft}},\\
 0, & d\ge d_{\mathrm{soft}}.
 \end{cases}
-\]
+```
 
 Hard stem/branch constraints remain independent.
 
@@ -271,21 +271,21 @@ Neighboring stems/branches remain hard obstacles.
 
 ## 10. Geometry freshness and confidence
 
-Every planner query should expose timestamp \(t_g\).
+Every planner query should expose timestamp $t_g$.
 
 Define geometry age
 
-\[
+```math
 \Delta t_g
 =
 t_{\mathrm{now}}-t_g.
-\]
+```
 
 Reject or downweight geometry when
 
-\[
+```math
 \Delta t_g>\Delta t_{\max}.
-\]
+```
 
 For regions with insufficient observations, expose an unknown/invalid state rather than returning falsely confident free space.
 
@@ -299,14 +299,14 @@ The semantic scene track should expose a stable interface independent of control
 
 Suggested API:
 
-\`\`\`text
+```text
 query_distance(points, class_policy)
   -> distance[]
   -> gradient[] optional
   -> semantic_class[]
   -> valid[]
   -> timestamp
-\`\`\`
+```
 
 ROS/debug topics may publish visualization, but the high-rate planner should use in-process or low-overhead query paths where possible.
 
@@ -320,13 +320,13 @@ Piper-JEPA Stage C does.
 
 The division of responsibility is:
 
-\`\`\`text
+```text
 Piper-JEPA:
   Will the target remain visible / identifiable?
 
 Semantic Scene:
   Is the candidate robot state geometrically safe?
-\`\`\`
+```
 
 The two signals should remain separable in experiments.
 
@@ -334,7 +334,7 @@ The two signals should remain separable in experiments.
 
 ## 13. Relationship to plant_twin
 
-\`plant_twin\` models explicit deformation of selected plant structures.
+`plant_twin` models explicit deformation of selected plant structures.
 
 Semantic Scene models current metric occupancy/clearance.
 
@@ -364,7 +364,7 @@ Measure behavior under intermittent depth/mask dropout.
 ### S6 — Orin deployment
 Measure update latency, memory, query latency, and sustained operation.
 
-Full protocol: \`SEMANTIC_SCENE_EXPERIMENTS.md\`.
+Full protocol: `SEMANTIC_SCENE_EXPERIMENTS.md`.
 
 ---
 
@@ -416,13 +416,13 @@ If query latency or freshness is inadequate for MPC, use a lower-rate geometry s
 ## 18. Implementation mapping
 
 Current implementation:
-- \`Codes/src/scout_piper_scene_repr/\`;
+- `Codes/src/scout_piper_scene_repr/`;
 - RealSense→nvblox smoke test;
 - semantic collision plugin scaffold.
 
 Recommended additions:
 
-\`\`\`text
+```text
 scout_piper_scene_repr/
   semantic_integrator.py
   class_policy.py
@@ -432,7 +432,7 @@ scout_piper_scene_repr/
     reconstruction_eval.py
     distance_eval.py
     latency_eval.py
-\`\`\`
+```
 
 ---
 

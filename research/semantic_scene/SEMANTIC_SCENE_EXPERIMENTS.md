@@ -65,30 +65,30 @@ Do not call RealSense itself ground truth.
 
 Centerline coverage:
 
-\[
+```math
 R_{\mathrm{cover}}
 =
 \frac{L_{\mathrm{matched}}}{L_{\mathrm{gt}}}.
-\]
+```
 
 Mean centerline error:
 
-\[
+```math
 E_c
 =
 \frac1N
 \sum_i
 \min_j
 \|p_i^{gt}-p_j^{rec}\|_2.
-\]
+```
 
 Miss rate:
 
-\[
+```math
 R_{\mathrm{miss}}
 =
 1-R_{\mathrm{cover}}.
-\]
+```
 
 Also report false geometry volume around the structure.
 
@@ -114,7 +114,7 @@ Measure:
 
 A useful metric is voxel semantic purity:
 
-\[
+```math
 P_{\mathrm{sem}}
 =
 \frac{
@@ -122,7 +122,7 @@ P_{\mathrm{sem}}
 }{
 \#\text{labeled observed voxels}
 }.
-\]
+```
 
 ---
 
@@ -130,13 +130,13 @@ P_{\mathrm{sem}}
 
 Place robot collision-query points at known offsets from controlled geometry.
 
-For query point \(x_i\):
+For query point $x_i$:
 
-\[
+```math
 e_i
 =
 |\hat d_i-d_i^*|.
-\]
+```
 
 Report:
 - mean absolute error;
@@ -144,9 +144,9 @@ Report:
 - p95 error;
 - conservative error rate:
 
-\[
+```math
 P(\hat d_i>d_i^*+\epsilon),
-\]
+```
 
 because overestimating clearance is safety-relevant.
 

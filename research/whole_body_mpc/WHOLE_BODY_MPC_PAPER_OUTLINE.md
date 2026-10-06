@@ -54,13 +54,13 @@ Position against sequential planning and fake holonomic-base formulations.
 
 ### 5.1 State/control
 
-\[
+```math
 x=[x_b,y_b,\theta_b,q]^T
-\]
+```
 
-\[
+```math
 u=[v,\omega,\dot q]^T.
-\]
+```
 
 ### 5.2 Differential-drive dynamics
 
@@ -68,7 +68,7 @@ Provide equations explicitly.
 
 ### 5.3 Whole-body objective
 
-\[
+```math
 J_{\mathrm{geo}}
 =
 w_gJ_g
@@ -77,7 +77,7 @@ w_gJ_g
 +w_mJ_m
 +w_bJ_b
 +w_sJ_s.
-\]
+```
 
 ### 5.4 Semantic collision integration
 
