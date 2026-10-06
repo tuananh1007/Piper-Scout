@@ -201,6 +201,17 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
 | P1.6.10 | Fused residual+Jacobian `evaluate` + own LM solver on normal equations | ☑ | 2026-09-29 — `solver.py`; ~28 ms/frame, 1.6 mm at 5 mm/frame; TRF/FD kept as references |
 
+### P2A — Piper-JEPA Stage A: dense target memory (`scout_piper_jepa`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P2A.1 | Encoder interface: V-JEPA (lazy torch.hub) + numpy reference encoder | ☑ | 2026-10-06 — hub entry point is config; not yet run on GPU |
+| P2A.2 | Target memory: gated softmax, mean/cov, entropy, confidence, occlusion/lost, 3-D from aligned depth | ☑ | 2026-10-06 — gate + coasting needed: ungated memory jumps to an identical twin during occlusion |
+| P2A.3 | E1 metrics + episode export/eval tools | ☑ | 2026-10-06 |
+| P2A.4 | ROS 2 node with re-grounding via `/piper_jepa/init_mask` | ☑ | 2026-10-06 — untested on hardware |
+| P2A.5 | Record E1 dataset and annotate target/distractor masks | ☐ | |
+| P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ☐ | go/no-go gate |
+
 ### P1 exit criteria
 
 - Leaf-aware planning visibly avoids leaves where Octomap planning failed.
