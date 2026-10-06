@@ -1,0 +1,32 @@
+whole_body_mpc:
+  ros__parameters:
+    # false = publish only to /whole_body_mpc/preview/*; set true only after the
+    # Phase 0 E-stop / stop-and-zero validation.
+    execute: false
+    rate_hz: 10.0
+    world_frame: "odom"
+    goal_topic: "/whole_body_mpc/goal"        # or /piper_jepa/target_point
+    # Names as published on /joint_states by the Piper driver — check: the
+    # driver may publish joint1..joint6 without the URDF's piper_ prefix.
+    joint_names: ["piper_joint1", "piper_joint2", "piper_joint3",
+                  "piper_joint4", "piper_joint5", "piper_joint6"]
+    tcp_offset_m: 0.14                        # link6 → grasp point; calibrate
+    horizon: 20
+    samples: 256
+    iterations: 2
+    temperature: 0.1
+    v_max: 0.3
+    omega_max: 0.6
+    qd_max: 0.6
+    k_v: 1.0                                  # from WE1 slip identification (fit_slip)
+    k_omega: 1.0
+    w_base: 100.0
+    d_safe: 0.02
+    use_semantic_scene: false                 # true = in-process SemanticVoxelMap
+    scene_grid_center: [0.6, 0.0, 0.6]
+    scene_half_extent_m: 0.5
+    scene_voxel_size_m: 0.01
+    max_state_age_s: 0.2
+    max_geometry_age_s: 1.0
+    goal_tolerance_m: 0.01
+    handoff_distance_m: 0.05                  # report handoff_ready to the local servo

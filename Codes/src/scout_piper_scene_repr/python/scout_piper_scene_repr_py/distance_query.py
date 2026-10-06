@@ -93,7 +93,8 @@ class SemanticDistanceQuery:
     # ------------------------------------------------------------- query
     def query(self, points: np.ndarray, now: Optional[float] = None,
               mode: str = "approach", target_point: Optional[np.ndarray] = None,
-              exclusion_radius_m: float = 0.02, grad_eps: Optional[float] = None) -> QueryResult:
+              exclusion_radius_m: float = 0.02, grad_eps: Optional[float] = None,
+              gradient: bool = True) -> QueryResult:
         pts = np.asarray(points, float).reshape(-1, 3)
         spec = self.map.spec
         now = self.map.stamp if now is None else now
@@ -123,7 +124,7 @@ class SemanticDistanceQuery:
             hc = np.array(hard, dtype=object)[k]
             eps = grad_eps or spec.voxel_size
             grad = np.zeros((len(pts), 3))
-            for a in range(3):
+            for a in range(3 if gradient else 0):    # 6 extra field samples per point
                 d = np.zeros(3); d[a] = eps
                 plus = np.min(np.stack([self._sample(self._field(n, exclude), pts + d) - self.policies[n].padding_m for n in hard]), 0)
                 minus = np.min(np.stack([self._sample(self._field(n, exclude), pts - d) - self.policies[n].padding_m for n in hard]), 0)

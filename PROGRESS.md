@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-09-29 (P1.6 plant_twin leaf + stem twin core + node)
+**Last updated:** 2026-10-06 (P2A Piper-JEPA target memory, P1.7 semantic distance query, P3A whole-body MPC)
 
 ## Legend
 
@@ -223,6 +223,19 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
 | P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
 | P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
+
+### P3A — Geometry-only whole-body MPC (`scout_piper_whole_body_mpc`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P3A.1 | Unicycle base model + skid-steer slip identification (`fit_slip`) | ☑ | 2026-10-06 — WE1 needs real floor data |
+| P3A.2 | Piper FK/Jacobian from the URDF (sync test) | ☑ | 2026-10-06 — TCP offset to calibrate |
+| P3A.3 | J_geo costs, MPPI with smooth noise, arm-only W0 mode | ☑ | 2026-10-06 — white noise froze or drifted the controller; W0 must not plan with the base |
+| P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
+| P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
+| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☐ | detours stall 3–4 cm short |
+| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
+| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU |
 
 ### P1 exit criteria
 
