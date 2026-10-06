@@ -432,7 +432,7 @@ u=
 \in\mathbb R^8.
 ```
 
-Give differential-drive dynamics explicitly.
+Give the unicycle dynamics explicitly and report the identified skid-steer slip / effective track width.
 
 Full objective:
 
@@ -498,7 +498,7 @@ Evidence pointer: E7.
 Report:
 - Piper arm;
 - Scout 2.0;
-- RealSense D435;
+- RealSense eye-in-hand camera (state the deployed model: D435 or D405);
 - Jetson AGX Orin 64 GB;
 - F/T sensor if used.
 
@@ -816,7 +816,7 @@ If the venue strongly limits figures, move Figure 6 to supplement.
 
 ### Table 2 — Representation/prediction ablation
 
-| Method | ID retention | Recovery | H4 error | H8 error | Visibility F1 |
+| Method | ID retention | Recovery | Error @ horizon 4 | Error @ horizon 8 | Visibility F1 |
 |---|---:|---:|---:|---:|---:|
 
 ### Table 3 — Robot results
@@ -875,18 +875,18 @@ plant_twin should be a separate ablation unless it becomes essential to the main
 
 ## 29. Supplementary material outline
 
-### S1 — Hardware and calibration details
-### S2 — Full network/predictor architecture
-### S3 — ROS graph and timing
-### S4 — Dataset annotation protocol
-### S5 — Additional E1/E2 breakdowns
-### S6 — Horizon/data-budget prediction results
-### S7 — Whole-body controller parameters
-### S8 — Safety filter details
-### S9 — plant_twin model and ablation
-### S10 — Orin profiling
-### S11 — Full failure taxonomy
-### S12 — Additional videos/qualitative cases
+### Supplement S1 — Hardware and calibration details
+### Supplement S2 — Full network/predictor architecture
+### Supplement S3 — ROS graph and timing
+### Supplement S4 — Dataset annotation protocol
+### Supplement S5 — Additional E1/E2 breakdowns
+### Supplement S6 — Horizon/data-budget prediction results
+### Supplement S7 — Whole-body controller parameters
+### Supplement S8 — Safety filter details
+### Supplement S9 — plant_twin model and ablation
+### Supplement S10 — Orin profiling
+### Supplement S11 — Full failure taxonomy
+### Supplement S12 — Additional videos/qualitative cases
 
 ---
 

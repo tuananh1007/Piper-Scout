@@ -7,17 +7,19 @@
 
 ## 1. Questions
 
-W1. Is the dynamics/kinematics rollout correct?  
-W2. Does unified control improve reachability over arm-only/sequential control?  
-W3. Does manipulability/base regularization produce better coordination?  
-W4. Does semantic class-aware geometry improve feasibility safely?  
-W5. Can the controller react to changing local geometry?  
-W6. Does handoff to local servo remain stable?  
-W7. Can the stack run sustainably on Orin?
+WE1. Is the dynamics/kinematics rollout correct?  
+WE2. Does unified control improve reachability over arm-only/sequential control?  
+WE3. Does manipulability/base regularization produce better coordination?  
+WE4. Does semantic class-aware geometry improve feasibility safely?  
+WE5. Can the controller react to changing local geometry?  
+WE6. Does handoff to local servo remain stable?  
+WE7. Can the stack run sustainably on Orin?
 
 ---
 
 ## 2. Method IDs
+
+Methods use `W*`; experiments use `WE*` (so “W4” is always the semantic-geometry controller, never an experiment).
 
 W0 — arm-only.  
 W1 — sequential base then arm.  
@@ -25,7 +27,7 @@ W2 — holistic/reactive QP.
 W3 — unified MPC + binary geometry.  
 W4 — unified MPC + semantic geometry.
 
-Reserve W5 for Piper-JEPA later.
+Reserve W5 for Piper-JEPA later (= Piper-JEPA `C3`/`C4`; see `../README.md` ID registry).
 
 ---
 
@@ -34,17 +36,19 @@ Reserve W5 for Piper-JEPA later.
 R1 — comfortably arm reachable.  
 R2 — arm workspace boundary.  
 R3 — base motion required.  
-R4 — multiple feasible whole-body paths in clutter.
+R4 — multiple geometrically feasible whole-body paths in clutter that differ in target visibility (no `W*` controller sees visibility; R4 is where Piper-JEPA must add value).
 
-Use the same R labels as Piper-JEPA experiments.
+These are the shared scene classes defined once in `../README.md`; Piper-JEPA uses the same R1–R4.
 
 ---
 
-## 4. W1 — dynamics/kinematics validation
+## 4. WE1 — dynamics/kinematics validation
 
 ### Base
 
-Execute commanded $(v,\omega)$ sequences and compare predicted versus observed pose.
+Execute commanded $(v,\omega)$ sequences on the real floor surface and compare predicted versus observed pose (odometry plus an external reference such as motion capture or fiducials; wheel odometry alone hides skid-steer slip).
+
+Identify the effective track width and a yaw-rate slip factor first; report the unicycle model error before and after identification. Repeat on each floor type used later (lab floor, greenhouse path).
 
 Translation error:
 
@@ -64,13 +68,13 @@ E_\theta(k)
 
 ### Arm
 
-Validate predicted EE pose under joint-velocity rollout.
+Validate predicted EE pose under joint-velocity rollout, including the URDF mount transform, against the measured pose of the eye-in-hand camera (hand-eye calibration P0.2.6/P0.2.7 must be done first).
 
 This experiment prevents controller results from being confounded by a wrong robot model.
 
 ---
 
-## 5. W2 — reachability benchmark
+## 5. WE2 — reachability benchmark
 
 ### Methods
 
@@ -104,7 +108,7 @@ W4 \text{ vs } W0/W1.
 
 ---
 
-## 6. W3 — coordination behavior
+## 6. WE3 — coordination behavior
 
 Construct R1/R2 scenes where base motion is possible but not necessary.
 
@@ -124,7 +128,7 @@ Desired behavior:
 
 ---
 
-## 7. W4 — semantic geometry ablation
+## 7. WE4 — semantic geometry ablation
 
 Compare:
 - W3: binary hard geometry;
@@ -144,7 +148,7 @@ Critical requirement: improved feasibility must not come from unsafe stem/branch
 
 ---
 
-## 8. W5 — reactive replanning
+## 8. WE5 — reactive replanning
 
 Introduce controlled changes:
 - leaf moved into path;
@@ -162,7 +166,7 @@ This is deterministic reactivity, not learned prediction.
 
 ---
 
-## 9. W6 — local-servo handoff
+## 9. WE6 — local-servo handoff
 
 Run approach until handoff threshold, then switch to local controller.
 
@@ -171,13 +175,13 @@ Measure:
 - command discontinuity;
 - handoff failure;
 - final approach success;
-- force.
+- force (only if a force source exists; otherwise report contact events from the gripper state).
 
 A handoff is acceptable only if it does not introduce a transient toward obstacles.
 
 ---
 
-## 10. W7 — Orin benchmark
+## 10. WE7 — Orin benchmark
 
 Measure:
 - rollout latency;

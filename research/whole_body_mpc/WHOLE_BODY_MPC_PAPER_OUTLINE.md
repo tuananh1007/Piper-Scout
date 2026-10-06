@@ -29,7 +29,7 @@ Arm-only reach is limited; sequential base repositioning can choose poor local c
 Thin obstacles and leaves make base/arm coordination contact-sensitive.
 
 ### P3 — method
-Unified differential-drive + arm MPC.
+Unified non-holonomic (skid-steer, unicycle-modelled) base + arm MPC.
 
 ### P4 — contributions
 - explicit non-holonomic whole-body formulation;
@@ -62,7 +62,7 @@ x=[x_b,y_b,\theta_b,q]^T
 u=[v,\omega,\dot q]^T.
 ```
 
-### 5.2 Differential-drive dynamics
+### 5.2 Base dynamics (unicycle model, identified skid-steer slip)
 
 Provide equations explicitly.
 
@@ -99,31 +99,31 @@ Keep deterministic safety separate from optimization reward.
 
 ## 6. Experiments
 
-W1 — model validation.  
-W2 — reachability.  
-W3 — coordination.  
-W4 — semantic geometry.  
-W5 — reactive replanning.  
-W6 — servo handoff.  
-W7 — Orin.
+WE1 — model validation.  
+WE2 — reachability.  
+WE3 — coordination.  
+WE4 — semantic geometry.  
+WE5 — reactive replanning.  
+WE6 — servo handoff.  
+WE7 — Orin.
 
 ---
 
 ## 7. Results
 
-### R1 — unified control expands reachability
-Headline R3 result.
+### Result 1 — unified control expands reachability
+Headline result on R3 scenes.
 
-### R2 — arm/base coordination
+### Result 2 — arm/base coordination
 Show base movement by reach class.
 
-### R3 — semantic geometry improves feasible motion
+### Result 3 — semantic geometry improves feasible motion
 W3 vs W4.
 
-### R4 — reactive performance
+### Result 4 — reactive performance
 Changing local scene.
 
-### R5 — embedded timing
+### Result 5 — embedded timing
 Horizon/sample trade-off.
 
 ---
@@ -185,6 +185,6 @@ That last point naturally motivates the Piper-JEPA paper:
 
 ## 13. Publication decision
 
-Submit standalone only if W2-W4 show clear gains over strong existing whole-body baselines.
+Submit standalone only if WE2–WE4 show clear gains over strong existing whole-body baselines.
 
 Otherwise use this as the deterministic control backbone and primary baseline in Piper-JEPA.

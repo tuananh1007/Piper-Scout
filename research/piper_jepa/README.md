@@ -108,13 +108,13 @@ The geometry-only whole-body controller is the critical deterministic baseline. 
 Conceptually:
 
 ```math
-J_{\mathrm{PiperJEPA}}
+J_{\rm PiperJEPA}
 =
-J_{\mathrm{geometry}}
+J_{\rm geo}
 +
-w_v J_{\mathrm{visibility}}
+w_v J_{\rm visibility}
 +
-w_i J_{\mathrm{identity}}.
+w_i J_{\rm identity}.
 ```
 
 This stage supports E4-E7 and the main control claim of the paper.

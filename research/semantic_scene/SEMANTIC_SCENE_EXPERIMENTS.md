@@ -54,8 +54,8 @@ Do not call RealSense itself ground truth.
 
 ### Factors
 
-- diameter: e.g. 2, 3, 5, 8, 12 mm where feasible;
-- camera distance;
+- diameter: e.g. 2, 3, 5, 8, 12 mm where feasible (below the 3 mm stem voxel, expect failure; that is part of the result);
+- camera distance, from the sensor's minimum usable depth to the per-class maximum integration distance (0.8 m for stems in v0); record the camera model with every run;
 - orientation relative to optical axis;
 - voxel size;
 - motion/static;

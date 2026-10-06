@@ -1,7 +1,7 @@
 # Piper-JEPA Research Plan
 
 **Working title:** *Piper-JEPA: Task-Conditioned Dense World Models for Safe Whole-Body Plant Manipulation*  
-**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 differential-drive base + Intel RealSense D435 + NVIDIA Jetson AGX Orin 64 GB  
+**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 skid-steer base + eye-in-hand Intel RealSense (D435 or D405, to be confirmed) + NVIDIA Jetson AGX Orin 64 GB; shared facts in [`../README.md`](../README.md)  
 **Application:** language-grounded grasping of thin, deformable plant structures (flowers, peduncles, branches)  
 **Status:** scientific plan aligned with `ROADMAP.md` as of 2026-10-05  
 **Role of this document:** authoritative research/paper plan. `ROADMAP.md` remains the engineering sequence.
@@ -220,7 +220,7 @@ x_t =
 
 where $q_t\in\mathbb R^6$ is the Piper joint configuration.
 
-The Scout is differential drive, so the control is
+The Scout is a skid-steer base modelled as a unicycle (differential drive; slip identified in whole-body MPC experiment WE1), so the control is
 
 ```math
 u_t =
@@ -716,16 +716,17 @@ The learned visual predictor must never be allowed to override this hard conditi
 `plant_twin` is an explicit deformable model, not a learned visual world model.
 
 It provides interpretable quantities such as:
-- stem centerline;
-- stem length;
-- leaf bending;
-- leaf stretch;
-- contact-conditioned deformation;
-- temporal fit residual.
+- stem centerline (Catmull-Rom control points) and length;
+- leaf rigid pose and bending field (RBF height lattice);
+- leaf edge stretch relative to the rest mesh;
+- contact-conditioned deformation (fingertip contact residual);
+- per-frame fit cost.
+
+Current implementation limits (`Codes/src/plant_twin/`): one leaf and its stem per fitter instance; ≈28 ms/frame on a 4-core x86 dev CPU (Orin not yet measured); untested on hardware; the node publishes markers and the petiole point but not yet a fit-confidence/timestamp message.
 
 ### 14.2 Optional control term
 
-When fit confidence is valid:
+When fit confidence is valid. Note that `plant_twin` fits the *current* deformation and has no forward model, so $E(k)$ for future horizon steps must come from an explicit approximation, for example quasi-static re-fits with the candidate's predicted fingertip position as the contact constraint at a few horizon knots. The paper must state which approximation is used:
 
 ```math
 J_{deform}
@@ -939,7 +940,7 @@ subject to:
 - Piper joint limits;
 - base velocity/acceleration limits;
 - arm velocity/acceleration limits;
-- force/contact threshold;
+- force/contact threshold (needs a force source; the platform has no wrist F/T sensor yet, see [`../README.md`](../README.md));
 - state freshness;
 - watchdog constraints.
 
@@ -996,6 +997,8 @@ c_t>c_{min},
 
 and semantic clearance is valid.
 
+With the eye-in-hand camera, $d_{switch}$ must account for the sensor's minimum depth: below it the local controller runs on the image-space target distribution and the last valid metric estimate (D435), or keeps live depth longer (D405).
+
 After switching:
 - freeze the Scout or heavily penalize base motion;
 - run the local controller at the highest sustainable rate;
@@ -1010,7 +1013,7 @@ After switching:
 
 Each rosbag2 episode should include:
 - RGB;
-- depth;
+- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`);
 - CameraInfo;
 - TF;
 - Piper joint state;
@@ -1021,7 +1024,7 @@ Each rosbag2 episode should include:
 - executed base and arm commands;
 - target state;
 - semantic SDF state or reconstructible inputs;
-- force/contact;
+- force/contact (when a force source exists; otherwise gripper state);
 - `plant_twin` parameters + fit confidence when valid;
 - task outcome.
 
@@ -1449,12 +1452,12 @@ These criteria protect the project from confirmation bias.
 - current adaptive servo baseline.
 
 `scout_piper_scene_repr`
-- nvblox integration;
-- semantic SDF policy;
-- collision-query layer.
+- nvblox integration (RealSense → nvblox validated);
+- class demux + semantic class policy YAML;
+- MoveIt collision-query plugin (**scaffold; reports no collision until P1.4**).
 
 `plant_twin`
-- explicit leaf/stem deformation fitting.
+- explicit leaf/stem deformation fitting (one leaf + stem, analytic-Jacobian LM).
 
 `scout_piper_bringup`
 - integrated system launch.
@@ -1478,23 +1481,7 @@ scout_piper_jepa/
 
 ### Proposed package: `scout_piper_whole_body_mpc`
 
-```text
-scout_piper_whole_body_mpc/
-  dynamics/
-    scout_diff_drive.py
-    piper_kinematics.py
-  costs/
-    goal.py
-    semantic_sdf.py
-    visibility.py
-    identity.py
-    manipulability.py
-    deformation.py
-  safety/
-    projection.py
-    watchdog.py
-  controller_node.py
-```
+Layout is owned by the whole-body MPC track ([`../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md`](../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md) §23). Piper-JEPA does not add modules there: the visibility and identity terms live in `scout_piper_jepa/predictive_cost.py` and are passed to the MPC as extra cost terms, so the geometry-only baseline (`WB:W4` / `C2`) and Piper-JEPA (`C3`) share identical dynamics, solver, geometry costs and safety layer.
 
 ---
 
@@ -1532,6 +1519,8 @@ Containing:
 - timestamp;
 - safety status;
 - controller mode.
+
+This is an internal command, not an actuator interface. After the safety projection it is split into `/cmd_vel` for `scout_ros2` and servo commands for the arm through `moveit_servo`.
 
 ---
 
@@ -1624,7 +1613,7 @@ Columns:
 
 ## 35. Reviewer-facing novelty statement
 
-> **We introduce Piper-JEPA, a task-conditioned predictive-control framework for language-grounded mobile manipulation of thin, deformable plant structures. Unlike prior latent world-model planning that primarily optimizes global visual goal similarity for stationary manipulators, Piper-JEPA maintains a dense persistent representation of the exact language-selected target, predicts how coordinated differential-drive base and arm motions alter that target’s future visibility and identity, and incorporates those predictions as soft objectives inside explicit semantic RGB-D whole-body MPC. Learned prediction augments rather than replaces geometry: semantic signed-distance constraints, force limits, and a separate high-rate local controller retain authority over collision avoidance and final contact.**
+> **We introduce Piper-JEPA, a task-conditioned predictive-control framework for language-grounded mobile manipulation of thin, deformable plant structures. Unlike prior latent world-model planning that primarily optimizes global visual goal similarity for stationary manipulators, Piper-JEPA maintains a dense persistent representation of the exact language-selected target, predicts how coordinated skid-steer base and arm motions alter that target’s future visibility and identity, and incorporates those predictions as soft objectives inside explicit semantic RGB-D whole-body MPC. Learned prediction augments rather than replaces geometry: semantic signed-distance constraints, force limits, and a separate high-rate local controller retain authority over collision avoidance and final contact.**
 
 This wording should be weakened if experiments do not directly establish all clauses.
 

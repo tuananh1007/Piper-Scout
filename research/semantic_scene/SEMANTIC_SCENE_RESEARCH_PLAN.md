@@ -3,7 +3,7 @@
 **Working title:** *Semantic Metric Fields for Thin-Structure Plant Manipulation*  
 **Track:** deterministic semantic geometry  
 **Role:** provide metric collision/clearance authority for whole-body MPC and Piper-JEPA Stage C  
-**Implementation base:** `Codes/src/scout_piper_scene_repr/`, RealSense D435, nvblox  
+**Implementation base:** [`Codes/src/scout_piper_scene_repr/`](../../Codes/src/scout_piper_scene_repr/), eye-in-hand RealSense (model to be confirmed, see [`../README.md`](../README.md)), Isaac ROS nvblox  
 **Status:** aligned with `ROADMAP.md` as of 2026-10-05
 
 ---
@@ -81,16 +81,18 @@ for classes such as:
 
 Map semantic class to planner behavior:
 
-| Class | Policy |
-|---|---|
-| non-target stem | hard collision |
-| branch | hard collision |
-| leaf | soft interaction / clearance penalty |
-| selected target | task attractor; gated collision exclusion near grasp |
+| Class | Policy | Current value in `config/semantic_classes.yaml` |
+|---|---|---|
+| non-target stem | hard collision | padding 5 mm |
+| branch | hard collision | padding 8 mm |
+| leaf | soft interaction / clearance penalty | cost weight 50 per metre of penetration; > 2 cm penetration treated as hard |
+| selected target | task attractor; gated collision exclusion near grasp | attractor within 0.10 m, weight −20 |
+
+These values are the v0 starting point, not tuned results; S4 is where they get tuned.
 
 ### C3 — Thin-structure-aware fusion
 
-Tune voxelization/fusion for narrow stems and branches, including:
+Tune voxelization/fusion for narrow stems and branches. The v0 per-class settings in `config/nvblox_per_class.yaml` are 3 mm (stem, target), 5 mm (branch) and 10 mm (leaf) voxels with 0.5–1.0 m maximum integration distance. Work includes:
 - higher resolution for hard thin structures;
 - temporal integration;
 - minimum-observation/freshness rules;
@@ -230,7 +232,7 @@ J_{\mathrm{leaf}}
 ),
 ```
 
-where $\psi$ penalizes penetration/proximity smoothly.
+where $\psi$ penalizes penetration/proximity smoothly up to a penetration budget $d_{\max}$; beyond it the leaf is treated as hard (the YAML's `max_penetration_m`, 2 cm in v0).
 
 Example:
 
@@ -239,8 +241,9 @@ Example:
 =
 \begin{cases}
 (d-d_{\mathrm{soft}})^2, & d<d_{\mathrm{soft}},\\
-0, & d\ge d_{\mathrm{soft}}.
+0, & d\ge d_{\mathrm{soft}},
 \end{cases}
+\qquad\text{and } d<-d_{\max}\ \Rightarrow\ \text{hard violation.}
 ```
 
 Hard stem/branch constraints remain independent.
@@ -290,6 +293,8 @@ Reject or downweight geometry when
 For regions with insufficient observations, expose an unknown/invalid state rather than returning falsely confident free space.
 
 This distinction is important for safety.
+
+With an eye-in-hand camera, geometry around the gripper is refreshed only while it is inside the sensor's usable depth range. During the final approach the region near the target can fall below the minimum depth (a few tens of cm for a D435, ≈7 cm for a D405), so it ages rather than updates; freshness gating must treat that as stale, not as free.
 
 ---
 
@@ -415,18 +420,23 @@ If query latency or freshness is inadequate for MPC, use a lower-rate geometry s
 
 ## 18. Implementation mapping
 
-Current implementation:
-- `Codes/src/scout_piper_scene_repr/`;
-- RealSense→nvblox smoke test;
-- semantic collision plugin scaffold.
+Current implementation (see `docs/PHASE1_DESIGN.md` and `docs/PHASE1_RUNTIME.md` in the package):
 
-Recommended additions:
+| Piece | Status |
+|---|---|
+| `python/class_demux_node.py` | label image (or legacy stem/target masks) → `/scene_repr/mask/<class>` and mask-gated `/scene_repr/depth/<class>`; latched `/scene_repr/policy` |
+| `config/semantic_classes.yaml` | class IDs 1–4 and hard/soft/attractor policies (values above) |
+| `config/nvblox_per_class.yaml` | per-class voxel size, integration distance, weighting |
+| `launch/realsense_nvblox.launch.py` | RealSense → nvblox smoke path, validated (P1.1.2) |
+| `src/semantic_collision_plugin.cpp` | MoveIt plugin **scaffold: every query currently returns no collision and infinite distance** — not a safety layer until P1.4 |
+
+v0 runs four parallel nvblox instances fed by `class_demux_node`; v1 (PHASE1_DESIGN §5) forks nvblox to carry a per-voxel class label.
+
+Recommended additions (new modules only; class policy and demux already exist):
 
 ```text
 scout_piper_scene_repr/
-  semantic_integrator.py
-  class_policy.py
-  distance_query.py
+  distance_query.py        # batched per-class ESDF queries for the MPC (C4)
   freshness.py
   benchmarks/
     reconstruction_eval.py
@@ -439,9 +449,9 @@ scout_piper_scene_repr/
 ## 19. Immediate tasks
 
 1. Bring up the current RealSense→nvblox path on the actual Orin.
-2. Freeze semantic classes and class-policy YAML.
-3. Implement mask-gated parallel semantic fields.
-4. Finish planner-facing distance query.
+2. Review and freeze the existing `semantic_classes.yaml` / `nvblox_per_class.yaml` values for S1–S4.
+3. Run the four parallel fields from `class_demux_node` end to end on recorded data.
+4. Finish the planner-facing distance query and replace the plugin's stub returns (P1.4).
 5. Build S1 reference scenes with thin cylinders/stems of known geometry.
 6. Measure voxel-size versus preservation/latency.
 7. Validate hard stem/branch and soft leaf behavior.

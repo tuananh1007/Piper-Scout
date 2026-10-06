@@ -3,7 +3,7 @@
 **Working title:** *Non-Holonomic Whole-Body MPC for Mobile Manipulation in Thin-Structure Plant Environments*  
 **Track:** deterministic Scout + Piper control  
 **Role:** strongest geometry-only controller and baseline for Piper-JEPA Stage C  
-**Platform:** AgileX Scout 2.0 + AgileX Piper 6-DoF arm
+**Platform:** AgileX Scout 2.0 (4WD skid-steer) + AgileX Piper 6-DoF arm; shared facts in [`../README.md`](../README.md)
 
 ---
 
@@ -32,10 +32,10 @@ A unified controller can trade base motion against arm motion continuously.
 
 ## 3. State and control
 
-Scout planar configuration:
+Scout planar pose:
 
 ```math
-x_b=[x_b,y_b,\theta_b]^T.
+b=[x_b,y_b,\theta_b]^T.
 ```
 
 Arm configuration:
@@ -59,7 +59,7 @@ u=
 \in\mathbb R^8.
 ```
 
-Scout dynamics:
+Scout dynamics (unicycle model of the skid-steer base; slip and effective track width are identified in WE1):
 
 ```math
 x_{b,t+1}
@@ -94,6 +94,17 @@ q_t+\Delta t\,\dot q_t.
 ```
 
 The final controller must preserve this non-holonomic structure rather than treating base $x,y$ as independently actuated joints.
+
+Arm kinematics include the fixed mount transform from the URDF (`base_link → piper_mount_link → piper_base_link`), so end-effector and camera poses are computed in the Scout frame and then in `odom`.
+
+### Actuation path
+
+| Control | Executed by | Note |
+|---|---|---|
+| $(v,\omega)$ | `scout_ros2`, `/cmd_vel` | skid-steer low-level controller tracks the unicycle command |
+| $\dot q$ | integrated to joint setpoints, sent via `moveit_servo` | the existing pipeline already publishes to `/servo_node/delta_twist_cmds` |
+
+The MPC rate, the servo rate and the Scout command rate are different loops; WE7 measures the end-to-end delay.
 
 ---
 
@@ -147,7 +158,7 @@ Optional later term:
 +w_dJ_{\mathrm{deform}}
 ```
 
-when valid `plant_twin` state exists.
+when valid `plant_twin` state exists. Because `plant_twin` fits only the current deformation (it has no forward model), a horizon-summed $J_{\mathrm{deform}}$ needs an explicit approximation, e.g. quasi-static re-fits with the predicted fingertip as the contact constraint at a few horizon knots.
 
 No V-JEPA visibility/identity prediction is allowed in this track's baseline.
 
@@ -311,7 +322,7 @@ subject to:
 - acceleration limits;
 - joint limits;
 - watchdog/freshness;
-- force/contact where relevant.
+- force/contact where relevant (requires a force source: no wrist F/T sensor is on the platform yet; see [`../README.md`](../README.md)).
 
 This safety layer is shared conceptually with Piper-JEPA Stage C.
 
@@ -340,7 +351,7 @@ The whole-body controller should not attempt to replace the local contact contro
 R1 — target comfortably reachable by arm.  
 R2 — target near arm workspace boundary.  
 R3 — target unreachable without base repositioning.  
-R4 — several feasible base/arm paths in clutter.
+R4 — several geometrically feasible base/arm paths in clutter that differ in target visibility.
 
 R4 later becomes the bridge to Piper-JEPA visibility-sensitive experiments.
 
@@ -360,15 +371,15 @@ Later Piper-JEPA becomes W5, but W5 does not belong to this deterministic resear
 
 ## 16. Experiments
 
-Use experiment IDs W1-W7.
+Use experiment IDs WE1–WE7 (methods keep W0–W5).
 
-W1 — dynamics/kinematics validation.  
-W2 — arm-only vs sequential vs unified reachability.  
-W3 — manipulability/base-motion behavior.  
-W4 — semantic geometry ablation.  
-W5 — clutter/reactive replanning.  
-W6 — near-contact handoff compatibility.  
-W7 — Orin timing and sustained operation.
+WE1 — dynamics/kinematics validation.  
+WE2 — arm-only vs sequential vs unified reachability.  
+WE3 — manipulability/base-motion behavior.  
+WE4 — semantic geometry ablation.  
+WE5 — clutter/reactive replanning.  
+WE6 — near-contact handoff compatibility.  
+WE7 — Orin timing and sustained operation.
 
 Full protocol: `WHOLE_BODY_MPC_EXPERIMENTS.md`.
 
@@ -395,7 +406,7 @@ Full protocol: `WHOLE_BODY_MPC_EXPERIMENTS.md`.
 
 ### A1 — non-holonomic model
 
-Correct differential-drive dynamics versus fake planar holonomic joints.
+Correct unicycle (skid-steer-identified) dynamics versus fake planar holonomic joints.
 
 ### A2 — base penalty
 
@@ -490,7 +501,7 @@ If Orin timing is inadequate, reduce horizon/sample count or use asynchronous/sp
 
 ## 23. Implementation mapping
 
-Proposed package:
+Proposed package (the canonical layout; `ROADMAP.md` §7 and the Piper-JEPA plan point here). Piper-JEPA adds its visibility/identity terms from `scout_piper_jepa/predictive_cost.py` without changing these modules.
 
 ```text
 Codes/src/scout_piper_whole_body_mpc/
@@ -521,7 +532,7 @@ Codes/src/scout_piper_whole_body_mpc/
 
 ## 24. Immediate tasks
 
-1. Implement Scout differential-drive rollout.
+1. Implement Scout unicycle rollout and identify skid-steer slip / effective track width (WE1).
 2. Integrate Piper forward kinematics/Jacobian.
 3. Create synthetic SDF benchmark environment.
 4. Implement goal, smoothness, base, and manipulability costs.
@@ -536,6 +547,6 @@ Codes/src/scout_piper_whole_body_mpc/
 
 Strong standalone framing:
 
-> **A non-holonomic whole-body MPC that coordinates a differential-drive base and lightweight arm under class-aware semantic geometry for thin-structure plant manipulation.**
+> **A non-holonomic whole-body MPC that coordinates a skid-steer base and lightweight arm under class-aware semantic geometry for thin-structure plant manipulation.**
 
 If novelty over existing whole-body MPC is insufficient, this track should become the deterministic method/baseline section of the Piper-JEPA paper rather than being forced into a separate publication.

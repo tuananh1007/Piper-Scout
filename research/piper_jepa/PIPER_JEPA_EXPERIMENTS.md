@@ -67,7 +67,7 @@ Each episode should record enough information to replay perception and analyze c
 
 Record:
 - RGB image;
-- aligned depth image;
+- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`; several nodes still default to the unaligned `/camera/depth/image_rect_raw` and must be switched);
 - CameraInfo;
 - TF tree;
 - Piper joint states;
@@ -81,7 +81,7 @@ Record:
 - V-JEPA target state;
 - target confidence and entropy;
 - nvblox / semantic scene inputs or exported state sufficient to reconstruct clearance;
-- force/wrench;
+- force/wrench (`/ft_sensor/raw` when a wrist F/T sensor is fitted; otherwise record joint efforts and gripper state and mark force metrics unavailable);
 - safety-filter state;
 - controller mode;
 - final task outcome.
@@ -90,7 +90,7 @@ Record:
 
 When available:
 - plant_twin parameter vector;
-- plant_twin fit cost/confidence;
+- plant_twin fit cost/confidence (not yet published by `twin_node`; add before recording);
 - plant_twin contact state;
 - gripper state;
 - battery/power mode;
@@ -126,6 +126,7 @@ software_commit
 vjepa_checkpoint
 predictor_checkpoint
 orin_power_mode
+camera_model
 trial_valid
 exclusion_reason
 outcome
@@ -441,11 +442,11 @@ Report both separately.
 ### 9.5 Error taxonomy
 
 Classify failure as:
-- G1: incorrect initial grounding;
-- G2: correct grounding, later target switch;
-- G3: target lost, no re-acquisition;
-- G4: target re-acquired incorrectly;
-- G5: geometry/depth failure despite correct visual identity.
+- GF1: incorrect initial grounding;
+- GF2: correct grounding, later target switch;
+- GF3: target lost, no re-acquisition;
+- GF4: target re-acquired incorrectly;
+- GF5: geometry/depth failure despite correct visual identity.
 
 ---
 
@@ -671,10 +672,10 @@ First-attempt correct-target grasp success.
 
 Compare:
 
-S0 — predictive planner only.  
-S1 — + semantic SDF.  
-S2 — + safety projection.  
-S3 — + local near-contact servo.
+SF0 — predictive planner only.  
+SF1 — + semantic SDF.  
+SF2 — + safety projection.  
+SF3 — + local near-contact servo.
 
 Primary safety metrics:
 - collision/contact violation count;
@@ -901,7 +902,7 @@ No claim should appear in the abstract unless its supporting experiment is compl
 
 ### Table B — Prediction
 
-| Method | H=1 px ↓ | H=4 px ↓ | H=8 px ↓ | ID@H8 ↑ | Visibility F1 ↑ |
+| Method | px @ H=1 ↓ | px @ H=4 ↓ | px @ H=8 ↓ | ID @ H=8 ↑ | Visibility F1 ↑ |
 |---|---:|---:|---:|---:|---:|
 | P0 | | | | | |
 | P1 | | | | | |

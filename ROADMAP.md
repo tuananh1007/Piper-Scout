@@ -1,9 +1,10 @@
 # Piper + Scout Research & Development Roadmap
 
-**Platform:** AgileX Piper 6-DoF arm + RealSense camera mounted on AgileX Scout 2.0 UGV  
+**Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense (model to be confirmed: D435 in URDF, D405 in the Phase 1 smoke test) on an AgileX Scout 2.0 skid-steer UGV  
 **Compute:** NVIDIA Jetson AGX Orin 64 GB (on-robot) + operator laptop (GUI)  
 **Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting  
-**Last updated:** 2026-10-05
+**Last updated:** 2026-10-06  
+**Research tracks:** [`research/`](research/) — shared platform facts and the cross-track ID registry live in [`research/README.md`](research/README.md)
 
 ---
 
@@ -20,7 +21,7 @@ The system:
 3. **Initializes the requested target** with open-vocabulary segmentation, then hands target identity to a V-JEPA 2.1 dense temporal representation so the same flower/peduncle persists through camera motion, robot motion, plant sway, and temporary occlusion.
 4. **Maintains explicit metric geometry** with RealSense + semantic nvblox SDFs. V-JEPA does not replace depth or collision geometry.
 5. **Maintains explicit deformation state where useful** using the existing `plant_twin` leaf/stem fitter during contact and pull interactions.
-6. **Approaches the plant** with geometry-only whole-body MPC coordinating the Scout differential-drive base and Piper arm.
+6. **Approaches the plant** with geometry-only whole-body MPC coordinating the Scout skid-steer base and Piper arm.
 7. **Adds predictive whole-body planning** with a Piper-Scout action-conditioned JEPA model that forecasts whether candidate base+arm motions preserve target identity, visibility, and future manipulability.
 8. **Hands off near contact** to a high-rate safety-bounded local MPPI / visual-servo controller with force, velocity, confidence, and semantic-clearance gates.
 9. **Reports back** in plain language.
@@ -116,7 +117,10 @@ The headline research claim is therefore not “V-JEPA applied to agriculture,�
 | Servo | `FullAdaptiveServoController` | No explicit horizon or semantic constraints |
 | Whole-body control | Planned | No coordinated non-holonomic base + arm MPC yet |
 | Prediction | None | Planner cannot forecast whether motion preserves target visibility |
-| Deformation | `plant_twin` exists | Not yet coupled to planning/control |
+| Deformation | `plant_twin`: one leaf + its stem, analytic-Jacobian LM fit ≈28 ms/frame on x86 dev CPU, RViz output | Untested on hardware; no fit-confidence/timestamp topic; current-state fitter only (no forward model); not coupled to planning/control |
+| Collision queries | `scout_piper_scene_repr` MoveIt plugin scaffold | Currently reports *no collision, infinite distance* — must not be relied on until P1.4 |
+| Force sensing | Code expects `/ft_sensor/raw` | No wrist F/T sensor in the hardware list — add one or calibrate a Piper joint-effort estimate before any force gate is trusted |
+| Depth alignment | Bringup enables `align_depth` | `stem_grasp` and `plant_twin` default to unaligned `/camera/depth/image_rect_raw`; switch to `/camera/aligned_depth_to_color/image_raw` |
 | Language interface | Planned | No persistent linkage between grounded language target and execution target |
 
 ---
@@ -178,6 +182,8 @@ Use it for:
 2. optional local MPC deformation costs;
 3. simulation-style perturbation experiments;
 4. testing whether JEPA latent changes correlate with explicit deformation state.
+
+Current limits: one leaf + its stem per fitter instance; outputs RViz markers and the petiole point; fit confidence and timestamp are not yet published; untested on hardware.
 
 `plant_twin` is **not** a hard dependency for tracking or safety. Invalid/stale fits are ignored.
 
@@ -350,6 +356,8 @@ Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue
 - force/contact penalty;
 - optional deformation penalty.
 
+**Sensing near contact:** with an eye-in-hand camera the target approaches the sensor's minimum depth during the last centimetres. With a D435 this happens before contact, so the servo must run on image-space target state plus the last valid metric estimate; with a D405 depth stays usable much closer. Confirm the camera model before fixing the handoff distance.
+
 **Hard gates**
 - stop/re-ground after persistent target-confidence loss;
 - stop/retract on force-limit violation;
@@ -369,13 +377,13 @@ Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue
 
 **Goal:** build the strongest deterministic mobile-manipulation baseline before learned prediction.
 
-Scout configuration:
+Scout pose:
 
 ```math
-x_b=[x,y,\theta]
+b=[x_b,y_b,\theta_b]^T
 ```
 
-with differential-drive controls
+The Scout 2.0 is a 4WD skid-steer base. It is modelled as a unicycle (differential drive) with controls
 
 ```math
 u_b=[v,\omega].
@@ -396,15 +404,15 @@ u=[v,\omega,\dot q_1,\ldots,\dot q_6]^T\in\mathbb R^8.
 Base dynamics:
 
 ```math
-x_{t+1}=x_t+\Delta t\,v_t\cos\theta_t
+x_{b,t+1}=x_{b,t}+\Delta t\,v_t\cos\theta_{b,t}
 ```
 
 ```math
-y_{t+1}=y_t+\Delta t\,v_t\sin\theta_t
+y_{b,t+1}=y_{b,t}+\Delta t\,v_t\sin\theta_{b,t}
 ```
 
 ```math
-\theta_{t+1}=\theta_t+\Delta t\,\omega_t.
+\theta_{b,t+1}=\theta_{b,t}+\Delta t\,\omega_t.
 ```
 
 Arm:
@@ -413,7 +421,9 @@ Arm:
 q_{t+1}=q_t+\Delta t\,\dot q_t.
 ```
 
-Do **not** model the Scout as independently actuated Cartesian $x/y$ joints in the final formulation.
+Do **not** model the Scout as independently actuated Cartesian $x/y$ joints in the final formulation. Skid-steer slip and the effective track width are identified on the real floor before controller results are reported (whole-body MPC experiment WE1).
+
+**Actuation path:** $(v,\omega)$ goes to `scout_ros2` as `/cmd_vel`; $\dot q$ is integrated to setpoints and sent through `moveit_servo`. Piper FK starts from the URDF mount transform (`piper_mount_link`).
 
 Geometry-only objective:
 
@@ -437,11 +447,11 @@ $J_{\rm deform}$ is optional and comes from valid `plant_twin` state.
 - holistic/reactive QP;
 - geometry-only whole-body MPC.
 
-**Scene categories**
-1. comfortably arm reachable;
-2. near workspace boundary;
-3. unreachable without base motion;
-4. geometrically reachable but visibility-sensitive.
+**Scene categories** (shared R1–R4, defined in [`research/README.md`](research/README.md))
+1. R1 — comfortably arm reachable;
+2. R2 — near workspace boundary;
+3. R3 — unreachable without base motion;
+4. R4 — several feasible paths that differ in target visibility.
 
 Do not commit to a 200 Hz claim until the controller is measured on Orin.
 
@@ -627,6 +637,8 @@ J_{\rm deform}
 +\alpha_bE_{\rm leaf\ bend}
 ].
 ```
+
+`plant_twin` fits the *current* deformation; it has no forward model. A future-horizon $J_{\rm deform}$ therefore needs an explicit approximation, e.g. re-solving the twin quasi-statically with the candidate's predicted fingertip position as the contact constraint (supported by the fitter) at a few horizon knots, or penalising predicted contact displacement from the current fit. Whichever is used must be stated in the paper.
 
 Roles remain distinct:
 - JEPA predicts future visual target state.
@@ -835,7 +847,7 @@ Do not treat projected desktop-GPU throughput as an Orin result.
 | V-JEPA 2.1 encoder | ViT-B/16 384 first; ViT-L second | clip latency, FPS, memory, power |
 | Target-memory matching | same process as encoder | incremental latency, jitter |
 | Action predictor | compact predictor first | rollout latency vs horizon, accuracy |
-| `plant_twin` | current CPU fitter first | fit rate, confidence, CPU/GPU cost |
+| `plant_twin` | current CPU fitter (≈28 ms/frame on 4-core x86 dev CPU, one leaf + stem) | Orin fit rate, confidence, CPU cost per tracked structure |
 | Geometry whole-body MPC | GPU-batched | solve-time distribution, missed deadlines |
 | JEPA-aware MPC | asynchronous predictor + faster controller | prediction age at command time |
 | Local MPPI / servo | highest-rate bounded loop | sustained rate, jitter, stop latency |
@@ -873,10 +885,14 @@ All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
 | Learned prediction conflicts with safe geometry | Low by design | JEPA is soft cost only |
 | Thin peduncle depth failure | High | temporal fusion + active perception |
 | Scout localization drift | Medium | odom + IMU + local RGB-D alignment |
-| Non-holonomic base awkward in optimizer | Medium | explicit differential-drive dynamics |
+| Non-holonomic base awkward in optimizer | Medium | explicit unicycle dynamics with identified skid-steer slip |
 | GPU contention | High | asynchronous scheduling, ViT-B first |
 | Target silently changes identity | Medium | persistent descriptor + abort/re-ground |
 | Scope expands into too many papers | High | Phase 3B remains headline |
+| No wrist F/T sensor on the platform | High | decide on an added sensor or a calibrated joint-effort estimate before Phase 2B; no force claims until then |
+| Camera minimum range blinds depth near grasp | Medium-high (D435) / low (D405) | confirm camera model; image-space servo + last valid depth for the final approach |
+| Skid-steer slip breaks the unicycle model | Medium | identify effective track width/slip (WE1); conservative base velocity near plants |
+| Semantic plugin stub mistaken for a safety layer | Medium | plugin reports no collision until P1.4; do not wire into execution before the query tests pass |
 
 ---
 
@@ -910,15 +926,18 @@ Codes/src/
       target_memory.py
       predictor.py
       target_state_node.py
-      predictive_cost.py
+      predictive_cost.py      # J_visibility, J_identity; loaded by the MPC as extra cost terms
     config/
     launch/
     test/
-  scout_piper_whole_body_mpc/
+  scout_piper_whole_body_mpc/      # layout: research/whole_body_mpc §23
     dynamics/
     costs/
+    solvers/
     safety/
+    config/
     launch/
+    benchmarks/
 ```
 
 ---
@@ -933,6 +952,8 @@ Codes/src/
 | D | V-JEPA 2.1 dense + generic predictor | yes | yes | no | yes | no | yes | yes |
 | E | Piper-JEPA, no final handoff | yes | yes | yes | yes | optional | yes | no |
 | F | **Piper-JEPA full** | **yes** | **yes** | **yes** | **yes** | **optional** | **yes** | **yes** |
+
+Track equivalents: A = `WB:W0` / `PJ:C0`; B = `WB:W4` / `PJ:C2`; C/D/E = `PJ:C3` with predictors `P1`/`P2`/`P3`; F = `PJ:C4` (registry in [`research/README.md`](research/README.md)).
 
 Key comparisons:
 - C → D: benefit of V-JEPA 2.1 dense representation.

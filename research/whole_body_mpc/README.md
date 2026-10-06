@@ -1,6 +1,6 @@
 # Whole-Body MPC
 
-**Scope:** deterministic coordinated control of the AgileX Scout 2.0 differential-drive base and Piper 6-DoF arm.
+**Scope:** deterministic coordinated control of the AgileX Scout 2.0 skid-steer base (modelled as differential drive) and Piper 6-DoF arm.
 
 This track builds the strongest non-learned mobile-manipulation controller for Piper-Scout. It is both a potentially standalone research contribution and the deterministic baseline required for Piper-JEPA Stage C.
 
@@ -15,7 +15,7 @@ It can start before Semantic Scene is complete by using synthetic/simple obstacl
 ## Core questions
 
 1. Does unified base+arm control improve reachability over arm-only and sequential planning?
-2. Does explicit differential-drive modeling matter?
+2. Does explicit non-holonomic (skid-steer-identified unicycle) modeling matter?
 3. Can manipulability and base regularization produce sensible arm-first/base-when-needed behavior?
 4. Does semantic class-aware geometry improve feasibility safely?
 5. Can the controller run sustainably on Jetson AGX Orin?
@@ -25,7 +25,7 @@ It can start before Semantic Scene is complete by using synthetic/simple obstacl
 ### Stage A — Robot model + synthetic geometry
 
 ```text
-Scout differential-drive dynamics
+Scout unicycle dynamics
           +
 Piper kinematics/Jacobian
           +
@@ -85,13 +85,13 @@ same safety layer
 and add only predictive visual terms:
 
 ```math
-J_{\mathrm{PiperJEPA}}
+J_{\rm PiperJEPA}
 =
-J_{\mathrm{geo}}
+J_{\rm geo}
 +
-w_vJ_{\mathrm{visibility}}
+w_v J_{\rm visibility}
 +
-w_iJ_{\mathrm{identity}}.
+w_i J_{\rm identity}.
 ```
 
 This makes the comparison scientifically clean.
@@ -134,12 +134,12 @@ A deformation term may later be added, but the deterministic controller must sta
 
 ## Immediate starting point
 
-1. Implement Scout differential-drive rollout.
+1. Implement Scout unicycle rollout and identify skid-steer slip / track width (WE1).
 2. Validate Piper FK/Jacobian.
 3. Build synthetic SDF test scenes.
 4. Implement goal, collision, smoothness, base, and manipulability costs.
 5. Compare solver candidates offline.
-6. Run R1-R3 reachability cases.
+6. Run R1–R3 reachability cases (scene classes defined in [`../README.md`](../README.md)).
 7. Integrate Semantic Scene distance queries when stable.
 8. Freeze the geometry-only baseline before adding Piper-JEPA predictive costs.
 
