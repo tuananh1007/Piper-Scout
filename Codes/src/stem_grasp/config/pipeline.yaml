@@ -53,5 +53,5 @@ stem_grasp_segmentation:
 
 stem_grasp_pointcloud:
   ros__parameters:
-    depth_topic: "/camera/depth/image_rect_raw"
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"
     min_valid_depth_pixels: 50

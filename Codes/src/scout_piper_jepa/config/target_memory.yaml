@@ -1,0 +1,23 @@
+piper_jepa_target_state:
+  ros__parameters:
+    rgb_topic: "/camera/color/image_raw"
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"   # must be aligned to colour
+    camera_info_topic: "/camera/color/camera_info"
+    init_mask_topic: "/piper_jepa/init_mask"   # publish a mono8 mask to (re)ground
+    world_frame: "odom"
+    # 'color_patch' = numpy reference encoder (runs anywhere, NOT a V-JEPA result)
+    # 'vjepa'       = V-JEPA 2/2.1 via torch.hub; set vjepa_hub_entry from the
+    #                 facebookresearch/vjepa2 README for the checkpoint you deploy
+    encoder: "color_patch"
+    vjepa_hub_repo: "facebookresearch/vjepa2"
+    vjepa_hub_entry: ""
+    vjepa_image_size: 384
+    vjepa_device: "cuda"
+    clip_length: 2
+    temperature: 0.05
+    prior_sigma_px: 30.0          # <= 0 disables prior + gate (ablation)
+    gate_px: 48.0
+    visible_similarity: 0.6       # tune per encoder; V-JEPA cosines are not ColorPatch cosines
+    lost_after_frames: 30
+    max_valid_age_s: 0.5
+    publish_debug: false

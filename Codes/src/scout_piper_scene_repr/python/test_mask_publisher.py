@@ -5,7 +5,7 @@ Without a live camera or YOLO/Grounded-SAM model, the class_demux_node has
 no input. This node publishes:
 
   /stem_grasp/semantic_label  (sensor_msgs/Image, mono8, label values 1-4)
-  /camera/depth/image_rect_raw (sensor_msgs/Image, 16UC1, mm)
+  /camera/aligned_depth_to_color/image_raw (sensor_msgs/Image, 16UC1, mm)
 
 at ~10 Hz, with synthetic geometry: a vertical green "stem" pixel column,
 a circular "leaf" blob, and a small "target" disc. Depth is a constant
@@ -48,7 +48,7 @@ class TestMaskPublisher(Node):
         self.declare_parameter("publish_hz", 10.0)
         self.declare_parameter("depth_mm", 500)
         self.declare_parameter("label_topic", "/stem_grasp/semantic_label")
-        self.declare_parameter("depth_topic", "/camera/depth/image_rect_raw")
+        self.declare_parameter("depth_topic", "/camera/aligned_depth_to_color/image_raw")
 
         self.w = int(self.get_parameter("image_w").value)
         self.h = int(self.get_parameter("image_h").value)

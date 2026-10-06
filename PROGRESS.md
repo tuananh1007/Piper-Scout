@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-09-29 (P1.6 plant_twin leaf + stem twin core + node)
+**Last updated:** 2026-10-06 (P2A Piper-JEPA target memory, P1.7 semantic distance query, P3A whole-body MPC)
 
 ## Legend
 
@@ -200,6 +200,42 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.8 | Analytic Jacobians | ☑ | 2026-09-29 — leaf (SO(3) right Jacobian + RBF bend) and stem (linear basis), FD-verified; ~60 ms/frame at 10 evals with velocity warm start, ~4 mm tracking error at 5 mm/frame. 30 Hz still needs custom GN or GPU |
 | P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
 | P1.6.10 | Fused residual+Jacobian `evaluate` + own LM solver on normal equations | ☑ | 2026-09-29 — `solver.py`; ~28 ms/frame, 1.6 mm at 5 mm/frame; TRF/FD kept as references |
+
+### P2A — Piper-JEPA Stage A: dense target memory (`scout_piper_jepa`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P2A.1 | Encoder interface: V-JEPA (lazy torch.hub) + numpy reference encoder | ☑ | 2026-10-06 — hub entry point is config; not yet run on GPU |
+| P2A.2 | Target memory: gated softmax, mean/cov, entropy, confidence, occlusion/lost, 3-D from aligned depth | ☑ | 2026-10-06 — gate + coasting needed: ungated memory jumps to an identical twin during occlusion |
+| P2A.3 | E1 metrics + episode export/eval tools | ☑ | 2026-10-06 |
+| P2A.4 | ROS 2 node with re-grounding via `/piper_jepa/init_mask` | ☑ | 2026-10-06 — untested on hardware |
+| P2A.5 | Record E1 dataset and annotate target/distractor masks | ☐ | |
+| P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ☐ | go/no-go gate |
+
+### P1.7 — Semantic scene: planner distance query (CPU v0 backend)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.7.1 | `SemanticVoxelMap`: per-class evidence, shared free space, unknown ≠ free, thin-stem-safe carving | ☑ | 2026-10-06 |
+| P1.7.2 | `SemanticDistanceQuery`: signed distance, hard min + padding, gradient, validity/freshness, leaf ψ with cap, grasp-mode exclusion | ☑ | 2026-10-06 — ≤ 1 voxel error on synthetic stem |
+| P1.7.3 | `other` class for non-plant depth | ☑ | 2026-10-06 — demux only fed plant classes, so pots/walls were invisible to planning |
+| P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
+| P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
+| P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
+| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
+
+### P3A — Geometry-only whole-body MPC (`scout_piper_whole_body_mpc`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P3A.1 | Unicycle base model + skid-steer slip identification (`fit_slip`) | ☑ | 2026-10-06 — WE1 needs real floor data |
+| P3A.2 | Piper FK/Jacobian from the URDF (sync test) | ☑ | 2026-10-06 — TCP offset to calibrate |
+| P3A.3 | J_geo costs, MPPI with smooth noise, arm-only W0 mode | ☑ | 2026-10-06 — white noise froze or drifted the controller; W0 must not plan with the base |
+| P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
+| P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
+| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☐ | detours stall 3–4 cm short |
+| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
+| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU |
 
 ### P1 exit criteria
 
