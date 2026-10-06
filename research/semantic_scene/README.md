@@ -104,12 +104,12 @@ Neither should block the other initially.
 
 ## Immediate starting point
 
-1. Run the current RealSense→nvblox path on the actual Orin.
+1. Run the current RealSense→nvblox path on the actual Orin (it has been validated in the dev container; confirm which RealSense model is on the wrist).
 2. Implement/validate the planner-facing distance query.
 3. Build controlled thin-structure reference scenes.
 4. Measure voxel size vs reconstruction coverage and latency.
-5. Add semantic mask gating.
+5. Run semantic mask gating end to end (`class_demux_node` already produces per-class masks and depth).
 6. Validate hard stem/branch and soft leaf policies.
 7. Export the stable query interface to Whole-Body MPC.
 
-**Status:** implementation scaffold and RealSense→nvblox smoke path already exist; semantic integration and planner query completion remain active work.
+**Status:** class policies, per-class nvblox config, `class_demux_node` and the RealSense→nvblox smoke path exist. The MoveIt semantic collision plugin is a scaffold that currently reports no collision; the planner query path (P1.4) is the main open item.

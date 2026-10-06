@@ -3,7 +3,7 @@
 **Working title:** *Non-Holonomic Whole-Body MPC for Mobile Manipulation in Thin-Structure Plant Environments*  
 **Track:** deterministic Scout + Piper control  
 **Role:** strongest geometry-only controller and baseline for Piper-JEPA Stage C  
-**Platform:** AgileX Scout 2.0 + AgileX Piper 6-DoF arm
+**Platform:** AgileX Scout 2.0 (4WD skid-steer) + AgileX Piper 6-DoF arm; shared facts in [`../README.md`](../README.md)
 
 ---
 
@@ -32,68 +32,79 @@ A unified controller can trade base motion against arm motion continuously.
 
 ## 3. State and control
 
-Scout planar configuration:
+Scout planar pose:
 
-\[
-x_b=[x_b,y_b,\theta_b]^T.
-\]
+```math
+b=[x_b,y_b,\theta_b]^T.
+```
 
 Arm configuration:
 
-\[
+```math
 q\in\mathbb R^6.
-\]
+```
 
 Combined state:
 
-\[
+```math
 x=
 [x_b,y_b,\theta_b,q^T]^T.
-\]
+```
 
 Control:
 
-\[
+```math
 u=
 [v,\omega,\dot q^T]^T
 \in\mathbb R^8.
-\]
+```
 
-Scout dynamics:
+Scout dynamics (unicycle model of the skid-steer base; slip and effective track width are identified in WE1):
 
-\[
+```math
 x_{b,t+1}
 =
 x_{b,t}
 +
 \Delta t\,v_t\cos\theta_t,
-\]
+```
 
-\[
+```math
 y_{b,t+1}
 =
 y_{b,t}
 +
 \Delta t\,v_t\sin\theta_t,
-\]
+```
 
-\[
+```math
 \theta_{t+1}
 =
 \theta_t
 +
 \Delta t\,\omega_t.
-\]
+```
 
 Arm:
 
-\[
+```math
 q_{t+1}
 =
 q_t+\Delta t\,\dot q_t.
-\]
+```
 
-The final controller must preserve this non-holonomic structure rather than treating base \(x,y\) as independently actuated joints.
+The final controller must preserve this non-holonomic structure rather than treating base $x,y$ as independently actuated joints.
+
+Arm kinematics include the fixed mount transform from the URDF (`base_link → piper_mount_link → piper_base_link`), so end-effector and camera poses are computed in the Scout frame and then in `odom`.
+
+### Actuation path
+
+| Control | Executed by | Note |
+|---|---|---|
+| $(v,\omega)$ | `scout_ros2`, `/cmd_vel` | skid-steer low-level controller tracks the unicycle command |
+| $\dot q$ | integrated to joint setpoints, sent via `moveit_servo` | the existing pipeline already publishes to `/servo_node/delta_twist_cmds` |
+
+The MPC rate, the servo rate and the Scout command rate are different loops; WE7 measures the end-to-end delay.
 
 ---
 
@@ -125,7 +136,7 @@ GPU-batched MPC/MPPI can sustain a useful receding-horizon rate on Jetson AGX Or
 
 Define
 
-\[
+```math
 J_{\mathrm{geo}}
 =
 w_gJ_{\mathrm{goal}}
@@ -139,15 +150,15 @@ w_mJ_{\mathrm{manip}}
 w_bJ_{\mathrm{base}}
 +
 w_sJ_{\mathrm{smooth}}.
-\]
+```
 
 Optional later term:
 
-\[
+```math
 +w_dJ_{\mathrm{deform}}
-\]
+```
 
-when valid \`plant_twin\` state exists.
+when valid `plant_twin` state exists. Because `plant_twin` fits only the current deformation (it has no forward model), a horizon-summed $J_{\mathrm{deform}}$ needs an explicit approximation, e.g. quasi-static re-fits with the predicted fingertip as the contact constraint at a few horizon knots.
 
 No V-JEPA visibility/identity prediction is allowed in this track's baseline.
 
@@ -155,9 +166,9 @@ No V-JEPA visibility/identity prediction is allowed in this track's baseline.
 
 ## 6. Goal cost
 
-Let desired grasp pose be \((p_g,R_g)\).
+Let desired grasp pose be $`(p_g,R_g)`$.
 
-\[
+```math
 J_{\mathrm{goal}}
 =
 \sum_{k=1}^{H}
@@ -165,7 +176,7 @@ J_{\mathrm{goal}}
 +
 \lambda_R
 d^2_{SO(3)}(R^e_k,R_g).
-\]
+```
 
 If final orientation is underconstrained, use task-specific orientation weighting rather than forcing all axes equally.
 
@@ -175,34 +186,34 @@ If final orientation is underconstrained, use task-specific orientation weightin
 
 Semantic Scene provides
 
-\[
+```math
 \phi_{\mathrm{hard}}(p).
-\]
+```
 
-For collision primitive \(j\),
+For collision primitive $j$,
 
-\[
+```math
 d_{j,k}
 =
 \phi_{\mathrm{hard}}(p_j(x_k))-r_j.
-\]
+```
 
 Require or heavily penalize:
 
-\[
+```math
 d_{j,k}\ge d_{\mathrm{safe}}.
-\]
+```
 
 Leaf soft cost:
 
-\[
+```math
 J_{\mathrm{leaf}}
 =
 \sum_{k,j}
 \psi(
 \phi_{\mathrm{leaf}}(p_j(x_k))
 ).
-\]
+```
 
 Unknown/stale geometry should invoke conservative behavior rather than free-space assumption.
 
@@ -210,24 +221,24 @@ Unknown/stale geometry should invoke conservative behavior rather than free-spac
 
 ## 8. Manipulability
 
-For arm Jacobian \(J_a(q)\),
+For arm Jacobian $J_a(q)$,
 
-\[
+```math
 m(q)
 =
 \sqrt{
 \det(J_aJ_a^T)
 }.
-\]
+```
 
 Use
 
-\[
+```math
 J_{\mathrm{manip}}
 =
 \sum_k
 \frac{1}{m(q_k)+\epsilon}.
-\]
+```
 
 Alternative numerically stable manipulability/singularity measures may be used if the determinant becomes unstable.
 
@@ -237,7 +248,7 @@ Alternative numerically stable manipulability/singularity measures may be used i
 
 Use
 
-\[
+```math
 J_{\mathrm{base}}
 =
 \sum_k
@@ -246,7 +257,7 @@ v_k^2
 +
 \lambda_\omega\omega_k^2
 ).
-\]
+```
 
 This encodes a useful behavioral prior:
 
@@ -258,12 +269,12 @@ A separate base-displacement term may be added if needed.
 
 ## 10. Smoothness
 
-\[
+```math
 J_{\mathrm{smooth}}
 =
 \sum_k
 \|u_k-u_{k-1}\|_R^2.
-\]
+```
 
 This is especially important for the base near plants.
 
@@ -292,18 +303,18 @@ If cuRobo requires fake holonomic base joints, it should not be the final scient
 
 Nominal MPC action:
 
-\[
+```math
 u_{\mathrm{MPC}}.
-\]
+```
 
 Executed action:
 
-\[
+```math
 u_{\mathrm{safe}}
 =
 \arg\min_u
 \|u-u_{\mathrm{MPC}}\|_2^2
-\]
+```
 
 subject to:
 - hard semantic clearance;
@@ -311,7 +322,7 @@ subject to:
 - acceleration limits;
 - joint limits;
 - watchdog/freshness;
-- force/contact where relevant.
+- force/contact where relevant (requires a force source: no wrist F/T sensor is on the platform yet; see [`../README.md`](../README.md)).
 
 This safety layer is shared conceptually with Piper-JEPA Stage C.
 
@@ -340,7 +351,7 @@ The whole-body controller should not attempt to replace the local contact contro
 R1 — target comfortably reachable by arm.  
 R2 — target near arm workspace boundary.  
 R3 — target unreachable without base repositioning.  
-R4 — several feasible base/arm paths in clutter.
+R4 — several geometrically feasible base/arm paths in clutter that differ in target visibility.
 
 R4 later becomes the bridge to Piper-JEPA visibility-sensitive experiments.
 
@@ -360,17 +371,17 @@ Later Piper-JEPA becomes W5, but W5 does not belong to this deterministic resear
 
 ## 16. Experiments
 
-Use experiment IDs W1-W7.
+Use experiment IDs WE1–WE7 (methods keep W0–W5).
 
-W1 — dynamics/kinematics validation.  
-W2 — arm-only vs sequential vs unified reachability.  
-W3 — manipulability/base-motion behavior.  
-W4 — semantic geometry ablation.  
-W5 — clutter/reactive replanning.  
-W6 — near-contact handoff compatibility.  
-W7 — Orin timing and sustained operation.
+WE1 — dynamics/kinematics validation.  
+WE2 — arm-only vs sequential vs unified reachability.  
+WE3 — manipulability/base-motion behavior.  
+WE4 — semantic geometry ablation.  
+WE5 — clutter/reactive replanning.  
+WE6 — near-contact handoff compatibility.  
+WE7 — Orin timing and sustained operation.
 
-Full protocol: \`WHOLE_BODY_MPC_EXPERIMENTS.md\`.
+Full protocol: `WHOLE_BODY_MPC_EXPERIMENTS.md`.
 
 ---
 
@@ -395,19 +406,19 @@ Full protocol: \`WHOLE_BODY_MPC_EXPERIMENTS.md\`.
 
 ### A1 — non-holonomic model
 
-Correct differential-drive dynamics versus fake planar holonomic joints.
+Correct unicycle (skid-steer-identified) dynamics versus fake planar holonomic joints.
 
 ### A2 — base penalty
 
-\[
+```math
 w_b=0
-\]
+```
 
-versus tuned \(w_b>0\).
+versus tuned $`w_b>0`$.
 
 ### A3 — manipulability
 
-With versus without \(J_{\mathrm{manip}}\).
+With versus without $J_{\mathrm{manip}}$.
 
 ### A4 — semantic geometry
 
@@ -446,11 +457,11 @@ Piper-JEPA Stage C should reuse the same:
 
 Then add only:
 
-\[
+```math
 w_vJ_{\mathrm{visibility}}
 +
 w_iJ_{\mathrm{identity}}.
-\]
+```
 
 This creates a clean scientific comparison.
 
@@ -462,11 +473,11 @@ Optional.
 
 If useful:
 
-\[
+```math
 J_{\mathrm{geo}}
 \rightarrow
 J_{\mathrm{geo}}+w_dJ_{\mathrm{deform}}.
-\]
+```
 
 But the deterministic whole-body paper must stand without it.
 
@@ -490,9 +501,9 @@ If Orin timing is inadequate, reduce horizon/sample count or use asynchronous/sp
 
 ## 23. Implementation mapping
 
-Proposed package:
+Proposed package (the canonical layout; `ROADMAP.md` §7 and the Piper-JEPA plan point here). Piper-JEPA adds its visibility/identity terms from `scout_piper_jepa/predictive_cost.py` without changing these modules.
 
-\`\`\`text
+```text
 Codes/src/scout_piper_whole_body_mpc/
   dynamics/
     scout_diff_drive.py
@@ -515,13 +526,13 @@ Codes/src/scout_piper_whole_body_mpc/
   config/
   launch/
   benchmarks/
-\`\`\`
+```
 
 ---
 
 ## 24. Immediate tasks
 
-1. Implement Scout differential-drive rollout.
+1. Implement Scout unicycle rollout and identify skid-steer slip / effective track width (WE1).
 2. Integrate Piper forward kinematics/Jacobian.
 3. Create synthetic SDF benchmark environment.
 4. Implement goal, smoothness, base, and manipulability costs.
@@ -536,6 +547,6 @@ Codes/src/scout_piper_whole_body_mpc/
 
 Strong standalone framing:
 
-> **A non-holonomic whole-body MPC that coordinates a differential-drive base and lightweight arm under class-aware semantic geometry for thin-structure plant manipulation.**
+> **A non-holonomic whole-body MPC that coordinates a skid-steer base and lightweight arm under class-aware semantic geometry for thin-structure plant manipulation.**
 
 If novelty over existing whole-body MPC is insufficient, this track should become the deterministic method/baseline section of the Piper-JEPA paper rather than being forced into a separate publication.

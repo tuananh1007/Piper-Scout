@@ -17,7 +17,7 @@ The experiments must answer four separate questions without conflating them:
 
 The strongest result is not simply higher grasp success. The paper should demonstrate a causal chain:
 
-\[
+```math
 \text{better target state}
 \rightarrow
 \text{better future target prediction}
@@ -25,7 +25,7 @@ The strongest result is not simply higher grasp success. The paper should demons
 \text{better trajectory choice}
 \rightarrow
 \text{better grasp outcome}
-\]
+```
 
 while explicit geometry and the safety layer remain authoritative.
 
@@ -67,7 +67,7 @@ Each episode should record enough information to replay perception and analyze c
 
 Record:
 - RGB image;
-- aligned depth image;
+- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`; several nodes still default to the unaligned `/camera/depth/image_rect_raw` and must be switched);
 - CameraInfo;
 - TF tree;
 - Piper joint states;
@@ -81,7 +81,7 @@ Record:
 - V-JEPA target state;
 - target confidence and entropy;
 - nvblox / semantic scene inputs or exported state sufficient to reconstruct clearance;
-- force/wrench;
+- force/wrench (`/ft_sensor/raw` when a wrist F/T sensor is fitted; otherwise record joint efforts and gripper state and mark force metrics unavailable);
 - safety-filter state;
 - controller mode;
 - final task outcome.
@@ -90,7 +90,7 @@ Record:
 
 When available:
 - plant_twin parameter vector;
-- plant_twin fit cost/confidence;
+- plant_twin fit cost/confidence (not yet published by `twin_node`; add before recording);
 - plant_twin contact state;
 - gripper state;
 - battery/power mode;
@@ -126,6 +126,7 @@ software_commit
 vjepa_checkpoint
 predictor_checkpoint
 orin_power_mode
+camera_model
 trial_valid
 exclusion_reason
 outcome
@@ -197,9 +198,9 @@ The benchmark should span independent difficulty axes.
 
 ### 5.1 Number of similar instances
 
-\[
+```math
 N\in\{1,3,5,7\}
-\]
+```
 
 ### 5.2 Reachability class
 
@@ -262,9 +263,9 @@ with all episodes from a plant/arrangement assigned to one split.
 
 Construct nested subsets:
 
-\[
+```math
 D_1 \subset D_2 \subset D_5 \subset D_{10}
-\]
+```
 
 corresponding approximately to 1 h, 2 h, 5 h, and 10 h of robot interaction.
 
@@ -320,9 +321,9 @@ A practical preferred design:
 - 6 motion/occlusion conditions;
 - 5 repeats;
 
-\[
+```math
 12\times6\times5=360
-\]
+```
 
 clips.
 
@@ -348,7 +349,7 @@ T0-T4.
 
 Exact target-ID retention:
 
-\[
+```math
 A_{ID}
 =
 \frac{
@@ -356,25 +357,25 @@ A_{ID}
 }{
 \#\text{evaluated frames}
 }.
-\]
+```
 
 ### 8.6 Secondary endpoints
 
 2-D center error:
 
-\[
+```math
 E_{2D}
 =
 \|\hat u-u^*\|_2.
-\]
+```
 
 3-D error where valid:
 
-\[
+```math
 E_{3D}
 =
 \|\hat p-p^*\|_2.
-\]
+```
 
 Also:
 - false switch rate;
@@ -418,15 +419,15 @@ Use at least 30 distinct scenes with 3, 5, or 7 visually similar targets.
 
 Initial grounding:
 
-\[
+```math
 A_{ground}
 =
 \frac{N_{correct}}{N_{commands}}.
-\]
+```
 
 Persistence after robot motion:
 
-\[
+```math
 A_{persist}(\tau)
 =
 P(
@@ -434,18 +435,18 @@ P(
 =
 i_t^*
 ).
-\]
+```
 
 Report both separately.
 
 ### 9.5 Error taxonomy
 
 Classify failure as:
-- G1: incorrect initial grounding;
-- G2: correct grounding, later target switch;
-- G3: target lost, no re-acquisition;
-- G4: target re-acquired incorrectly;
-- G5: geometry/depth failure despite correct visual identity.
+- GF1: incorrect initial grounding;
+- GF2: correct grounding, later target switch;
+- GF3: target lost, no re-acquisition;
+- GF4: target re-acquired incorrectly;
+- GF5: geometry/depth failure despite correct visual identity.
 
 ---
 
@@ -476,15 +477,15 @@ Evaluate P1-P3 at approximately:
 
 ### 10.4 Prediction horizons
 
-\[
+```math
 H\in\{1,2,4,8\}.
-\]
+```
 
 The physical time represented by H must be reported explicitly because it depends on sampling rate.
 
 ### 10.5 Primary target metric
 
-\[
+```math
 E_{target}(H)
 =
 \frac1H
@@ -492,7 +493,7 @@ E_{target}(H)
 \|
 \hat u_{t+k}-u_{t+k}
 \|_2.
-\]
+```
 
 ### 10.6 Secondary metrics
 
@@ -611,9 +612,9 @@ First-attempt correct-target grasp success.
 
 The most important statistical comparison is:
 
-\[
+```math
 E\; \text{vs}\; B
-\]
+```
 
 on R4 scenes.
 
@@ -671,10 +672,10 @@ First-attempt correct-target grasp success.
 
 Compare:
 
-S0 — predictive planner only.  
-S1 — + semantic SDF.  
-S2 — + safety projection.  
-S3 — + local near-contact servo.
+SF0 — predictive planner only.  
+SF1 — + semantic SDF.  
+SF2 — + safety projection.  
+SF3 — + local near-contact servo.
 
 Primary safety metrics:
 - collision/contact violation count;
@@ -687,13 +688,13 @@ Task metric:
 
 Desired result:
 
-\[
+```math
 \text{success increases}
 \quad \text{without} \quad
 F_{max}\uparrow
 \quad \text{or} \quad
 d_{min}\downarrow.
-\]
+```
 
 Do not intentionally run unsafe variants outside a controlled, low-energy validation regime.
 
@@ -811,7 +812,7 @@ However:
 
 For grasp success / target retained:
 
-\[
+```math
 \operatorname{logit}P(Y=1)
 =
 \beta_0
@@ -827,7 +828,7 @@ For grasp success / target retained:
 b_{plant}
 +
 b_{scene}.
-\]
+```
 
 Use mixed-effects logistic regression where supported by the final dataset.
 
@@ -901,7 +902,7 @@ No claim should appear in the abstract unless its supporting experiment is compl
 
 ### Table B — Prediction
 
-| Method | H=1 px ↓ | H=4 px ↓ | H=8 px ↓ | ID@H8 ↑ | Visibility F1 ↑ |
+| Method | px @ H=1 ↓ | px @ H=4 ↓ | px @ H=8 ↓ | ID @ H=8 ↑ | Visibility F1 ↑ |
 |---|---:|---:|---:|---:|---:|
 | P0 | | | | | |
 | P1 | | | | | |

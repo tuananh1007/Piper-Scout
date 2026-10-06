@@ -1,10 +1,10 @@
 # Piper-JEPA Research Plan
 
 **Working title:** *Piper-JEPA: Task-Conditioned Dense World Models for Safe Whole-Body Plant Manipulation*  
-**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 differential-drive base + Intel RealSense D435 + NVIDIA Jetson AGX Orin 64 GB  
+**Platform:** AgileX Piper 6-DoF arm + AgileX Scout 2.0 skid-steer base + eye-in-hand Intel RealSense (D435 or D405, to be confirmed) + NVIDIA Jetson AGX Orin 64 GB; shared facts in [`../README.md`](../README.md)  
 **Application:** language-grounded grasping of thin, deformable plant structures (flowers, peduncles, branches)  
-**Status:** scientific plan aligned with \`ROADMAP.md\` as of 2026-10-05  
-**Role of this document:** authoritative research/paper plan. \`ROADMAP.md\` remains the engineering sequence.
+**Status:** scientific plan aligned with `ROADMAP.md` as of 2026-10-05  
+**Role of this document:** authoritative research/paper plan. `ROADMAP.md` remains the engineering sequence.
 
 ---
 
@@ -18,7 +18,7 @@ The central idea is to combine:
 2. **V-JEPA 2.1 dense temporal features** to maintain target identity through motion and temporary occlusion;
 3. **an action-conditioned predictor** to forecast the visual consequence of candidate Scout + Piper motions;
 4. **explicit RGB-D semantic geometry** for metric collision and clearance constraints;
-5. **optional explicit plant deformation state from \`plant_twin\`**;
+5. **optional explicit plant deformation state from `plant_twin`**;
 6. **non-holonomic whole-body MPC** for coordinated base + arm motion;
 7. **a separate safety-bounded local visual servo** for the final centimeters.
 
@@ -102,7 +102,7 @@ Adding predicted target visibility/identity costs to a strong geometry-only whol
 
 ### H5 — Explicit deformation can complement, not replace, JEPA
 
-When \`plant_twin\` has a valid fit, its explicit deformation state will provide interpretable auxiliary information that improves analysis and may improve control near contact. However, the main JEPA contribution should remain measurable even without \`plant_twin\`.
+When `plant_twin` has a valid fit, its explicit deformation state will provide interpretable auxiliary information that improves analysis and may improve control near contact. However, the main JEPA contribution should remain measurable even without `plant_twin`.
 
 ---
 
@@ -156,7 +156,7 @@ A benchmark covering:
 
 ## 5. System architecture
 
-\`\`\`text
+```text
 Language instruction
       |
       v
@@ -205,72 +205,72 @@ identity + uncertainty     metric target geometry
                             |
                             v
                            grasp
-\`\`\`
+```
 
 ---
 
 ## 6. Formal task definition
 
-At time \(t\), define the mobile-manipulator state
+At time $t$, define the mobile-manipulator state
 
-\[
+```math
 x_t =
 [x_{b,t},y_{b,t},\theta_{b,t},q_t]^T
-\]
+```
 
-where \(q_t\in\mathbb R^6\) is the Piper joint configuration.
+where $q_t\in\mathbb R^6$ is the Piper joint configuration.
 
-The Scout is differential drive, so the control is
+The Scout is a skid-steer base modelled as a unicycle (differential drive; slip identified in whole-body MPC experiment WE1), so the control is
 
-\[
+```math
 u_t =
 [v_t,\omega_t,\dot q_t]^T
 \in\mathbb R^8.
-\]
+```
 
 The base evolves as
 
-\[
+```math
 x_{b,t+1}
 =
 x_{b,t}
 +
 \Delta t\,v_t\cos\theta_{b,t},
-\]
+```
 
-\[
+```math
 y_{b,t+1}
 =
 y_{b,t}
 +
 \Delta t\,v_t\sin\theta_{b,t},
-\]
+```
 
-\[
+```math
 \theta_{b,t+1}
 =
 \theta_{b,t}
 +
 \Delta t\,\omega_t.
-\]
+```
 
 The arm evolves under velocity control:
 
-\[
+```math
 q_{t+1}
 =
 q_t+\Delta t\,\dot q_t.
-\]
+```
 
 Let:
-- \(I_t\): RGB frame;
-- \(D_t\): depth frame;
-- \(S_t\): semantic geometry;
-- \(z_t\): learned target-conditioned visual state;
-- \(\xi_t\): optional \`plant_twin\` deformation state;
-- \(\ell\): language instruction.
+- $I_t$: RGB frame;
+- $D_t$: depth frame;
+- $S_t$: semantic geometry;
+- $z_t$: learned target-conditioned visual state;
+- $\xi_t$: optional `plant_twin` deformation state;
+- $\ell$: language instruction.
 
-The control objective is to reach and grasp the target specified by \(\ell\), while:
+The control objective is to reach and grasp the target specified by $\ell$, while:
 1. preserving target identity;
 2. preserving sufficient target visibility;
 3. satisfying collision and dynamics constraints;
@@ -283,16 +283,16 @@ The control objective is to reach and grasp the target specified by \(\ell\), wh
 
 Map the language instruction to a structured query
 
-\[
+```math
 q_\ell=(c,k,r,\rho,a)
-\]
+```
 
 where:
-- \(c\): semantic class;
-- \(k\): ordinal;
-- \(r\): spatial relation;
-- \(\rho\): optional attribute;
-- \(a\): requested action.
+- $c$: semantic class;
+- $k$: ordinal;
+- $r$: spatial relation;
+- $\rho$: optional attribute;
+- $a$: requested action.
 
 Example:
 
@@ -300,39 +300,39 @@ Example:
 
 becomes
 
-\[
+```math
 q_\ell =
 (\text{flower},3,\text{left-to-right},\varnothing,\text{grasp}).
-\]
+```
 
 Suppose candidate masks are
 
-\[
+```math
 \mathcal M_t=\{M_t^1,\ldots,M_t^N\}.
-\]
+```
 
-For candidate \(i\), compute centroid
+For candidate $i$, compute centroid
 
-\[
+```math
 u_t^i
 =
 \frac{1}{|M_t^i|}
 \sum_{p\in M_t^i}p.
-\]
+```
 
 For a left-to-right ordinal command,
 
-\[
+```math
 \pi
 =
 \operatorname{argsort}(u_{t,x}^{1:N})
-\]
+```
 
 and select
 
-\[
+```math
 i^*=\pi_k.
-\]
+```
 
 The grounding module initializes identity. It should **not** be responsible for persistence after the robot starts moving.
 
@@ -344,29 +344,29 @@ The grounding module initializes identity. It should **not** be responsible for 
 
 For a video context window
 
-\[
+```math
 \mathcal I_t
 =
 \{I_{t-L+1},\ldots,I_t\},
-\]
+```
 
 the frozen or lightly adapted encoder produces
 
-\[
+```math
 F_t
 =
 E_\theta(\mathcal I_t)
 \in
 \mathbb R^{H'\times W'\times d}.
-\]
+```
 
 The method retains the spatial token grid rather than globally pooling it.
 
 ### 8.2 Target descriptor
 
-Given the initial selected target mask \(M_t^*\), resize it to the feature grid and compute
+Given the initial selected target mask $`M_t^*`$, resize it to the feature grid and compute
 
-\[
+```math
 r_t
 =
 \frac{
@@ -376,15 +376,15 @@ r_t
 \sum_p
 \widetilde M_t^*(p)+\epsilon
 }.
-\]
+```
 
 A more robust implementation may keep a target prototype bank
 
-\[
+```math
 \mathcal R_t
 =
 \{r^{(1)},\ldots,r^{(m)}\}
-\]
+```
 
 rather than a single descriptor.
 
@@ -392,15 +392,15 @@ rather than a single descriptor.
 
 For the next frame,
 
-\[
+```math
 C_{t+1}(p)
 =
 \cos(F_{t+1}(p),r_t).
-\]
+```
 
 Convert to a spatial probability map:
 
-\[
+```math
 P_{t+1}(p)
 =
 \frac{
@@ -408,58 +408,58 @@ P_{t+1}(p)
 }{
 \sum_q\exp(C_{t+1}(q)/\tau)
 }.
-\]
+```
 
 Then
 
-\[
+```math
 \hat u_{t+1}
 =
 \sum_p
 P_{t+1}(p)p.
-\]
+```
 
 ### 8.4 Uncertainty
 
 Use entropy
 
-\[
+```math
 H_{t+1}
 =
 -\sum_p
 P_{t+1}(p)
 \log P_{t+1}(p)
-\]
+```
 
 and optionally covariance
 
-\[
+```math
 \Sigma_{u,t+1}
 =
 \sum_p
 P_{t+1}(p)
 (p-\hat u_{t+1})
 (p-\hat u_{t+1})^T.
-\]
+```
 
 ### 8.5 3-D target state
 
-For valid target depth \(d_t\),
+For valid target depth $d_t$,
 
-\[
+```math
 p_c
 =
 d_tK^{-1}
 [u,v,1]^T
-\]
+```
 
 and
 
-\[
+```math
 p_w
 =
 T_c^w p_c.
-\]
+```
 
 Depth is not forced when invalid. In thin-peduncle cases the system may retain an image-space target with high depth uncertainty rather than hallucinating metric precision.
 
@@ -469,22 +469,22 @@ Depth is not forced when invalid. In thin-peduncle cases the system may retain a
 
 The optimizer chooses
 
-\[
+```math
 u_t=
 [v_b,\omega_b,\dot q_1,\ldots,\dot q_6].
-\]
+```
 
 Map that action into approximate task-space consequences:
 
-\[
+```math
 a_t
 =
 \Gamma(x_t,u_t)
-\]
+```
 
 with
 
-\[
+```math
 a_t=
 [
 \Delta s_b,
@@ -493,14 +493,14 @@ a_t=
 \Delta r_e,
 \Delta g
 ]^T.
-\]
+```
 
 Components:
-- \(\Delta s_b\): forward base displacement;
-- \(\Delta\theta_b\): base yaw;
-- \(\Delta p_e\in\mathbb R^3\): EE translation;
-- \(\Delta r_e\in\mathbb R^3\): EE orientation increment;
-- \(\Delta g\): gripper command/state.
+- $\Delta s_b$: forward base displacement;
+- $\Delta\theta_b$: base yaw;
+- $\Delta p_e\in\mathbb R^3$: EE translation;
+- $\Delta r_e\in\mathbb R^3$: EE orientation increment;
+- $\Delta g$: gripper command/state.
 
 This preserves the non-holonomic structure of Scout motion while making the predictor less dependent on Piper joint numbering.
 
@@ -508,11 +508,11 @@ This preserves the non-holonomic structure of Scout motion while making the pred
 
 ## 10. Action-conditioned Piper-JEPA predictor
 
-Let \(Z_t\) denote the dense learned visual state.
+Let $Z_t$ denote the dense learned visual state.
 
 The one-step predictor is
 
-\[
+```math
 \hat Z_{t+1}
 =
 P_\phi(
@@ -520,13 +520,13 @@ Z_{t-K+1:t},
 a_t,
 s_t
 ),
-\]
+```
 
-where \(s_t\) is proprioceptive state.
+where $s_t$ is proprioceptive state.
 
-For planning horizon \(H\),
+For planning horizon $H$,
 
-\[
+```math
 \hat Z_{t+1:t+H}
 =
 P_\phi(
@@ -534,7 +534,7 @@ Z_t,
 a_{t:t+H-1},
 s_t
 ).
-\]
+```
 
 The predictor should be evaluated separately from the controller. A controller improvement without an accurate prediction benchmark would make causal interpretation weak.
 
@@ -550,7 +550,7 @@ A peduncle may occupy only a handful of feature patches. A global latent error c
 
 Define
 
-\[
+```math
 w_t(p)
 =
 1
@@ -558,17 +558,17 @@ w_t(p)
 \lambda_T M_t^{target}(p)
 +
 \lambda_P M_t^{plant}(p).
-\]
+```
 
 Typically
 
-\[
+```math
 \lambda_T>\lambda_P>0.
-\]
+```
 
 ### 11.3 One-step term
 
-\[
+```math
 \mathcal L_{TF}
 =
 \sum_p
@@ -579,11 +579,11 @@ w_t(p)
 \operatorname{sg}
 Z_{t+1}(p)
 \right\|_1.
-\]
+```
 
 ### 11.4 Rollout term
 
-\[
+```math
 \mathcal L_{roll}
 =
 \sum_{k=1}^H
@@ -596,11 +596,11 @@ w_{t+k}(p)
 \operatorname{sg}
 Z_{t+k}(p)
 \right\|_1.
-\]
+```
 
 ### 11.5 Total objective
 
-\[
+```math
 \boxed{
 \mathcal L_{AC}
 =
@@ -608,7 +608,7 @@ Z_{t+k}(p)
 +
 \lambda_R\mathcal L_{roll}
 }
-\]
+```
 
 Potential auxiliary terms, only if required by experiments:
 - target-center consistency;
@@ -622,55 +622,55 @@ Potential auxiliary terms, only if required by experiments:
 
 From predicted dense features:
 
-\[
+```math
 \hat C_{t+k}(p)
 =
 \cos(
 \hat Z_{t+k}(p),
 r_t
 )
-\]
+```
 
 and
 
-\[
+```math
 \hat P_{t+k}(p)
 =
 \operatorname{softmax}
 (
 \hat C_{t+k}(p)/\tau
 ).
-\]
+```
 
 Predicted image location:
 
-\[
+```math
 \hat u_{t+k}
 =
 \sum_p
 \hat P_{t+k}(p)p.
-\]
+```
 
 Predicted entropy:
 
-\[
+```math
 \hat H_{t+k}
 =
 -\sum_p
 \hat P_{t+k}(p)
 \log\hat P_{t+k}(p).
-\]
+```
 
-Let \(\hat r_{t+k}\) be the predicted target-region descriptor. Identity consistency is
+Let $\hat r_{t+k}$ be the predicted target-region descriptor. Identity consistency is
 
-\[
+```math
 c_{id,t+k}
 =
 \cos(
 \hat r_{t+k},
 r_t
 ).
-\]
+```
 
 This allows the planner to ask:
 
@@ -682,9 +682,9 @@ This allows the planner to ask:
 
 Maintain semantic signed-distance functions
 
-\[
+```math
 \phi_c(x)
-\]
+```
 
 for:
 - non-target stem;
@@ -697,37 +697,38 @@ Recommended policy:
 - leaf: soft interaction cost;
 - selected target: excluded from non-target hard collision only in an explicitly gated grasp phase.
 
-For robot collision primitive \(c_j(x)\), require
+For robot collision primitive $c_j(x)$, require
 
-\[
+```math
 \phi_{hard}(c_j(x))
 \ge
 d_{safe}.
-\]
+```
 
 The learned visual predictor must never be allowed to override this hard condition.
 
 ---
 
-## 14. Integration of \`plant_twin\`
+## 14. Integration of `plant_twin`
 
 ### 14.1 Role
 
-\`plant_twin\` is an explicit deformable model, not a learned visual world model.
+`plant_twin` is an explicit deformable model, not a learned visual world model.
 
 It provides interpretable quantities such as:
-- stem centerline;
-- stem length;
-- leaf bending;
-- leaf stretch;
-- contact-conditioned deformation;
-- temporal fit residual.
+- stem centerline (Catmull-Rom control points) and length;
+- leaf rigid pose and bending field (RBF height lattice);
+- leaf edge stretch relative to the rest mesh;
+- contact-conditioned deformation (fingertip contact residual);
+- per-frame fit cost.
+
+Current implementation limits (`Codes/src/plant_twin/`): one leaf and its stem per fitter instance; ≈28 ms/frame on a 4-core x86 dev CPU (Orin not yet measured); untested on hardware; the node publishes markers and the petiole point but not yet a fit-confidence/timestamp message.
 
 ### 14.2 Optional control term
 
-When fit confidence is valid:
+When fit confidence is valid. Note that `plant_twin` fits the *current* deformation and has no forward model, so $E(k)$ for future horizon steps must come from an explicit approximation, for example quasi-static re-fits with the candidate's predicted fingertip position as the contact constraint at a few horizon knots. The paper must state which approximation is used:
 
-\[
+```math
 J_{deform}
 =
 \sum_k
@@ -738,11 +739,11 @@ J_{deform}
 +
 \alpha_bE_{bend}(k)
 ].
-\]
+```
 
 ### 14.3 Scientific use
 
-More importantly, \`plant_twin\` enables the analysis question:
+More importantly, `plant_twin` enables the analysis question:
 
 > Do changes in JEPA latent state correlate with physically interpretable deformation modes?
 
@@ -753,7 +754,7 @@ Possible analyses:
 
 ### 14.4 Validity gating
 
-Every \`plant_twin\` state used by the controller must have:
+Every `plant_twin` state used by the controller must have:
 - timestamp;
 - fit residual/confidence;
 - freshness threshold.
@@ -766,7 +767,7 @@ Invalid or stale deformation state is omitted from the objective.
 
 Before JEPA-aware control, build a strong deterministic baseline.
 
-\[
+```math
 J_{geo}
 =
 w_gJ_{goal}
@@ -782,11 +783,11 @@ w_bJ_{base}
 w_sJ_{smooth}
 +
 w_dJ_{deform}.
-\]
+```
 
 ### Goal term
 
-\[
+```math
 J_{goal}
 =
 \sum_{k=1}^H
@@ -797,11 +798,11 @@ d_{SO(3)}^2
 (
 R^e_{t+k},R_g
 ).
-\]
+```
 
 ### Manipulability
 
-\[
+```math
 m(q)
 =
 \sqrt{
@@ -809,22 +810,22 @@ m(q)
 J_a(q)J_a(q)^T
 )
 }
-\]
+```
 
 with
 
-\[
+```math
 J_{manip}
 =
 \sum_k
 \frac{1}{
 m(q_{t+k})+\epsilon
 }.
-\]
+```
 
 ### Base-motion regularization
 
-\[
+```math
 J_{base}
 =
 \sum_k
@@ -834,7 +835,7 @@ v_{b,k}^2
 \lambda_\omega
 \omega_{b,k}^2
 ).
-\]
+```
 
 ---
 
@@ -842,16 +843,16 @@ v_{b,k}^2
 
 Optimize
 
-\[
+```math
 U^*
 =
 \arg\min_U
 J(U)
-\]
+```
 
 with
 
-\[
+```math
 \boxed{
 J
 =
@@ -873,13 +874,13 @@ w_sJ_{smooth}
 +
 w_dJ_{deform}
 }
-\]
+```
 
-where the novel predictive terms are \(J_{vis}\) and \(J_{id}\).
+where the novel predictive terms are $J_{vis}$ and $J_{id}$.
 
 ### Visibility cost
 
-\[
+```math
 J_{vis}
 =
 \sum_k
@@ -898,11 +899,11 @@ B_{FoV}
 \hat u_{t+k}
 )
 \right].
-\]
+```
 
 ### Identity cost
 
-\[
+```math
 J_{id}
 =
 \sum_k
@@ -913,55 +914,55 @@ J_{id}
 r_t
 )
 ].
-\]
+```
 
-The key experiment is whether these predictive terms improve performance over \(J_{geo}\) in scenes where geometry is valid but visibility is trajectory-dependent.
+The key experiment is whether these predictive terms improve performance over $J_{geo}$ in scenes where geometry is valid but visibility is trajectory-dependent.
 
 ---
 
 ## 17. Safety projection
 
-The planner outputs nominal control \(u_{MPC}\).
+The planner outputs nominal control $u_{MPC}$.
 
 Execution uses
 
-\[
+```math
 u_{safe}
 =
 \arg\min_u
 \|
 u-u_{MPC}
 \|_2^2
-\]
+```
 
 subject to:
 - semantic hard-clearance constraints;
 - Piper joint limits;
 - base velocity/acceleration limits;
 - arm velocity/acceleration limits;
-- force/contact threshold;
+- force/contact threshold (needs a force source; the platform has no wrist F/T sensor yet, see [`../README.md`](../README.md));
 - state freshness;
 - watchdog constraints.
 
 A CBF-like formulation can use
 
-\[
+```math
 h_j(x)
 =
 \phi_{hard}(c_j(x))
 -
 d_{safe}
-\]
+```
 
 with
 
-\[
+```math
 \dot h_j
 +
 \alpha h_j
 \ge
 0.
-\]
+```
 
 ### Formal-guarantee caution
 
@@ -980,21 +981,23 @@ Until then, describe this as a **safety projection/filter**.
 
 Switch from whole-body MPC to local control when
 
-\[
+```math
 d(p_e,p_g)
 <
 d_{switch},
-\]
+```
 
-\[
+```math
 H_t<H_{max},
-\]
+```
 
-\[
+```math
 c_t>c_{min},
-\]
+```
 
 and semantic clearance is valid.
+
+With the eye-in-hand camera, $d_{switch}$ must account for the sensor's minimum depth: below it the local controller runs on the image-space target distribution and the last valid metric estimate (D435), or keeps live depth longer (D405).
 
 After switching:
 - freeze the Scout or heavily penalize base motion;
@@ -1010,7 +1013,7 @@ After switching:
 
 Each rosbag2 episode should include:
 - RGB;
-- depth;
+- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`);
 - CameraInfo;
 - TF;
 - Piper joint state;
@@ -1021,8 +1024,8 @@ Each rosbag2 episode should include:
 - executed base and arm commands;
 - target state;
 - semantic SDF state or reconstructible inputs;
-- force/contact;
-- \`plant_twin\` parameters + fit confidence when valid;
+- force/contact (when a force source exists; otherwise gripper state);
+- `plant_twin` parameters + fit confidence when valid;
 - task outcome.
 
 ### 19.2 Scene factors
@@ -1083,23 +1086,23 @@ Test H1 independently of control.
 
 ### Metrics
 
-\[
+```math
 E_{2D}
 =
 \|
 \hat u-u^*
 \|_2.
-\]
+```
 
-\[
+```math
 E_{3D}
 =
 \|
 \hat p-p^*
 \|_2.
-\]
+```
 
-\[
+```math
 A_{ID}
 =
 \frac{
@@ -1107,7 +1110,7 @@ A_{ID}
 }{
 \#\text{evaluated frames}
 }.
-\]
+```
 
 Also report:
 - false target switches;
@@ -1126,9 +1129,9 @@ V-JEPA 2.1 must beat the strongest practical baseline on at least target-ID rete
 
 Scenes contain
 
-\[
+```math
 N\in\{3,5,7\}
-\]
+```
 
 similar flowers.
 
@@ -1141,7 +1144,7 @@ Commands include:
 
 Initial grounding:
 
-\[
+```math
 A_{ground}
 =
 \frac{
@@ -1149,17 +1152,17 @@ N_{correct}
 }{
 N_{commands}
 }.
-\]
+```
 
 Persistence:
 
-\[
+```math
 A_{persist}(\tau)
 =
 P(
 \hat i_{t+\tau}=i_t^*
 ).
-\]
+```
 
 Separate initial grounding errors from persistence errors.
 
@@ -1185,13 +1188,13 @@ Separate initial grounding errors from persistence errors.
 
 ### Horizons
 
-\[
+```math
 H\in\{1,2,4,8\}.
-\]
+```
 
 ### Metrics
 
-\[
+```math
 E_{target}(H)
 =
 \frac1H
@@ -1201,7 +1204,7 @@ E_{target}(H)
 -
 u_{t+k}
 \|_2.
-\]
+```
 
 Also report:
 - visibility F1/AUROC;
@@ -1323,10 +1326,10 @@ The desired result is **higher success without increased force or reduced cleara
 
 ---
 
-## 27. \`plant_twin\` ablation
+## 27. `plant_twin` ablation
 
 Evaluate:
-- Piper-JEPA without \`plant_twin\`;
+- Piper-JEPA without `plant_twin`;
 - Piper-JEPA with deformation-state cost;
 - Piper-JEPA with deformation state used only for analysis.
 
@@ -1336,7 +1339,7 @@ Questions:
 3. Does it add enough value to justify real-time compute?
 4. Does JEPA already encode useful deformation cues without explicit fitting?
 
-If no significant benefit is found, \`plant_twin\` remains an interpretation/evaluation tool rather than part of the final controller.
+If no significant benefit is found, `plant_twin` remains an interpretation/evaluation tool rather than part of the final controller.
 
 ---
 
@@ -1357,7 +1360,7 @@ Measure:
 - thermal throttling.
 
 ### Predictor
-Measure versus \(H\):
+Measure versus $H$:
 - rollout latency;
 - memory;
 - prediction quality.
@@ -1377,7 +1380,7 @@ Do not state a control frequency in the paper unless measured on the deployed st
 
 ### Binary grasp outcome
 
-\[
+```math
 \operatorname{logit}
 P(Y=1)
 =
@@ -1392,7 +1395,7 @@ P(Y=1)
 \beta_4Reachability
 +
 b_{plant}.
-\]
+```
 
 Possible random effects:
 - plant instance;
@@ -1442,26 +1445,26 @@ These criteria protect the project from confirmation bias.
 
 ### Existing packages
 
-\`stem_grasp\`
+`stem_grasp`
 - segmentation;
 - point-cloud filtering;
 - skeleton/candidate logic;
 - current adaptive servo baseline.
 
-\`scout_piper_scene_repr\`
-- nvblox integration;
-- semantic SDF policy;
-- collision-query layer.
+`scout_piper_scene_repr`
+- nvblox integration (RealSense → nvblox validated);
+- class demux + semantic class policy YAML;
+- MoveIt collision-query plugin (**scaffold; reports no collision until P1.4**).
 
-\`plant_twin\`
-- explicit leaf/stem deformation fitting.
+`plant_twin`
+- explicit leaf/stem deformation fitting (one leaf + stem, analytic-Jacobian LM).
 
-\`scout_piper_bringup\`
+`scout_piper_bringup`
 - integrated system launch.
 
-### Proposed package: \`scout_piper_jepa\`
+### Proposed package: `scout_piper_jepa`
 
-\`\`\`text
+```text
 scout_piper_jepa/
   encoder.py
   target_memory.py
@@ -1474,27 +1477,11 @@ scout_piper_jepa/
   train_predictor.py
   eval_tracking.py
   eval_prediction.py
-\`\`\`
+```
 
-### Proposed package: \`scout_piper_whole_body_mpc\`
+### Proposed package: `scout_piper_whole_body_mpc`
 
-\`\`\`text
-scout_piper_whole_body_mpc/
-  dynamics/
-    scout_diff_drive.py
-    piper_kinematics.py
-  costs/
-    goal.py
-    semantic_sdf.py
-    visibility.py
-    identity.py
-    manipulability.py
-    deformation.py
-  safety/
-    projection.py
-    watchdog.py
-  controller_node.py
-\`\`\`
+Layout is owned by the whole-body MPC track ([`../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md`](../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md) §23). Piper-JEPA does not add modules there: the visibility and identity terms live in `scout_piper_jepa/predictive_cost.py` and are passed to the MPC as extra cost terms, so the geometry-only baseline (`WB:W4` / `C2`) and Piper-JEPA (`C3`) share identical dynamics, solver, geometry costs and safety layer.
 
 ---
 
@@ -1502,7 +1489,7 @@ scout_piper_whole_body_mpc/
 
 ### Target state
 
-\`/piper_jepa/target_state\`
+`/piper_jepa/target_state`
 
 Fields:
 - timestamp;
@@ -1518,20 +1505,22 @@ Fields:
 
 ### Predictor output
 
-\`/piper_jepa/prediction_status\`
+`/piper_jepa/prediction_status`
 
 Avoid streaming entire dense rollouts over ordinary ROS messages in the normal control path. Keep tensor-heavy prediction and MPC cost evaluation in-process or use zero-copy where practical.
 
 ### Planner output
 
-\`/whole_body_mpc/cmd\`
+`/whole_body_mpc/cmd`
 
 Containing:
-- base \(v,\omega\);
+- base $v,\omega$;
 - arm joint velocities;
 - timestamp;
 - safety status;
 - controller mode.
+
+This is an internal command, not an actuator interface. After the safety projection it is split into `/cmd_vel` for `scout_ros2` and servo commands for the arm through `moveit_servo`.
 
 ---
 
@@ -1590,7 +1579,7 @@ Grouped by reachability/visibility category:
 
 ### Extended data
 - Orin profiling;
-- \`plant_twin\` ablation;
+- `plant_twin` ablation;
 - additional horizons;
 - ViT-B vs ViT-L;
 - failure cases.
@@ -1624,7 +1613,7 @@ Columns:
 
 ## 35. Reviewer-facing novelty statement
 
-> **We introduce Piper-JEPA, a task-conditioned predictive-control framework for language-grounded mobile manipulation of thin, deformable plant structures. Unlike prior latent world-model planning that primarily optimizes global visual goal similarity for stationary manipulators, Piper-JEPA maintains a dense persistent representation of the exact language-selected target, predicts how coordinated differential-drive base and arm motions alter that target’s future visibility and identity, and incorporates those predictions as soft objectives inside explicit semantic RGB-D whole-body MPC. Learned prediction augments rather than replaces geometry: semantic signed-distance constraints, force limits, and a separate high-rate local controller retain authority over collision avoidance and final contact.**
+> **We introduce Piper-JEPA, a task-conditioned predictive-control framework for language-grounded mobile manipulation of thin, deformable plant structures. Unlike prior latent world-model planning that primarily optimizes global visual goal similarity for stationary manipulators, Piper-JEPA maintains a dense persistent representation of the exact language-selected target, predicts how coordinated skid-steer base and arm motions alter that target’s future visibility and identity, and incorporates those predictions as soft objectives inside explicit semantic RGB-D whole-body MPC. Learned prediction augments rather than replaces geometry: semantic signed-distance constraints, force limits, and a separate high-rate local controller retain authority over collision avoidance and final contact.**
 
 This wording should be weakened if experiments do not directly establish all clauses.
 
@@ -1639,7 +1628,7 @@ Do not claim:
 - formal safety guarantees without assumptions and proof;
 - 100/200 Hz performance before Orin measurement;
 - generalized plant physics understanding from one species or a small dataset;
-- \`plant_twin\` is ground truth unless externally validated.
+- `plant_twin` is ground truth unless externally validated.
 
 ---
 
@@ -1664,7 +1653,7 @@ Potential venues depending maturity/deadline:
 A T-RO extension becomes justified if it adds:
 - larger cross-species benchmark;
 - more rigorous safety analysis;
-- \`plant_twin\` deformation integration;
+- `plant_twin` deformation integration;
 - active perception;
 - extensive embedded deployment study.
 
@@ -1695,7 +1684,7 @@ Before submission:
 
 ## 39. Immediate next implementation tasks
 
-1. Build \`scout_piper_jepa\` package skeleton.
+1. Build `scout_piper_jepa` package skeleton.
 2. Add rosbag2 dataset recorder for RGB-D + TF + robot state + target ID.
 3. Run V-JEPA 2.1 ViT-B inference offline on recorded Piper-Scout video.
 4. Implement mask-initialized dense target descriptor and similarity map.

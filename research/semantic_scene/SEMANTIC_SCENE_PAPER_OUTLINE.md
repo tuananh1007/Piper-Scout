@@ -54,26 +54,26 @@ End by positioning the work around **manipulation-specific semantics and thin-st
 
 ### 5.1 Class-specific fields
 
-\[
+```math
 \phi_c(x)
-\]
+```
 
 ### 5.2 Hard field
 
-\[
+```math
 \phi_{\mathrm{hard}}(x)
 =
 \min_{c\in\mathcal C_{\mathrm{hard}}}
 \phi_c(x).
-\]
+```
 
 ### 5.3 Leaf soft cost
 
-\[
+```math
 J_{\mathrm{leaf}}
 =
 \sum\psi(\phi_{\mathrm{leaf}}).
-\]
+```
 
 ### 5.4 Target mode handling
 
@@ -103,19 +103,19 @@ Map directly to:
 
 ## 7. Results
 
-### R1 — thin-structure preservation
+### Result 1 — thin-structure preservation
 Primary quantitative geometry result.
 
-### R2 — semantic separation
+### Result 2 — semantic separation
 Show target/non-target and leaf/stem field integrity.
 
-### R3 — planner query accuracy
+### Result 3 — planner query accuracy
 Emphasize conservative error.
 
-### R4 — class-aware planning
+### Result 4 — class-aware planning
 Headline manipulation result.
 
-### R5 — deployment
+### Result 5 — deployment
 Latency/memory trade-off.
 
 ---
