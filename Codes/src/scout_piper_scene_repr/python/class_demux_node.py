@@ -6,7 +6,7 @@ Phase 1 v0 design (see ../docs/PHASE1_DESIGN.md §3, §4).
 
 Inputs (configurable):
     /stem_grasp/semantic_label   sensor_msgs/Image (mono8 or 16UC1, label values)
-    /camera/depth/image_rect_raw sensor_msgs/Image (16UC1 mm or 32FC1 m)
+    /camera/aligned_depth_to_color/image_raw  sensor_msgs/Image (16UC1 mm or 32FC1 m)
 
 Outputs (one per class declared in semantic_classes.yaml):
     /scene_repr/mask/<class>     sensor_msgs/Image (mono8, 0/255)
@@ -52,7 +52,8 @@ class ClassDemuxNode(Node):
         self.declare_parameter(
             "label_topic", "/stem_grasp/semantic_label"
         )
-        self.declare_parameter("depth_topic", "/camera/depth/image_rect_raw")
+        # Must be aligned to the colour image the masks come from.
+        self.declare_parameter("depth_topic", "/camera/aligned_depth_to_color/image_raw")
         self.declare_parameter(
             "legacy_masks",
             ["/stem_grasp/mask:stem", "/stem_grasp/target_mask:target"],

@@ -48,7 +48,7 @@ class MaskedPointCloudNode(Node):
             "color_topic", "/camera/color/image_raw"
         )
         self.declare_parameter(
-            "depth_topic", "/camera/depth/image_rect_raw"
+            "depth_topic", "/camera/aligned_depth_to_color/image_raw"
         )
         self.declare_parameter(
             "camera_info_topic", "/camera/color/camera_info"

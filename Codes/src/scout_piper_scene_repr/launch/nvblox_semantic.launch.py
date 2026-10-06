@@ -35,7 +35,7 @@ def _make_nvblox_node(class_name: str):
         remappings=[
             # nvblox expects /depth and /color; we feed it our class-gated depth
             ("depth/image", f"/scene_repr/depth/{class_name}"),
-            ("depth/camera_info", "/camera/depth/camera_info"),
+            ("depth/camera_info", "/camera/aligned_depth_to_color/camera_info"),
             ("color/image", "/camera/color/image_raw"),
             ("color/camera_info", "/camera/color/camera_info"),
         ],
@@ -95,7 +95,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "depth_topic",
-            default_value="/camera/depth/image_rect_raw",
+            default_value="/camera/aligned_depth_to_color/image_raw",
         ),
         OpaqueFunction(function=_launch_setup),
     ])

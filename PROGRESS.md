@@ -212,6 +212,18 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P2A.5 | Record E1 dataset and annotate target/distractor masks | ☐ | |
 | P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ☐ | go/no-go gate |
 
+### P1.7 — Semantic scene: planner distance query (CPU v0 backend)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.7.1 | `SemanticVoxelMap`: per-class evidence, shared free space, unknown ≠ free, thin-stem-safe carving | ☑ | 2026-10-06 |
+| P1.7.2 | `SemanticDistanceQuery`: signed distance, hard min + padding, gradient, validity/freshness, leaf ψ with cap, grasp-mode exclusion | ☑ | 2026-10-06 — ≤ 1 voxel error on synthetic stem |
+| P1.7.3 | `other` class for non-plant depth | ☑ | 2026-10-06 — demux only fed plant classes, so pots/walls were invisible to planning |
+| P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
+| P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
+| P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
+| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
+
 ### P1 exit criteria
 
 - Leaf-aware planning visibly avoids leaves where Octomap planning failed.

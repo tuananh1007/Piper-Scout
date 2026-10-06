@@ -50,7 +50,7 @@ def generate_launch_description():
         parameters=[{
             "input_mode": "merged",
             "label_topic": "/stem_grasp/semantic_label",
-            "depth_topic": "/camera/depth/image_rect_raw",
+            "depth_topic": "/camera/aligned_depth_to_color/image_raw",
             "class_ids": [1, 2, 3, 4],
             "class_names": CLASS_NAMES,
             "policy_yaml_path": policy_yaml,

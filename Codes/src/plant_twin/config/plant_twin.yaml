@@ -7,7 +7,7 @@ plant_twin:
     stem_cloud_topic: "/stem_grasp/filtered_cloud"
     # From stem_grasp/segmentation_node; outline + holes are read off this mask
     mask_topic: "/stem_grasp/target_mask"
-    depth_topic: "/camera/depth/image_rect_raw"
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"
     camera_info_topic: "/camera/color/camera_info"
     contact_threshold_n: 0.15      # same as stem_grasp pipeline
     gripper_closed_m: 0.01         # piper_joint7 < this => grasped => pull allowed

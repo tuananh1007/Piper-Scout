@@ -58,3 +58,41 @@ ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separat
 ## Next steps
 
 See `P1.x` in [`../../../../PROGRESS.md`](../../../../PROGRESS.md).
+
+## CPU semantic map + planner distance query (v0 query backend)
+
+`python/scout_piper_scene_repr_py/` holds the planner-facing query from
+[`research/semantic_scene/`](../../../research/semantic_scene/) (contribution C4).
+It runs without nvblox and is the reference the nvblox-backed path must match.
+
+| Module | Role |
+|---|---|
+| `policy.py` | loads `config/semantic_classes.yaml`; adds an `other` class (hard, 1 cm) for depth outside every mask (pots, walls, supports) |
+| `voxel_map.py` | `SemanticVoxelMap`: per-class hit evidence + shared free space from aligned depth and class masks. Hits win over free space within a frame (keeps thin stems); free space clears moved leaves; never-seen voxels stay unknown |
+| `distance_query.py` | `SemanticDistanceQuery.query(points)`: per-class signed distance, hard minimum with padding, nearest hard class, gradient, `valid` (unknown / out of bounds / stale ⇒ False and hard distance clamped ≤ 0). `sphere_clearance`, `leaf_cost` (ψ with the 2 cm penetration cap ⇒ hard violation), `target_attraction`, grasp mode that releases only the target region |
+| `python/scene_query_node.py` | integrates live data, publishes `/scene_repr/voxels` (MarkerArray) and `/scene_repr/map_status` (JSON incl. integrate time) |
+
+Controllers should embed `SemanticVoxelMap` + `SemanticDistanceQuery` in
+their own process for high-rate queries.
+
+Measured on a 4-core x86 dev CPU (one 320×240 frame, 0.5 m cube):
+
+| Voxel | Stride | Integrate | ESDF rebuild (5 classes) | Cached query, 512 pts |
+|---|---|---|---|---|
+| 5 mm | 4 | ≈100 ms | ≈510 ms | ≈26 ms |
+| 10 mm | 4 | ≈33 ms | ≈48 ms | ≈4 ms |
+
+So at 5 mm this is a low-rate snapshot for the MPC (research plan kill
+criterion K3), not a 30 Hz field. nvblox remains the GPU path.
+
+```bash
+cd Codes/src/scout_piper_scene_repr && python -m pytest test -q
+```
+
+Tests ray-cast a 1 cm stem, a leaf patch and a wall: thin stem preserved
+(>90 % centreline coverage), stem distance within one voxel, unknown space
+not reported free, stale geometry invalid, wall hard via `other`, leaf soft,
+grasp mode releases only the target region, a moved leaf is cleared.
+
+The MoveIt plugin (`src/semantic_collision_plugin.cpp`) is still the scaffold
+that reports no collision; wiring it to this query (or to nvblox) is P1.4.

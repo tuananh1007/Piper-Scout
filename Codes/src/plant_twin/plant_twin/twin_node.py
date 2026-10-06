@@ -64,7 +64,7 @@ class PlantTwinNode(Node):
             ("leaf_cloud_topic", "/stem_grasp/leaf_filtered_cloud"),
             ("stem_cloud_topic", "/stem_grasp/filtered_cloud"),
             ("mask_topic", "/stem_grasp/target_mask"),
-            ("depth_topic", "/camera/depth/image_rect_raw"),
+            ("depth_topic", "/camera/aligned_depth_to_color/image_raw"),
             ("camera_info_topic", "/camera/color/camera_info"),
             ("contact_threshold_n", 0.15),
             ("gripper_closed_m", 0.01),

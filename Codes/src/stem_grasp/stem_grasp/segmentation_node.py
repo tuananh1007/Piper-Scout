@@ -118,7 +118,7 @@ class StemSegmentationNode(Node):
             instance_selection_mode="highest_conf",
             selection_frame="base_link",
             camera_optical_frame="camera_color_optical_frame",
-            depth_topic="/camera/depth/image_rect_raw",
+            depth_topic="/camera/aligned_depth_to_color/image_raw",
             color_topic="/camera/color/image_raw",
             camera_info_topic="/camera/color/camera_info",
             joint_states_topic="/joint_states",

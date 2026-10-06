@@ -59,7 +59,7 @@ stem_grasp_pipeline:
     target_min_pixels: 30
     instance_selection_mode: "highest_conf"
     selection_frame: "base_link"
-    depth_topic: "/camera/depth/image_rect_raw"
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"
     min_valid_depth_pixels: 50
 
     # --- YOLO ---

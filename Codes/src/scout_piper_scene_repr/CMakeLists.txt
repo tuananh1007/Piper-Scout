@@ -63,6 +63,7 @@ ament_python_install_package(${PROJECT_NAME}_py
 install(PROGRAMS
   python/class_demux_node.py
   python/test_mask_publisher.py
+  python/scene_query_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
