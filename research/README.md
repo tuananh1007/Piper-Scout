@@ -10,7 +10,7 @@ The system-level engineering sequence remains in [`../ROADMAP.md`](../ROADMAP.md
 |---|---|---|---|
 | [`semantic_scene/`](semantic_scene/) | semantic RGB-D geometry, nvblox TSDF/ESDF, class-aware collision/clearance | 1A | [`Codes/src/scout_piper_scene_repr/`](../Codes/src/scout_piper_scene_repr/) |
 | [`plant_twin/`](plant_twin/) | explicit deformable leaf/stem twin, contact-conditioned deformation | 1B | [`Codes/src/plant_twin/`](../Codes/src/plant_twin/) |
-| [`piper_jepa/`](piper_jepa/) | dense target memory, action-conditioned prediction, visibility/identity-aware whole-body control | 2A, 3B | [`Codes/src/scout_piper_jepa/`](../Codes/src/scout_piper_jepa/) (Stage A) |
+| [`piper_jepa/`](piper_jepa/) | dense target memory, action-conditioned prediction, visibility/identity-aware whole-body control | 2A, 3B | [`Codes/src/scout_piper_jepa/`](../Codes/src/scout_piper_jepa/) (Stage A; Stage B/C on a synthetic world) |
 | [`whole_body_mpc/`](whole_body_mpc/) | deterministic non-holonomic Scout + Piper whole-body MPC baselines | 3A | [`Codes/src/scout_piper_whole_body_mpc/`](../Codes/src/scout_piper_whole_body_mpc/) |
 | [`active_perception/`](active_perception/) | uncertainty-driven next-best-view, task-aware multi-view perception | 4 | — |
 

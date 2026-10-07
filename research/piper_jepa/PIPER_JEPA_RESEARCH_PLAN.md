@@ -676,6 +676,8 @@ This allows the planner to ask:
 
 > “If the Scout moves forward 10 cm and turns 8 degrees while the wrist rotates, will the selected flower remain uniquely identifiable?”
 
+**Implementation note (2026-10-07, synthetic test bed).** With an identical neighbour, $c_{id}$ and the softmax read-out cannot detect a switch: a motion that hides the selected flower behind a leaf while bringing its twin into view reads as visible with $c_{id}\approx1$. `scout_piper_jepa/predictive_cost.py` therefore reads each predicted step around the projection of the metric target position (from aligned depth) into the planned camera pose, and treats a projection outside the image as out of view; without depth it falls back to the sequential read-out. Uniqueness has to come from geometry and motion continuity, not from the descriptor alone.
+
 ---
 
 ## 13. Explicit semantic geometry
@@ -1472,13 +1474,15 @@ Codes/src/scout_piper_jepa/scout_piper_jepa/
   metrics.py            # implemented: E1 tracking metrics
   episode.py            # implemented: rosbag2 → .npz export + offline E1 evaluation (covers rosbag_dataset / eval_tracking)
   image_codec.py        # implemented: sensor_msgs/Image ↔ numpy without cv_bridge
-  action.py             # implemented: Stage B action embedding Γ(x,u)
+  action.py             # implemented: Γ from commands and (batched) from whole-body states
   target_state_node.py  # implemented: ROS 2 node
-  predictor.py          # planned (Stage B)
-  predictive_cost.py    # planned (Stage C; plugs into WholeBodyCost.extra)
+  readout.py            # implemented 2026-10-07: §12 read-outs from predicted features
+  predictor.py          # implemented 2026-10-07: interface, persistence, state adapter, synthetic oracle
+  torch_predictor.py    # implemented 2026-10-07: P0/P2/P3 predictor + target-weighted training (covers train_predictor)
+  prediction_metrics.py # implemented 2026-10-07: E3 metrics (covers eval_prediction)
+  predictive_cost.py    # implemented 2026-10-07: JepaVisibilityCost in WholeBodyCost.extra, geometry-anchored read-out
+  synthetic.py          # implemented 2026-10-07: synthetic dense-feature world (test bed)
   uncertainty.py        # planned
-  train_predictor.py    # planned
-  eval_prediction.py    # planned
 ```
 
 ### `scout_piper_whole_body_mpc` (geometry-only baseline implemented 2026-10-06; not yet in `full_system.launch.py`)

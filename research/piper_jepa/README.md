@@ -235,6 +235,8 @@ Only after this evidence is positive should embodiment-specific action-condition
 
 **Status:** Stage A code exists in [`Codes/src/scout_piper_jepa/`](../../Codes/src/scout_piper_jepa/) (P2A.1–P2A.4, 2026-10-06): encoder interface (lazy V-JEPA via `torch.hub` + a numpy reference encoder), target memory, E1 metrics, episode export/evaluation and a ROS 2 node. It is tested only on synthetic scenes with the reference encoder, is untested on hardware and is not in `full_system.launch.py`. V-JEPA inference has not been run, the E1 dataset and the T0–T4 comparison are open (P2A.5–P2A.6), and Stage B has only the action embedding (`action.py`).
 
+Since 2026-10-07 Stage B and the Stage C cost exist on a synthetic dense-feature world (P3B.1–P3B.7): the learned predictor (P0/P2/P3, target-weighted loss), §12 read-outs, E3 metrics and benchmark, and `JepaVisibilityCost` in the whole-body MPC. The plain §12 read-out cannot tell the selected flower from an identical twin, so the cost anchors its read-out on the projected metric target position when depth gives one. The synthetic closed-loop C2 vs C3-oracle comparison is inconclusive so far; robot episodes, V-JEPA features and GPU timing are open.
+
 ---
 
 **Summary:** Piper-JEPA can start independently. Only its final Stage C predictive-control contribution depends directly on `semantic_scene` and `whole_body_mpc`; `plant_twin` and `active_perception` remain optional/later complementary tracks.

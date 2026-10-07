@@ -30,7 +30,7 @@ visual servo for the final approach.
 | 2A | V-JEPA 2.1 dense temporal target state | ◐ in progress (Stage A target memory in `scout_piper_jepa` done; E1 dataset + V-JEPA runs pending) |
 | 2B | Safety-bounded local MPPI visual servo | ☐ not started |
 | 3A | Geometry-only whole-body GPU MPC (Scout + Piper) | ◐ in progress (`scout_piper_whole_body_mpc` CPU MPPI + safety filter + dry-run node, convergence near obstacles and W0/W1 baselines done; hardware and Orin runs pending) |
-| 3B | Piper-JEPA predictive whole-body MPC (headline) | ☐ not started |
+| 3B | Piper-JEPA predictive whole-body MPC (headline) | ◐ in progress (Stage B predictor + Stage C cost hook on a synthetic world; robot data, V-JEPA and closed-loop gain pending) |
 | 4 | Uncertainty-driven active perception | ☐ not started |
 | 5 | Language/VLM + operator GUI for non-experts | ☐ not started |
 

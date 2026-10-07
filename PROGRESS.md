@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (P3A.6 MPPI convergence near obstacles, P3A.9 W1 sequential baseline; P1.7.7 MoveIt semantic collision plugin; phase sections realigned to ROADMAP phases)
+**Last updated:** 2026-10-07 (P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -312,9 +312,23 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ## Phase 3B — Piper-JEPA predictive whole-body MPC
 
-**Target start:** 2027-02-15  ·  **Target finish:** 2027-07-15  ·  **Status:** ☐ not started
+**Target start:** 2027-02-15  ·  **Target finish:** 2027-07-15  ·  **Status:** ◐ in_progress — Stage B predictor and the Stage C cost hook exist on a synthetic world (2026-10-07, ahead of schedule); no robot data, V-JEPA features or GPU timing yet
 
-No task rows yet. Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](research/piper_jepa/) (Stages B–C). Hooks already in the code: the Stage B action embedding Γ(x,u) (`scout_piper_jepa/action.py`) and the `WholeBodyCost.extra` cost hook for J_visibility / J_identity (`scout_piper_whole_body_mpc`).
+Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](research/piper_jepa/) (Stages B–C).
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P3B.1 | Synthetic dense-feature world (z-buffered eye-in-hand renderer, flower + twin + leaf) | ☑ | 2026-10-07 — test bed only, not evidence |
+| P3B.2 | §12 read-outs (û, entropy, identity, visibility) from predicted features | ☑ | 2026-10-07 — spatial prior needed against the identical twin |
+| P3B.3 | Γ from whole-body states (batched) for training data and MPC rollouts | ☑ | 2026-10-07 |
+| P3B.4 | Learned predictor P0 / P2 / P3 + target-weighted training (§10–11) | ☑ | 2026-10-07 — CPU torch; P1 (V-JEPA 2-AC) needs the real encoder |
+| P3B.5 | E3 metrics + synthetic E3 benchmark | ☑ | 2026-10-07 — see `scout_piper_jepa/README.md` |
+| P3B.6 | `JepaVisibilityCost` in `WholeBodyCost.extra`, geometry-anchored read-out | ☑ | 2026-10-07 — anchor fixes the identical-twin failure of the plain §12 read-out |
+| P3B.7 | Synthetic closed loop C2 vs C3-oracle | ◐ | 2026-10-07 — inconclusive: C3 trades goal error for visibility without a reliable gain; needs a feasibility check, near-goal constraint, more samples |
+| P3B.8 | Record and annotate E3 robot episodes (arm-only, base-only, combined, occlusion) | ☐ | bags → features + Γ + masks |
+| P3B.9 | Train P2/P3 on V-JEPA 2.1 features (GPU) | ☐ | after P2A.6 go/no-go |
+| P3B.10 | Predictor latency on the Orin (samples × horizon) | ☐ | CPU oracle render ≈ 2 s per control step at 64 samples |
+| P3B.11 | C3 with the learned predictor in the loop; E5 visibility-sensitive scenes | ☐ | |
 
 ---
 
