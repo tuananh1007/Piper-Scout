@@ -103,10 +103,23 @@ ros2 launch scout_piper_bringup full_system.launch.py \
   bringup_pipeline:=false bringup_jsp_gui:=false bringup_rviz:=true
 ```
 
-✅ Pass: `ros2 topic list` shows `/joint_states`. MoveIt is not part of
+⚠️ Upstream `start_single_piper.launch.py` makes the driver execute every
+`/joint_states` message as a joint command at full speed. `full_system.launch.py`
+therefore starts the driver itself with its command input on
+`arm_command_topic` (default `/piper/joint_cmd`), relays the driver's feedback
+to `/joint_states` as `piper_joint1..8` (`piper_joint_state_relay.py`) and never
+starts the joint sliders with the arm. Do not run the upstream launch file
+together with any `/joint_states` publisher.
+
+✅ Pass: `ros2 topic echo --once /joint_states_single` shows live `joint1..6`
+from the driver, `ros2 topic echo --once /joint_states` shows the same values as
+`piper_joint1..8`, and the arm in RViz follows the real one. MoveIt is not part of
 `full_system.launch.py` (its demo starts its own `robot_state_publisher`, which
-conflicts with the unified URDF); run `ros2 launch piper_with_gripper_moveit demo.launch.py`
-separately and check that its RViz plugin plans a motion from home to a manual pose target.
+conflicts with the unified URDF); with the bringup's arm driver stopped, run
+`ros2 launch piper_with_gripper_moveit demo.launch.py` and check that its RViz
+plugin plans a motion from home to a manual pose target (planning only: with the
+bringup it no longer reaches the driver, and with upstream `start_single_piper.launch.py`
+it would command the real arm, starting from all joints at 0).
 
 ### 4b — Scout base only
 
@@ -140,8 +153,9 @@ ros2 launch scout_piper_bringup full_system.launch.py \
   bringup_pipeline:=false bringup_jsp_gui:=false
 ```
 
-✅ Pass: All three subsystems publish their canonical topics; TF tree
-connects `odom → base_link → piper_mount_link → piper_base_link → ... → camera_link`.
+✅ Pass: All three subsystems publish their canonical topics (`/joint_states`
+from the relay, the camera topics, the base topics); TF tree connects
+`odom → base_link → piper_mount_link → piper_base_link → ... → camera_link`.
 
 ❌ Fail: CAN bus contention — verify Piper is on `can0` and Scout on `can1`.
 

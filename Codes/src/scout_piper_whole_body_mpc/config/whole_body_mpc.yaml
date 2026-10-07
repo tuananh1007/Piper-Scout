@@ -6,8 +6,9 @@ whole_body_mpc:
     rate_hz: 10.0
     world_frame: "odom"
     goal_topic: "/whole_body_mpc/goal"        # or /piper_jepa/target_point
-    # Names as published on /joint_states by the Piper driver — check: the
-    # driver may publish joint1..joint6 without the URDF's piper_ prefix.
+    # Names on /joint_states. The Piper driver itself publishes joint1..joint6
+    # on /joint_states_single; full_system.launch.py relays them as these
+    # (scout_piper_bringup/scripts/piper_joint_state_relay.py).
     joint_names: ["piper_joint1", "piper_joint2", "piper_joint3",
                   "piper_joint4", "piper_joint5", "piper_joint6"]
     tcp_offset_m: 0.14                        # link6 → grasp point; calibrate

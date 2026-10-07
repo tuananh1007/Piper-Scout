@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-07 (P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -65,6 +65,7 @@
 | P0.3.10 | All six subsystems running concurrently with stable TF tree | ◐ | 2026-05-17 — verified for: RSP (unified URDF), stem_grasp (pipeline/segmentation/pointcloud), RViz, jsp_gui. Pending: arm/base/camera (need hardware). Phase 0 exit gate. |
 | P0.3.11 | Hardware-free defaults — `full_system.launch.py` boots without CAN/USB | ☑ | 2026-05-17 — bringup_arm/base/camera default false; jsp_gui auto-spawned for URDF sliders |
 | P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3A unifies via cuMotion |
+| P0.3.13 | Arm command isolation: driver commands off `/joint_states`, feedback relayed as `piper_joint1..8`, no sliders with the arm | ☑ | 2026-10-07 — upstream launch made the driver execute `/joint_states` (sliders → all-zero pose at full speed); `full_system.launch.py` now starts the driver with `arm_command_topic` (default `/piper/joint_cmd`) + `piper_joint_state_relay.py`; launch + relay tests and an rclpy end-to-end check, not yet on hardware |
 
 ### P0.4 — stem_grasp ROS 2 port
 

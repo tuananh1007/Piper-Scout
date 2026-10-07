@@ -10,6 +10,14 @@ Usage:
     ros2 launch scout_piper_bringup full_system.launch.py
     ros2 launch scout_piper_bringup full_system.launch.py use_sim:=true
     ros2 launch scout_piper_bringup full_system.launch.py bringup_camera:=false
+
+Arm safety: upstream start_single_piper.launch.py remaps the Piper driver's
+command input (joint_ctrl_single) to /joint_states, so any /joint_states
+publisher (joint sliders, MoveIt's joint_state_broadcaster, a test stub) moves
+the real arm. This launch starts the driver node itself with that input on
+``arm_command_topic`` (default /piper/joint_cmd), republishes the driver's
+feedback on /joint_states as piper_joint1..8 (piper_joint_state_relay.py), and
+never starts the joint sliders together with the arm.
 """
 
 from launch import LaunchDescription
@@ -17,6 +25,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     GroupAction,
+    LogInfo,
     OpaqueFunction,
 )
 from launch.conditions import IfCondition, UnlessCondition
@@ -30,6 +39,25 @@ from launch.substitutions import (
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
+
+# The upstream driver executes every message on its command input as a joint
+# position command at full speed; it must never be a joint-state topic.
+FORBIDDEN_ARM_COMMAND_TOPICS = ("/joint_states", "/joint_states_single", "/joint_states_feedback")
+
+
+def _is_true(context, name):
+    # same truth values as IfCondition, which gates the arm nodes
+    return LaunchConfiguration(name).perform(context).strip().lower() in ("true", "1")
+
+
+def check_arm_command_topic(topic):
+    """Return the command topic, or raise if it is a joint-state topic."""
+    t = "/" + topic.strip().lstrip("/")
+    if t in FORBIDDEN_ARM_COMMAND_TOPICS:
+        raise RuntimeError(
+            f"arm_command_topic:={topic} would make the Piper driver execute joint states as "
+            "commands; use a dedicated topic such as /piper/joint_cmd")
+    return t
 
 
 def _declare_args():
@@ -78,7 +106,14 @@ def _declare_args():
         DeclareLaunchArgument(
             "bringup_jsp_gui",
             default_value="true",
-            description="Launch joint_state_publisher_gui sliders (only when bringup_arm:=false).",
+            description="Launch joint_state_publisher_gui sliders. Ignored when bringup_arm:=true "
+                        "(the relay publishes the real joint states).",
+        ),
+        DeclareLaunchArgument(
+            "arm_command_topic",
+            default_value="/piper/joint_cmd",
+            description="Topic the Piper driver executes as joint position commands "
+                        "(upstream uses /joint_states; joint-state topics are refused).",
         ),
         DeclareLaunchArgument(
             "system_params",
@@ -121,17 +156,40 @@ def _launch_setup(context, *args, **kwargs):
     # references below match its current layout (May 2026); verify after
     # `vcs import` and update if upstream renames.
     # ----------------------------------------------------------------------
-    arm_driver = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [FindPackageShare("piper"), "launch", "start_single_piper.launch.py"]
-            )
-        ),
-        condition=IfCondition(LaunchConfiguration("bringup_arm")),
-        launch_arguments={
+    # The driver node is started here rather than through upstream
+    # start_single_piper.launch.py, whose remapping makes the driver execute
+    # /joint_states as commands (see the module docstring). Parameters match
+    # that launch file's defaults.
+    arm_on = _is_true(context, "bringup_arm")
+    arm_command_topic = check_arm_command_topic(
+        LaunchConfiguration("arm_command_topic").perform(context))
+    arm_driver = Node(
+        package="piper",
+        executable="piper_single_ctrl",
+        name="piper_ctrl_single_node",
+        output="screen",
+        parameters=[{
             "can_port": "can0",
-            "auto_enable": "true",
-        }.items(),
+            "auto_enable": True,
+            "gripper_exist": True,
+            "gripper_val_mutiple": 1,
+        }],
+        remappings=[("joint_ctrl_single", arm_command_topic)],
+        condition=IfCondition(LaunchConfiguration("bringup_arm")),
+    )
+
+    # Driver feedback (joint1..6 + gripper on /joint_states_single) ->
+    # /joint_states with the unified URDF's piper_joint1..8.
+    arm_state_relay = Node(
+        package="scout_piper_bringup",
+        executable="piper_joint_state_relay.py",
+        name="piper_joint_state_relay",
+        output="screen",
+        parameters=[{
+            "arm_command_topic": arm_command_topic,
+            "use_sim_time": use_sim,
+        }],
+        condition=IfCondition(LaunchConfiguration("bringup_arm")),
     )
 
     # NOTE: MoveIt 2 is intentionally NOT included here. piper_with_gripper_moveit's
@@ -249,18 +307,24 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
     )
 
-    # Joint sliders for testing the URDF without the real arm driver.
-    # Suppressed when bringup_arm:=true since the real driver publishes joint_states.
-    jsp_gui = Node(
-        package="joint_state_publisher_gui",
-        executable="joint_state_publisher_gui",
-        output="screen",
-        condition=IfCondition(LaunchConfiguration("bringup_jsp_gui")),
-    )
+    # Joint sliders for testing the URDF without the real arm. Never together
+    # with the arm: the relay owns /joint_states then.
+    jsp_requested = _is_true(context, "bringup_jsp_gui")
+    gui = []
+    if jsp_requested and arm_on:
+        gui = [LogInfo(msg="bringup_jsp_gui ignored because bringup_arm:=true "
+                           "(/joint_states comes from piper_joint_state_relay)")]
+    elif jsp_requested:
+        gui = [Node(
+            package="joint_state_publisher_gui",
+            executable="joint_state_publisher_gui",
+            output="screen",
+        )]
 
     return [
         robot_state_publisher,
         arm_driver,
+        arm_state_relay,
         base_driver,
         camera,
         nav2,
@@ -269,8 +333,7 @@ def _launch_setup(context, *args, **kwargs):
         pointcloud,
         pipeline,
         rviz,
-        jsp_gui,
-    ]
+    ] + gui
 
 
 def generate_launch_description():
