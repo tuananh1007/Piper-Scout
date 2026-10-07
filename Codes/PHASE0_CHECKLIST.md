@@ -198,16 +198,20 @@ cd Codes && colcon test --packages-select stem_grasp   # /workspace inside the d
 ## Step 7 — moveit_servo wiring (the missing link from ROS 1)
 
 The ROS 1 stack published `/servo_server/delta_twist_cmds` with no consumer.
-In ROS 2, we add `moveit_servo` to the bringup so the topic actually drives
-the arm.
+In ROS 2, `full_system.launch.py bringup_servo:=true` starts `moveit_servo`
+and `piper_servo_bridge`, its only path to the arm (details: INSTALL.md 10.4).
 
-1. `piper_ros` ships no servo YAML; start from the example config shipped with
-   `moveit_servo` (`config/panda_simulated_config.yaml`).
-2. Tune `scale.linear`/`scale.rotational`, `joint_topic`, `command_in_type`,
-   `lower_singularity_threshold`/`hard_stop_singularity_threshold`,
-   `incoming_command_timeout` for the Piper.
-3. Add the `moveit_servo` Node to `full_system.launch.py`.
-4. Verify: hand-publish a small TwistStamped → EE moves.
+1. [x] Servo config for the Piper: `scout_piper_bringup/config/moveit/servo.yaml`
+   (speed units, 50 Hz, 0.25 s timeout, singularity thresholds 45 / 100 from
+   the Piper Jacobian) and the unified SRDF `config/moveit/scout_piper.srdf`.
+2. [x] `servo_node` + `piper_servo_bridge` in `full_system.launch.py`; the bridge
+   starts disabled and clamps steps, joint limits and speed.
+3. [x] Hardware-free: `bringup_arm:=true fake_arm:=true bringup_servo:=true`, then
+   `ros2 run scout_piper_bringup servo_chain_check.py` → `SERVO CHAIN OK`.
+4. [ ] On the robot: start servo, enable the bridge, hand-publish a 2 cm/s
+   TwistStamped → EE moves; Ctrl-C → it stops; `hotkey_stop_and_zero` `x` → holds.
+5. [ ] Tune `speed_percent`, `max_step_rad`, the servo scales and singularity
+   thresholds on the robot.
 
 ## Step 8 — Regression test against ROS 1 baseline
 

@@ -9,7 +9,11 @@ install(
 )
 
 install(
-  PROGRAMS scripts/piper_joint_state_relay.py
+  PROGRAMS
+    scripts/piper_joint_state_relay.py
+    scripts/piper_servo_bridge.py
+    scripts/fake_piper_driver.py
+    scripts/servo_chain_check.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

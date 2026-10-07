@@ -18,6 +18,15 @@ the real arm. This launch starts the driver node itself with that input on
 ``arm_command_topic`` (default /piper/joint_cmd), republishes the driver's
 feedback on /joint_states as piper_joint1..8 (piper_joint_state_relay.py), and
 never starts the joint sliders together with the arm.
+
+moveit_servo (bringup_servo:=true) reaches the arm only through
+piper_servo_bridge.py, which writes arm_command_topic and starts disabled:
+
+    /servo_node/delta_{twist,joint}_cmds -> servo_node -> /piper/servo/joint_trajectory
+        -> piper_servo_bridge (~/enable) -> /piper/joint_cmd -> Piper driver
+
+fake_arm:=true replaces the driver with fake_piper_driver.py (no hardware) to
+test that chain.
 """
 
 from launch import LaunchDescription
@@ -110,6 +119,18 @@ def _declare_args():
                         "(the relay publishes the real joint states).",
         ),
         DeclareLaunchArgument(
+            "fake_arm",
+            default_value="false",
+            description="With bringup_arm:=true, start fake_piper_driver.py instead of the "
+                        "real driver (no CAN, no hardware).",
+        ),
+        DeclareLaunchArgument(
+            "bringup_servo",
+            default_value="false",
+            description="Start moveit_servo (config/moveit/servo.yaml) and piper_servo_bridge "
+                        "(starts disabled). Servo also needs /servo_node/start_servo.",
+        ),
+        DeclareLaunchArgument(
             "arm_command_topic",
             default_value="/piper/joint_cmd",
             description="Topic the Piper driver executes as joint position commands "
@@ -161,22 +182,33 @@ def _launch_setup(context, *args, **kwargs):
     # /joint_states as commands (see the module docstring). Parameters match
     # that launch file's defaults.
     arm_on = _is_true(context, "bringup_arm")
+    fake_arm = _is_true(context, "fake_arm")
     arm_command_topic = check_arm_command_topic(
         LaunchConfiguration("arm_command_topic").perform(context))
-    arm_driver = Node(
-        package="piper",
-        executable="piper_single_ctrl",
-        name="piper_ctrl_single_node",
-        output="screen",
-        parameters=[{
-            "can_port": "can0",
-            "auto_enable": True,
-            "gripper_exist": True,
-            "gripper_val_mutiple": 1,
-        }],
-        remappings=[("joint_ctrl_single", arm_command_topic)],
-        condition=IfCondition(LaunchConfiguration("bringup_arm")),
-    )
+    if fake_arm:
+        arm_driver = Node(
+            package="scout_piper_bringup",
+            executable="fake_piper_driver.py",
+            name="piper_ctrl_single_node",
+            output="screen",
+            remappings=[("joint_ctrl_single", arm_command_topic)],
+            condition=IfCondition(LaunchConfiguration("bringup_arm")),
+        )
+    else:
+        arm_driver = Node(
+            package="piper",
+            executable="piper_single_ctrl",
+            name="piper_ctrl_single_node",
+            output="screen",
+            parameters=[{
+                "can_port": "can0",
+                "auto_enable": True,
+                "gripper_exist": True,
+                "gripper_val_mutiple": 1,
+            }],
+            remappings=[("joint_ctrl_single", arm_command_topic)],
+            condition=IfCondition(LaunchConfiguration("bringup_arm")),
+        )
 
     # Driver feedback (joint1..6 + gripper on /joint_states_single) ->
     # /joint_states with the unified URDF's piper_joint1..8.
@@ -190,6 +222,40 @@ def _launch_setup(context, *args, **kwargs):
             "use_sim_time": use_sim,
         }],
         condition=IfCondition(LaunchConfiguration("bringup_arm")),
+    )
+
+    # moveit_servo + the bridge that is its only way to the arm. Servo waits for
+    # /servo_node/start_servo; the bridge waits for /piper_servo_bridge/enable.
+    moveit_share = PathJoinSubstitution([bringup_share, "config", "moveit"])
+    servo = Node(
+        package="moveit_servo",
+        executable="servo_node_main",
+        name="servo_node",
+        output="screen",
+        parameters=[
+            {
+                "robot_description": robot_description_content,
+                "robot_description_semantic": ParameterValue(
+                    Command([FindExecutable(name="cat"), " ",
+                             PathJoinSubstitution([moveit_share, "scout_piper.srdf"])]),
+                    value_type=str,
+                ),
+                "use_sim_time": use_sim,
+            },
+            PathJoinSubstitution([moveit_share, "servo.yaml"]),
+        ],
+        condition=IfCondition(LaunchConfiguration("bringup_servo")),
+    )
+    servo_bridge = Node(
+        package="scout_piper_bringup",
+        executable="piper_servo_bridge.py",
+        name="piper_servo_bridge",
+        output="screen",
+        parameters=[{
+            "command_topic": arm_command_topic,
+            "use_sim_time": use_sim,
+        }],
+        condition=IfCondition(LaunchConfiguration("bringup_servo")),
     )
 
     # NOTE: MoveIt 2 is intentionally NOT included here. piper_with_gripper_moveit's
@@ -325,6 +391,8 @@ def _launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         arm_driver,
         arm_state_relay,
+        servo,
+        servo_bridge,
         base_driver,
         camera,
         nav2,

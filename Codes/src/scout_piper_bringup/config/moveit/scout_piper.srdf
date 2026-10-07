@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Semantic description of the unified Scout 2.0 + Piper robot
+  (scout_piper_description/urdf/scout_piper.urdf.xacro) for MoveIt / moveit_servo.
+
+  Groups and named states follow upstream piper_with_gripper_moveit/config/piper.srdf
+  with the piper_ prefix. The disable_collisions list was computed with MoveIt's
+  Setup Assistant routine (moveit_setup_srdf_plugins::computeDefaultCollisions,
+  10000 random states, 95 % threshold) on the unified URDF; its arm pairs agree with
+  upstream's except piper_link1/piper_link4, which is kept enabled as upstream does.
+  The Scout chassis stays checked against piper_link3 onwards.
+
+  The mount and camera offsets in the URDF are placeholders (INSTALL.md, Step 9.3):
+  after calibration changes them, regenerate this list with the MoveIt Setup
+  Assistant (Self-Collisions page) and keep the groups below.
+-->
+<robot name="scout_piper">
+    <group name="arm">
+        <chain base_link="piper_base_link" tip_link="piper_link6"/>
+    </group>
+    <group name="gripper">
+        <joint name="piper_joint7"/>
+        <joint name="piper_joint8"/>
+    </group>
+    <group_state name="zero" group="arm">
+        <joint name="piper_joint1" value="0"/>
+        <joint name="piper_joint2" value="0"/>
+        <joint name="piper_joint3" value="0"/>
+        <joint name="piper_joint4" value="0"/>
+        <joint name="piper_joint5" value="0"/>
+        <joint name="piper_joint6" value="0"/>
+    </group_state>
+    <group_state name="open" group="gripper">
+        <joint name="piper_joint7" value="0.035"/>
+        <joint name="piper_joint8" value="-0.035"/>
+    </group_state>
+    <group_state name="close" group="gripper">
+        <joint name="piper_joint7" value="0"/>
+        <joint name="piper_joint8" value="0"/>
+    </group_state>
+    <end_effector name="gripper" parent_link="piper_link6" group="gripper" parent_group="arm"/>
+    <disable_collisions link1="base_link" link2="front_left_wheel_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="front_right_wheel_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="piper_mount_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="rear_left_wheel_link" reason="Adjacent"/>
+    <disable_collisions link1="base_link" link2="rear_right_wheel_link" reason="Adjacent"/>
+    <disable_collisions link1="camera_link" link2="piper_link6" reason="Adjacent"/>
+    <disable_collisions link1="piper_base_link" link2="piper_link1" reason="Adjacent"/>
+    <disable_collisions link1="piper_base_link" link2="piper_mount_link" reason="Adjacent"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link6" reason="Adjacent"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link7" reason="Adjacent"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link8" reason="Adjacent"/>
+    <disable_collisions link1="piper_link1" link2="piper_link2" reason="Adjacent"/>
+    <disable_collisions link1="piper_link2" link2="piper_link3" reason="Adjacent"/>
+    <disable_collisions link1="piper_link3" link2="piper_link4" reason="Adjacent"/>
+    <disable_collisions link1="piper_link4" link2="piper_link5" reason="Adjacent"/>
+    <disable_collisions link1="piper_link5" link2="piper_link6" reason="Adjacent"/>
+    <disable_collisions link1="piper_link7" link2="piper_link8" reason="Default"/>
+    <disable_collisions link1="base_link" link2="piper_base_link" reason="Never"/>
+    <disable_collisions link1="base_link" link2="piper_link1" reason="Never"/>
+    <disable_collisions link1="base_link" link2="piper_link2" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_gripper_base" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_link3" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_link4" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_link5" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_link7" reason="Never"/>
+    <disable_collisions link1="camera_link" link2="piper_link8" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="front_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="piper_base_link" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="piper_link1" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="piper_link2" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="piper_mount_link" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="front_left_wheel_link" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="piper_base_link" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="piper_link1" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="piper_link2" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="piper_mount_link" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="front_right_wheel_link" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_base_link" link2="piper_link2" reason="Never"/>
+    <disable_collisions link1="piper_base_link" link2="piper_link3" reason="Never"/>
+    <disable_collisions link1="piper_base_link" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_base_link" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link3" reason="Never"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link4" reason="Never"/>
+    <disable_collisions link1="piper_gripper_base" link2="piper_link5" reason="Never"/>
+    <disable_collisions link1="piper_link1" link2="piper_link3" reason="Never"/>
+    <disable_collisions link1="piper_link1" link2="piper_mount_link" reason="Never"/>
+    <disable_collisions link1="piper_link1" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link1" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link2" link2="piper_link4" reason="Never"/>
+    <disable_collisions link1="piper_link2" link2="piper_mount_link" reason="Never"/>
+    <disable_collisions link1="piper_link2" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link2" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="piper_link5" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="piper_link6" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="piper_link7" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="piper_link8" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="piper_mount_link" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link3" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_link4" link2="piper_link6" reason="Never"/>
+    <disable_collisions link1="piper_link4" link2="piper_link7" reason="Never"/>
+    <disable_collisions link1="piper_link4" link2="piper_link8" reason="Never"/>
+    <disable_collisions link1="piper_link5" link2="piper_link7" reason="Never"/>
+    <disable_collisions link1="piper_link5" link2="piper_link8" reason="Never"/>
+    <disable_collisions link1="piper_link6" link2="piper_link7" reason="Never"/>
+    <disable_collisions link1="piper_link6" link2="piper_link8" reason="Never"/>
+    <disable_collisions link1="piper_mount_link" link2="rear_left_wheel_link" reason="Never"/>
+    <disable_collisions link1="piper_mount_link" link2="rear_right_wheel_link" reason="Never"/>
+    <disable_collisions link1="rear_left_wheel_link" link2="rear_right_wheel_link" reason="Never"/>
+</robot>

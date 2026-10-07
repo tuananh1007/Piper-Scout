@@ -27,9 +27,9 @@ you power anything on.
 | Piper driver, Scout driver, both together, RealSense inside the bringup | **Not validated on hardware** (P0.3.5–P0.3.8) |
 | Piper driver ↔ unified URDF | The driver publishes `joint1`…`joint6` + `gripper` on `/joint_states_single`; the bringup's `piper_joint_state_relay.py` republishes them as `piper_joint1`…`piper_joint8` on `/joint_states` (tested offline, not on hardware) |
 | MoveIt 2 demo for the Piper | Upstream demo, separate from the bringup; not validated (P0.3.9) |
-| `moveit_servo` | **Not wired** (P0.5.1–P0.5.3): nothing consumes `/servo_node/delta_twist_cmds` |
+| `moveit_servo` | Wired (`bringup_servo:=true`, P0.5.1): reaches the arm only through `piper_servo_bridge`, which starts disabled. Verified end to end on the fake arm (`servo_chain_check.py`); **not yet run on hardware**, speeds not tuned on the robot (P0.5.2, P0.5.3) |
 | `stem_grasp` plan → execute, iterative approach | **Not done** (P0.4.11, P0.4.13): the pipeline only publishes `/stem_grasp/target_pose` |
-| Software stop (`hotkey_stop_and_zero`) | Publishes zero twists only; it does **not** stop the arm |
+| Software stop (`hotkey_stop_and_zero`) | `x` sends zero twists and disables `piper_servo_bridge`, so servo-driven arm motion stops and the arm holds its measured pose. It does not stop the base and is no substitute for the physical stops |
 | Hand-eye calibration | Tools are on the lab machine, not in this repository; camera and mount offsets in the URDF are placeholders |
 | Nav2 | In the bringup; driving to a goal not validated (P0.6.2) |
 | RealSense → nvblox reconstruction | Validated in the dev container with a D405 (P1.1.2) |
@@ -613,7 +613,7 @@ it publishes empty masks (see 10.9). `use_sim:=true` only sets
 > them is validated on hardware yet. `bringup_arm:=true` enables the Piper
 > automatically, and the arm then executes whatever arrives on
 > `/piper/joint_cmd` (see the [warning](#before-you-start-what-works-today)).
-> `hotkey_stop_and_zero` does not stop the arm. Keep people clear of the arm
+> `hotkey_stop_and_zero` stops only motion that goes through moveit_servo. Keep people clear of the arm
 > and the base and keep the power cut-off within reach.
 
 ### 10.3 Piper arm only
@@ -643,7 +643,66 @@ and in RViz the arm model follows the real arm. (`ros2 topic list` showing
 `/joint_states` alone proves nothing: a topic is listed as soon as anything
 subscribes to it.)
 
-### 10.4 MoveIt 2 (upstream demo) and moveit_servo
+### 10.4 moveit_servo
+
+`bringup_servo:=true` starts `servo_node` (moveit_servo, `config/moveit/servo.yaml`,
+unified SRDF `config/moveit/scout_piper.srdf`) and `piper_servo_bridge`:
+
+```text
+/servo_node/delta_twist_cmds (TwistStamped, m/s, rad/s)  ─┐
+/servo_node/delta_joint_cmds (JointJog, rad/s)           ─┴─▶ servo_node ─▶ /piper/servo/joint_trajectory
+    ─▶ piper_servo_bridge (~/enable) ─▶ /piper/joint_cmd ─▶ Piper driver ─▶ /joint_states_single ─▶ relay ─▶ /joint_states
+```
+
+Two latches must be opened before anything moves: servo itself waits for
+`/servo_node/start_servo`, and the bridge starts **disabled**. While enabled,
+the bridge keeps every target inside the joint limits and within 0.1 rad of
+the measured position, sends the measured gripper opening (so the gripper
+holds) and caps the driver at 30 % speed. Servo checks self-collision,
+including the Scout chassis, but knows nothing about plants or obstacles
+unless they are added to its planning scene. Disabling the bridge sends one
+"hold the measured pose" command. Its parameters are `speed_percent`,
+`max_step_rad` and `max_feedback_age_s` (`scripts/piper_servo_bridge.py`).
+
+**1. Hardware-free check (do this first).** `fake_arm:=true` replaces the
+driver with `fake_piper_driver.py`, which mimics the real driver's command
+handling without touching CAN:
+
+```bash
+ros2 launch scout_piper_bringup full_system.launch.py \
+  bringup_arm:=true fake_arm:=true bringup_servo:=true bringup_pipeline:=false
+ros2 run scout_piper_bringup servo_chain_check.py      # second terminal
+```
+
+**Pass:** eight `PASS` lines and `SERVO CHAIN OK` (relay names, bridge latch,
+joint jog, command contents, gripper hold, Cartesian twist, hold after
+disable, no singularity / collision halt). The check refuses to run unless
+the fake driver is the one answering.
+
+**2. On the robot** (after 10.3 passes; arm clear, power cut-off within
+reach, start with small speeds):
+
+```bash
+ros2 launch scout_piper_bringup full_system.launch.py \
+  bringup_arm:=true bringup_servo:=true bringup_pipeline:=false bringup_jsp_gui:=false
+ros2 service call /servo_node/start_servo std_srvs/srv/Trigger "{}"
+ros2 service call /piper_servo_bridge/enable std_srvs/srv/SetBool "{data: true}"
+ros2 topic pub -r 50 /servo_node/delta_twist_cmds geometry_msgs/msg/TwistStamped \
+  "{header: {stamp: now, frame_id: piper_base_link}, twist: {linear: {z: 0.02}}}"   # 2 cm/s up; Ctrl-C stops
+ros2 service call /piper_servo_bridge/enable std_srvs/srv/SetBool "{data: false}"  # hold
+```
+
+Commands need a current stamp (`stamp: now`): servo treats zero stamps as
+stale. It halts by itself 0.25 s after the last command
+(`incoming_command_timeout`); `ros2 topic echo /servo_node/status` shows 0 while
+it is free to move (2 = singularity stop, 4 = collision stop). The keyboard
+stop `ros2 run stem_grasp hotkey_stop_and_zero` (`x`) disables the bridge.
+The singularity thresholds (45 / 100) come from the Piper's Jacobian over the
+URDF, not from tests on the robot; tune them and the speeds there (P0.5.2).
+When a `move_group` runs as well (10.10.6), set
+`is_primary_planning_scene_monitor: false` in `servo.yaml`.
+
+### 10.4b MoveIt 2 upstream demo (planning only)
 
 MoveIt is not part of `full_system.launch.py`; the upstream demo starts its
 own `robot_state_publisher` with the standalone Piper URDF, and its mock
@@ -665,10 +724,10 @@ ros2 launch piper_with_gripper_moveit demo.launch.py
 **Pass** (planning only, no driver running): the RViz MotionPlanning plugin
 plans from home to a manual pose target (not yet validated: P0.3.9).
 
-`moveit_servo` is not wired yet; the plan is in
-[checklist Step 7](Codes/PHASE0_CHECKLIST.md). `moveit_py` has no Humble
-binary, so `stem_grasp` cannot plan and execute; the documented options are
-building moveit2 from source in the container (~30 min) or `pymoveit2`.
+`moveit_py` has no Humble binary, so `stem_grasp` cannot plan and execute;
+the documented options are building moveit2 from source in the container
+(~30 min) or `pymoveit2`. Until then the `stem_grasp` pipeline never reaches
+its servoing state, so it publishes no twists.
 
 ### 10.5 Scout base only
 
@@ -758,8 +817,9 @@ ros2 topic echo /stem_grasp/target_pose
 ```
 
 The pipeline publishes the target pose and markers but does not plan,
-execute or servo (P0.4.11). The hot-key helper (`x` publishes a zero twist,
-`q` quits) is **not** an emergency stop: `ros2 run stem_grasp hotkey_stop_and_zero`.
+execute or servo (P0.4.11). The hot-key helper `ros2 run stem_grasp hotkey_stop_and_zero`
+(`x` sends zero twists and disables the servo bridge, `q` quits) stops
+servo-driven arm motion only; it is not an emergency stop.
 
 ### 10.10 Perception: nvblox, semantic scene, MoveIt semantic collision
 
@@ -907,10 +967,11 @@ ros2 topic echo /whole_body_mpc/status
 `safety` value of `watchdog` means an input is older than `max_state_age_s`
 (0.2 s).
 
-> **Safety.** Set `execute: true` only after the Phase 0 E-stop and
-> stop-and-zero validation, and only once `moveit_servo` accepts `JointJog`
-> commands. With `execute: true`, commands go straight to `/cmd_vel` and
-> `/servo_node/delta_joint_cmds`.
+> **Safety.** Set `execute: true` only after the Phase 0 stop validation and
+> after servo has been checked on the robot (10.4). With `execute: true` the
+> base commands go straight to `/cmd_vel`, and the arm's `JointJog` goes to
+> `/servo_node/delta_joint_cmds`, which moves the arm only while servo is
+> started and the bridge enabled.
 
 ## Research quick start without ROS (path D)
 
@@ -954,7 +1015,7 @@ Results at the time of writing (4-core x86_64, Python 3.13, numpy 1.26.4, scipy 
 
 | Package | Result | Time |
 |---|---|---|
-| `scout_piper_bringup` | 4 passed, 7 skipped without `launch_ros` (11 passed with ROS) | <1 s |
+| `scout_piper_bringup` | 9 passed, 9 skipped without `launch_ros` (18 passed with ROS) | <1 s |
 | `scout_piper_scene_repr` | 19 passed | ~20 s |
 | `plant_twin` | 21 passed, 1 failed (20 passed, 2 failed on a busy machine) | ~10–20 s |
 | `scout_piper_jepa` | 15 passed, 2 skipped without torch; 17 passed with torch | ~5 s (~15–50 s with torch) |

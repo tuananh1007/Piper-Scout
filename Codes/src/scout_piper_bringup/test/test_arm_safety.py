@@ -108,8 +108,10 @@ def test_joint_sliders_never_run_with_the_arm():
 
 
 def test_relay_runs_with_the_arm():
-    _, _, actions = _setup(bringup_arm="true")
-    assert len(_nodes(actions, "scout_piper_bringup")) == 1
+    _, ctx, actions = _setup(bringup_arm="true")
+    (relay_node,) = [n for n in _nodes(actions, "scout_piper_bringup")
+                     if n.node_executable == "piper_joint_state_relay.py"]
+    assert relay_node.condition.evaluate(ctx)
 
 
 @pytest.mark.parametrize("topic", ["/joint_states", "joint_states", " /joint_states_single",
@@ -120,3 +122,83 @@ def test_joint_state_topics_are_refused_as_command_topic(topic):
         launch.check_arm_command_topic(topic)
     with pytest.raises(RuntimeError):
         _setup(bringup_arm="true", arm_command_topic=topic)
+
+
+# ------------------------------------------------- servo bridge + fake driver
+bridge = _load(os.path.join(PKG, "scripts", "piper_servo_bridge.py"), "piper_servo_bridge")
+fake = _load(os.path.join(PKG, "scripts", "fake_piper_driver.py"), "fake_piper_driver")
+
+SERVO_NAMES = [f"piper_joint{i}" for i in range(1, 7)]
+MEASURED = {"joint1": 0.0, "joint2": 1.0, "joint3": -1.0, "joint4": 0.0, "joint5": 0.5, "joint6": 0.0}
+
+
+def test_bridge_sends_all_joints_the_measured_gripper_and_a_speed():
+    target = [0.01, 1.02, -1.01, 0.0, 0.49, -0.02]
+    names, pos, vel = bridge.driver_command(SERVO_NAMES, target, MEASURED, 0.03, speed_percent=30)
+    assert names == ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "gripper"]
+    assert pos[:6] == pytest.approx(target)
+    assert pos[6] == 0.03                       # gripper held where it is
+    assert vel == [0.0] * 6 + [30.0]            # driver reads velocity[6] as speed percent
+
+
+def test_bridge_clamps_steps_and_joint_limits():
+    far = [1.0, 1.0, -1.0, 0.0, 0.5, 0.0]       # joint1 jumps 1 rad
+    _, pos, _ = bridge.driver_command(SERVO_NAMES, far, MEASURED, 0.0, max_step_rad=0.1)
+    assert pos[0] == pytest.approx(0.1)
+    low = dict(MEASURED, joint2=0.02)
+    _, pos, _ = bridge.driver_command(SERVO_NAMES, [0.0, -0.5, -1.0, 0.0, 0.5, 0.0], low, 0.0)
+    assert pos[1] == pytest.approx(0.0)         # URDF lower limit of joint2, not -0.08
+    _, _, vel = bridge.driver_command(SERVO_NAMES, list(MEASURED.values()), MEASURED, 0.0,
+                                      speed_percent=500)
+    assert vel[6] == 100.0
+
+
+def test_bridge_rejects_partial_or_unknown_targets():
+    assert bridge.driver_command(SERVO_NAMES[:5], [0.0] * 5, MEASURED, 0.0) is None
+    assert bridge.driver_command(SERVO_NAMES + ["piper_joint7"], [0.0] * 7, MEASURED, 0.0) is None
+    partial = {k: v for k, v in MEASURED.items() if k != "joint6"}
+    assert bridge.driver_command(SERVO_NAMES, [0.0] * 6, partial, 0.0) is None
+    with pytest.raises(RuntimeError):
+        bridge.check_command_topic("/joint_states")
+    assert bridge.check_command_topic("piper/joint_cmd") == "/piper/joint_cmd"
+
+
+def test_bridge_output_never_triggers_the_driver_hazards():
+    """What the driver (as mimicked by the fake) does with the bridge's command."""
+    target = [0.05, 1.05, -0.95, 0.05, 0.55, 0.05]
+    cmd = bridge.driver_command(SERVO_NAMES, target, MEASURED, 0.025, speed_percent=30)
+    joints, gripper, speed = fake.interpret_command(*cmd)
+    assert joints == pytest.approx(target)      # no joint defaults to 0
+    assert gripper == 0.025                     # gripper not closed
+    assert speed == 30.0                        # not 100 %
+    hold = bridge.hold_command(MEASURED, 0.025)
+    assert fake.interpret_command(*hold)[0] == pytest.approx(list(MEASURED.values()))
+
+
+def test_fake_driver_reproduces_the_real_driver_hazards():
+    # what the sliders used to send: piper_joint* names, no velocities
+    joints, gripper, speed = fake.interpret_command(SERVO_NAMES, [0.3] * 6, [])
+    assert joints == [0.0] * 6 and gripper == 0.0 and speed == 100.0
+    assert fake.step_toward([0.0, 1.0], [1.0, 0.0], 0.1) == pytest.approx([0.1, 0.9])
+
+
+def test_servo_and_bridge_start_together_on_the_command_topic():
+    _, ctx, actions = _setup(bringup_servo="true", arm_command_topic="/piper/cmd_test")
+    (servo,) = _nodes(actions, "moveit_servo")
+    (bridge_node,) = [n for n in _nodes(actions, "scout_piper_bringup")
+                      if n.node_executable == "piper_servo_bridge.py"]
+    import yaml  # noqa: PLC0415
+    from launch.utilities import perform_substitutions  # noqa: PLC0415
+    params = {perform_substitutions(ctx, list(k)): v
+              for k, v in bridge_node._Node__parameters[0].items()}
+    assert yaml.safe_load(perform_substitutions(ctx, list(params["command_topic"]))) == "/piper/cmd_test"
+    assert servo.condition.evaluate(ctx) and bridge_node.condition.evaluate(ctx)
+    _, off_ctx, off = _setup()                  # default: servo off
+    assert not _nodes(off, "moveit_servo")[0].condition.evaluate(off_ctx)
+
+
+def test_fake_arm_replaces_the_real_driver():
+    _, _, actions = _setup(bringup_arm="true", fake_arm="true")
+    assert _nodes(actions, "piper") == []
+    execs = [n.node_executable for n in _nodes(actions, "scout_piper_bringup")]
+    assert "fake_piper_driver.py" in execs and "piper_joint_state_relay.py" in execs

@@ -20,7 +20,7 @@ from the ROS 1 source. Open items are marked `TODO(P0.4.x)` in `pipeline_node.py
 | Pipeline orchestrator | `pipeline_node` | Ported: state machine, outer loop (skeleton + candidate selection → `/stem_grasp/target_pose`), inner-loop servo (desired image point still the image centre). Plan→execute pending (P0.4.11); iterative approach not ported (P0.4.13) |
 | Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Ported (YOLO-seg, Grounded-SAM + target caption, HSV fallback) |
 | Point cloud filter | `pointcloud_node` | Ported (`/stem_grasp/filtered_cloud`, `/stem_grasp/leaf_filtered_cloud`) |
-| Hot-key e-stop | `hotkey_stop_and_zero` | Working (zero-twist publish; zero-arm service call still TODO) |
+| Hot-key stop | `hotkey_stop_and_zero` | Working: `x` publishes zero twists and disables `piper_servo_bridge` (the arm holds its measured pose); stops servo-driven motion only, not the base; zero-arm service not ported |
 
 ## Port plan
 

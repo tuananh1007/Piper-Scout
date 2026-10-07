@@ -1,0 +1,71 @@
+# moveit_servo (Humble) for the Piper arm of the unified Scout + Piper robot.
+# Started by full_system.launch.py with bringup_servo:=true. Servo does not move
+# anything until /servo_node/start_servo is called, and its output only reaches
+# the arm through piper_servo_bridge, which starts disabled (INSTALL.md 10.4).
+#
+#   in   /servo_node/delta_twist_cmds   geometry_msgs/TwistStamped  m/s, rad/s (stem_grasp)
+#   in   /servo_node/delta_joint_cmds   control_msgs/JointJog       rad/s (whole-body MPC)
+#   in   /joint_states                  piper_joint1..8 (piper_joint_state_relay)
+#   out  /piper/servo/joint_trajectory  trajectory_msgs/JointTrajectory -> piper_servo_bridge
+servo_node:
+  ros__parameters:
+    moveit_servo:
+      use_gazebo: false
+
+      # Incoming commands: stem_grasp and the whole-body MPC send physical units.
+      command_in_type: "speed_units"
+      scale:                      # only used with command_in_type "unitless"
+        linear: 0.1               # m/s
+        rotational: 0.3           # rad/s
+        joint: 0.3                # rad/s
+      override_velocity_scaling_factor: 0.0
+
+      # Outgoing commands
+      publish_period: 0.02        # 50 Hz
+      low_latency_mode: false
+      command_out_type: trajectory_msgs/JointTrajectory
+      publish_joint_positions: true
+      publish_joint_velocities: true
+      publish_joint_accelerations: false
+      smoothing_filter_plugin_name: "online_signal_smoothing::ButterworthFilterPlugin"
+
+      # No move_group runs in the bringup, so servo owns the planning scene. Set
+      # false when a move_group (e.g. with the Semantic collision plugin) runs.
+      is_primary_planning_scene_monitor: true
+      monitored_planning_scene_topic: /planning_scene
+
+      move_group_name: arm        # config/moveit/scout_piper.srdf
+      planning_frame: piper_base_link
+      ee_frame_name: piper_link6
+      robot_link_command_frame: piper_base_link   # frame of incoming twists
+
+      # Stopping: the MPC publishes at 10 Hz, so allow two of its cycles.
+      incoming_command_timeout: 0.25
+      num_outgoing_halt_msgs_to_publish: 4
+      halt_all_joints_in_joint_mode: true
+      halt_all_joints_in_cartesian_mode: true
+
+      # Singularities and joint limits. Servo compares the condition number of the
+      # 6x6 arm Jacobian (metres and radians mixed) with these. moveit_servo's
+      # Panda example uses 17 / 30, which would halt the smaller Piper almost
+      # everywhere: on the unified URDF the median over random joint states is 40
+      # (10th/90th percentile 15 / 360), a good working pose such as
+      # [0, 1.5, -1.0, 0, 0.6, 0] is 15, and the zero pose is singular (> 10^4).
+      # Not yet tuned on the robot.
+      lower_singularity_threshold: 45.0
+      hard_stop_singularity_threshold: 100.0
+      leaving_singularity_threshold_multiplier: 2.0
+      joint_limit_margin: 0.1     # rad
+
+      # Topics
+      cartesian_command_in_topic: ~/delta_twist_cmds
+      joint_command_in_topic: ~/delta_joint_cmds
+      joint_topic: /joint_states
+      status_topic: ~/status
+      command_out_topic: /piper/servo/joint_trajectory
+
+      # Collision checking of the whole robot, Scout chassis included
+      check_collisions: true
+      collision_check_rate: 10.0
+      self_collision_proximity_threshold: 0.01   # m
+      scene_collision_proximity_threshold: 0.02  # m

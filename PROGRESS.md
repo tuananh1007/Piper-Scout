@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-07 (P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -98,9 +98,10 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P0.5.1 | Add `moveit_servo` node to bringup launch | ☐ | After upstream piper_moveit is verified |
-| P0.5.2 | Servo YAML config tuned for Piper (vel/accel limits, scaling) | ☐ | |
-| P0.5.3 | Verify a manually-published TwistStamped actually moves the EE | ☐ | Phase 0 servo handoff validation |
+| P0.5.1 | Add `moveit_servo` node to bringup launch | ☑ | 2026-10-07 — `bringup_servo:=true`: `servo_node` + `piper_servo_bridge` (starts disabled; joint-limit, 0.1 rad step and 30 % speed clamps; holds the measured gripper) → `/piper/joint_cmd`; unified SRDF `config/moveit/scout_piper.srdf` (collision matrix computed like the Setup Assistant, cross-checked with upstream) |
+| P0.5.2 | Servo YAML config tuned for Piper (vel/accel limits, scaling) | ◐ | 2026-10-07 — `config/moveit/servo.yaml`: speed units, 50 Hz, 0.25 s timeout, singularity thresholds 45 / 100 from the Piper Jacobian over the URDF (Panda's 17 / 30 halt the Piper almost everywhere); speeds and thresholds still to tune on the robot |
+| P0.5.3 | Verify a manually-published TwistStamped actually moves the EE | ◐ | 2026-10-07 — verified on the fake arm (`fake_arm:=true` + `servo_chain_check.py`: +z twist raises the flange, joint jog, latches, hold; ~63 % of the commanded displacement in that loop); hardware pending |
+| P0.5.4 | Hot-key stop disables the servo bridge | ☑ | 2026-10-07 — `hotkey_stop_and_zero` `x`: zero twists + `/piper_servo_bridge/enable false`; verified on the fake arm; base not covered |
 
 ### P0.6 — Nav2 stand-up (basic, defer fancy mapping to later)
 
