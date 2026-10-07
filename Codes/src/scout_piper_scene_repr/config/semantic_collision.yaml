@@ -1,0 +1,21 @@
+# Parameters of the MoveIt semantic collision plugin (collision_detector: "Semantic").
+# The plugin runs inside move_group and reads these through its own node,
+# "semantic_collision"; pass this file to the move_group process, e.g.
+#   arguments=["--ros-args", "--params-file", <this file>]
+# Values below are the defaults.
+semantic_collision:
+  ros__parameters:
+    field_topic: /scene_repr/distance_field
+    # No field, a field older than max_field_age_s, or no TF from the robot
+    # model frame to the field frame => every robot check reports a collision.
+    require_field: true
+    # Unknown (never observed) or stale voxels inside the grid are obstacles.
+    unknown_is_occupied: true
+    # Leaf: penetration deeper than the policy's max_penetration_m is a collision.
+    check_soft: true
+    max_field_age_s: 5.0          # > scene_query_node field period + export time
+    max_voxel_age_s: 30.0         # planner horizon; the MPC uses 1 s in-process
+    sphere_padding_m: 0.0         # added to every robot sphere, on top of link padding
+    continuous_step: 0.02         # RobotState::distance between sub-checks of a motion segment
+    ignore_links: [""]            # links never checked against the field ("" = none)
+    model_frame: ""               # "" = robot model frame

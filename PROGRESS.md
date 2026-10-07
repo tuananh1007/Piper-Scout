@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (phase sections realigned to ROADMAP phases 0, 1A/1B, 2A, 2B, 3A, 3B, 4, 5; stale stem_grasp and Phase 1 status notes corrected)
+**Last updated:** 2026-10-07 (P1.7.7 MoveIt semantic collision plugin; phase sections realigned to ROADMAP phases 0, 1A/1B, 2A, 2B, 3A, 3B, 4, 5)
 
 ## Legend
 
@@ -161,7 +161,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ☐ | Launch file ready |
+| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ☐ | 2026-10-07 — launch moved to `nvblox_ros` (smoke-test setup + per-class overrides); not yet run |
 | P1.2.2 | Per-class inflation / padding configurable via YAML | ☑ | `semantic_classes.yaml` 2026-05-17 |
 | P1.2.3 | Visualize each SDF separately in RViz | ☐ | |
 
@@ -169,8 +169,8 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | Skeleton 2026-05-17; ESDF query body still TODO (tagged `TODO(P1.4)` in the plugin source; wiring to the CPU query is P1.7.7) |
-| P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ☐ | Policy schema in place |
+| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | 2026-10-07 — plugin reads the CPU field (P1.7.7); nvblox per-class ESDFs still to feed it |
+| P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ◐ | 2026-10-07 — hard classes with padding + leaf penetration cap in the plugin; graded leaf cost only in the Python query / MPC (MoveIt collision is boolean) |
 | P1.3.3 | Target SDF exposed as attractor for goal generation | ☐ | Policy schema in place |
 
 #### P1.4 — Benchmark
@@ -198,7 +198,8 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
 | P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
 | P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
-| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
+| P1.7.8 | Robot self-filter for depth (fingers in view become `other` obstacles) | ☐ | until then exempt the finger links (ACM / `ignore_links`) |
+| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☑ | 2026-10-07 — `Semantic` = FCL + `/scene_repr/distance_field` (sphere-covered links, unknown/stale = obstacle, no field ⇒ collision); gtest with a real MoveIt model + pluginlib load; not on hardware. Also fixed: plugin was exported as an allocator, which MoveIt cannot load |
 
 ### 1B — `plant_twin` integration
 

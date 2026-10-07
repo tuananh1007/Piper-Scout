@@ -1,92 +1,73 @@
 #pragma once
 
-// Semantic collision detector for MoveIt 2.
+// Semantic collision detector for MoveIt 2 (P1.3.1 / P1.7.7).
 //
-// Backed by N parallel nvblox ESDFs (one per semantic class) consumed via the
-// SDF-query API. Class behaviors (hard / soft / attractor) are loaded from
-// semantic_classes.yaml at construction time.
+// CollisionEnvSemantic is MoveIt's FCL environment (self-collision and
+// planning-scene objects unchanged) plus a check of the robot against the
+// semantic distance field published by scene_query_node:
 //
-// This header declares the public allocator + env classes; the implementation
-// lives in semantic_collision_plugin.cpp.
+//   * every link's collision shapes are covered by spheres once per robot
+//     model (bounding cylinder -> overlapping spheres, see
+//     semantic_distance_field.hpp);
+//   * each sphere (radius + link padding + sphere_padding_m) is checked with
+//     SemanticDistanceField::checkSphere: hard classes with their padding, the
+//     leaf penetration cap, and unknown / stale voxels as obstacles;
+//   * outside the field's grid the field says nothing and only FCL applies;
+//   * with require_field (default) a missing, old or untransformable field
+//     makes every robot check report a collision, so planning stops instead
+//     of ignoring the plant.
+//
+// Select it in move_group with `collision_detector: "Semantic"` (pluginlib class
+// SemanticCollisionPluginLoader, see plugin_description.xml).
+//
+// Robot-vs-field pairs use the body name "semantic". Allow ("<link>",
+// "semantic") in the AllowedCollisionMatrix, or list the link in ignore_links,
+// to exempt a link (for example the fingers during the final grasp).
 
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
-#include <moveit/collision_detection/collision_env.h>
 #include <moveit/collision_detection/collision_detector_allocator.h>
+#include <moveit/collision_detection/collision_plugin.h>
+#include <moveit/collision_detection_fcl/collision_env_fcl.h>
+
+#include "scout_piper_scene_repr/semantic_distance_field.hpp"
 
 namespace scout_piper_scene_repr
 {
 
-enum class ClassBehavior
+/// Body name used for the field in contacts, distance results and the ACM.
+inline const std::string kSemanticBody = "semantic";
+
+/// Spheres covering one collision shape, in that shape's frame.
+struct LinkShapeSpheres
 {
-  Hard,
-  Soft,
-  Attractor,
+  const moveit::core::LinkModel * link{nullptr};
+  std::size_t shape_index{0};
+  std::vector<Sphere> spheres;
 };
 
-struct ClassPolicy
-{
-  ClassBehavior behavior{ClassBehavior::Hard};
-  double padding_m{0.0};
+/// Sphere cover of every link with collision geometry (no padding applied).
+std::vector<LinkShapeSpheres> computeRobotSpheres(const moveit::core::RobotModelConstPtr & model);
 
-  // Used when behavior == Soft
-  double cost_weight{0.0};
-  double max_penetration_m{0.02};
-
-  // Used when behavior == Attractor
-  double attract_radius_m{0.10};
-  double attract_weight{-20.0};
-};
-
-using ClassPolicyMap = std::unordered_map<std::string, ClassPolicy>;
-
-/**
- * @brief MoveIt 2 collision environment that consults per-class nvblox ESDFs.
- *
- * Phase 1 skeleton — most methods delegate to a sibling FCL env for self-collision
- * while their robot-world implementations are still TODO. Filling these in is
- * tracked under P1.4 in PROGRESS.md.
- */
-class CollisionEnvSemantic : public collision_detection::CollisionEnv
+class CollisionEnvSemantic : public collision_detection::CollisionEnvFCL
 {
 public:
-  // The MoveIt allocator template needs single-arg and two-arg constructors
-  // that take only the robot model (and optionally the world). Policies are
-  // loaded post-construction via setPolicies() so they don't need to be
-  // baked into the constructor signature.
   explicit CollisionEnvSemantic(
-    const moveit::core::RobotModelConstPtr & robot_model);
+    const moveit::core::RobotModelConstPtr & robot_model, double padding = 0.0,
+    double scale = 1.0);
 
   CollisionEnvSemantic(
     const moveit::core::RobotModelConstPtr & robot_model,
-    const collision_detection::WorldPtr & world);
+    const collision_detection::WorldPtr & world, double padding = 0.0, double scale = 1.0);
 
-  /// Copy-with-new-world constructor — needed by the MoveIt allocator template
-  /// when swapping the underlying World on an existing CollisionEnv.
   CollisionEnvSemantic(
-    const CollisionEnvSemantic & other,
-    const collision_detection::WorldPtr & world);
+    const CollisionEnvSemantic & other, const collision_detection::WorldPtr & world);
 
   ~CollisionEnvSemantic() override = default;
 
-  /// Load per-class policies (typically from semantic_classes.yaml).
-  /// Called by the wrapper service that bridges /scene_repr/policy ->
-  /// the active CollisionEnv instance(s).
-  void setPolicies(const ClassPolicyMap & policies);
-
-  void checkSelfCollision(
-    const collision_detection::CollisionRequest & req,
-    collision_detection::CollisionResult & res,
-    const moveit::core::RobotState & state) const override;
-
-  void checkSelfCollision(
-    const collision_detection::CollisionRequest & req,
-    collision_detection::CollisionResult & res,
-    const moveit::core::RobotState & state,
-    const collision_detection::AllowedCollisionMatrix & acm) const override;
+  using collision_detection::CollisionEnvFCL::distanceRobot;
 
   void checkRobotCollision(
     const collision_detection::CollisionRequest & req,
@@ -99,11 +80,8 @@ public:
     const moveit::core::RobotState & state,
     const collision_detection::AllowedCollisionMatrix & acm) const override;
 
-  // Continuous-collision overloads — required pure virtuals on MoveIt Humble.
-  // P1.4 will fill these in with swept-volume queries against the per-class
-  // ESDFs; for now they conservatively delegate to the single-state version
-  // at state2 (the planner's "next" state) so trajectories see at least the
-  // same collisions as a per-waypoint check would.
+  /// FCL has no continuous check on Humble; both are sampled along the segment
+  /// every ``continuous_step`` of RobotState::distance.
   void checkRobotCollision(
     const collision_detection::CollisionRequest & req,
     collision_detection::CollisionResult & res,
@@ -117,37 +95,53 @@ public:
     const moveit::core::RobotState & state2,
     const collision_detection::AllowedCollisionMatrix & acm) const override;
 
-  void distanceSelf(
-    const collision_detection::DistanceRequest & req,
-    collision_detection::DistanceResult & res,
-    const moveit::core::RobotState & state) const override;
-
   void distanceRobot(
     const collision_detection::DistanceRequest & req,
     collision_detection::DistanceResult & res,
     const moveit::core::RobotState & state) const override;
 
-  void setWorld(const collision_detection::WorldPtr & world) override;
-
 private:
-  ClassPolicyMap policies_;
+  std::shared_ptr<const std::vector<LinkShapeSpheres>> spheres_;
 
-  // TODO(P1.4): hold per-class ESDF clients here. For Phase 1 v0 these will be
-  // rclcpp subscriptions to /scene_repr/esdf/<class>; for v1 they become
-  // synchronous service queries against the forked nvblox.
-  // std::vector<EsdfClient> esdf_clients_;
+  void checkDiscrete(
+    const collision_detection::CollisionRequest & req,
+    collision_detection::CollisionResult & res,
+    const moveit::core::RobotState & state,
+    const collision_detection::AllowedCollisionMatrix * acm) const;
+
+  void checkContinuous(
+    const collision_detection::CollisionRequest & req,
+    collision_detection::CollisionResult & res,
+    const moveit::core::RobotState & state1,
+    const moveit::core::RobotState & state2,
+    const collision_detection::AllowedCollisionMatrix * acm) const;
+
+  void checkField(
+    const collision_detection::CollisionRequest & req,
+    collision_detection::CollisionResult & res,
+    const moveit::core::RobotState & state,
+    const collision_detection::AllowedCollisionMatrix * acm) const;
+
+  bool exempt(
+    const std::string & link,
+    const collision_detection::AllowedCollisionMatrix * acm) const;
 };
 
-/**
- * @brief Allocator exported via pluginlib for the MoveIt collision_detector.
- */
+/// Allocator for CollisionEnvSemantic (name "Semantic").
 class SemanticCollisionDetectorAllocator
   : public collision_detection::CollisionDetectorAllocatorTemplate<
-      CollisionEnvSemantic,
-      SemanticCollisionDetectorAllocator>
+    CollisionEnvSemantic, SemanticCollisionDetectorAllocator>
 {
 public:
   static const std::string NAME;
+};
+
+/// The pluginlib class MoveIt's CollisionPluginLoader instantiates for
+/// `collision_detector: "Semantic"`; it installs the allocator on the scene.
+class SemanticCollisionPluginLoader : public collision_detection::CollisionPlugin
+{
+public:
+  bool initialize(const planning_scene::PlanningScenePtr & scene) const override;
 };
 
 }  // namespace scout_piper_scene_repr

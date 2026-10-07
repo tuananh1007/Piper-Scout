@@ -65,6 +65,10 @@ class SemanticDistanceQuery:
         self._cache_version = -1
 
     # ------------------------------------------------------------ fields
+    def class_field(self, name: str) -> np.ndarray:
+        """Signed distance grid of one class on voxel centres (cached; +inf if empty)."""
+        return self._field(name)
+
     def _field(self, name: str, exclude: Optional[tuple] = None) -> np.ndarray:
         if self._cache_version != self.map.version:
             self._cache.clear()

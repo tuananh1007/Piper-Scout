@@ -11,7 +11,7 @@ The companion design doc is [`PHASE1_DESIGN.md`](PHASE1_DESIGN.md).
 | `class_demux_node` (Python) | Our dev container | ☑ Built, fully testable today |
 | Synthetic mask publisher (test) | Our dev container | ☑ For plumbing tests without nvblox |
 | `nvblox_node` (Isaac ROS) | Our dev container, **built from source** | ☑ Built and validated with RealSense D405 |
-| `semantic_collision_plugin` (C++) | MoveIt 2's move_group | ◐ Scaffold builds; reports no collision / infinite distance until wired to the semantic query or nvblox ESDF (P1.3.1 / P1.7.7) |
+| `semantic_collision_plugin` (C++) | MoveIt 2's move_group | ◐ Built and tested against a real MoveIt robot model (FCL + CPU semantic field, P1.7.7); not yet run in move_group on the robot |
 
 ## Why source build, not apt
 
@@ -139,15 +139,46 @@ reset the D405 can take several seconds to re-enumerate.
 ## Step 3 — Wire class_demux -> 4x nvblox
 
 Phase 1 v0 design (see `PHASE1_DESIGN.md` §5): instantiate four nvblox
-nodes, each consuming the mask-gated depth from one class. Drafted in
-[`launch/nvblox_semantic.launch.py`](../launch/nvblox_semantic.launch.py) but not yet run (P1.2.1). It still
-launches `isaac_ros_nvblox`/`nvblox_node` with the older `depth/image`-style remaps, whereas the validated
-Step 2e path uses `nvblox_ros`/`nvblox_node` with `camera_0/*` remaps:
+nodes, each consuming the mask-gated depth from one class.
+[`launch/nvblox_semantic.launch.py`](../launch/nvblox_semantic.launch.py) sets each one up like the
+validated Step 2e node (`nvblox_ros`/`nvblox_node`, `nvblox_base.yaml` + `realsense_nvblox.yaml`,
+`camera_0/*` remaps) with the per-class overrides from `config/nvblox_per_class.yaml`, depth only, in
+`global_frame:=odom` (default). Not yet run (P1.2.1):
 
 ```bash
 ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=merged
 # or, while segmentation_node still publishes /stem_grasp/mask + /stem_grasp/target_mask:
 ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
+```
+
+## Step 4 — Semantic collision plugin in move_group (P1.7.7)
+
+The CPU map publishes the distance field; MoveIt reads it through the
+`Semantic` collision plugin.
+
+```bash
+# 1. CPU semantic map + distance field (needs class_demux_node masks, aligned depth, TF)
+ros2 run scout_piper_scene_repr scene_query_node.py --ros-args \
+  -p world_frame:=odom -p grid_center:="[0.6, 0.0, 0.6]" -p grid_half_extent_m:=0.4
+ros2 topic hz /scene_repr/distance_field          # ≈ field_rate_hz (1 Hz)
+
+# 2. move_group with the plugin: in the MoveIt config set
+#      collision_detector: "Semantic"
+#    and pass the plugin's parameters to the same process:
+#      --ros-args --params-file $(ros2 pkg prefix scout_piper_scene_repr)/share/scout_piper_scene_repr/config/semantic_collision.yaml
+```
+
+Check in the move_group log for `Listening for the semantic distance field`
+and, while nothing publishes the field, `Semantic collision: no field
+received ...; reporting collision` (with `require_field: true` every plan is
+refused until the field arrives). The robot model frame must be connected to
+the field frame (`odom`) in TF.
+
+Build and test the package (C++ plugin, message, Python field export):
+
+```bash
+colcon build --packages-select scout_piper_scene_repr
+colcon test --packages-select scout_piper_scene_repr && colcon test-result --verbose
 ```
 
 ## Likely build issues + workarounds

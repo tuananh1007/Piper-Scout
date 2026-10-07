@@ -84,16 +84,18 @@ Replace the Octomap-based collision world with a **per-class signed distance fie
                                     ▼
                  ┌────────────────────────────────────────────────────┐
                  │ scout_piper_scene_repr/semantic_collision_plugin   │
-                 │   exports a CollisionDetectorAllocator ("Semantic")│
+                 │   CollisionPlugin "Semantic" = FCL + semantic field│
+                 │   (v0: CPU field from scene_query_node,            │
+                 │    /scene_repr/distance_field)                     │
                  │   Per-class behavior from semantic_classes.yaml:   │
                  │     stem     -> hard collision, padding 5 mm       │
                  │     branch   -> hard collision, padding 8 mm       │
-                 │     leaf     -> SOFT cost (penalty/weight pair),   │
-                 │                 padding 0 mm                       │
-                 │     target   -> attractor (negative cost) within   │
-                 │                 attract_radius_m                   │
+                 │     other    -> hard collision, padding 10 mm      │
+                 │     leaf     -> collision past 2 cm penetration    │
+                 │                 (graded cost: Python query / MPC)  │
+                 │     target   -> attractor; not a collision         │
                  │   Plugged into move_group via                      │
-                 │   collision_detector parameter override.           │
+                 │   collision_detector: "Semantic".                  │
                  └──────────────────┬─────────────────────────────────┘
                                     │
                                     ▼
@@ -204,29 +206,54 @@ invisible to MoveIt.
 | `/scene_repr/depth/<class>` | `sensor_msgs/Image` 16UC1 | `class_demux_node` | nvblox-class node | mask-gated |
 | `/scene_repr/esdf/<class>` | custom (TBD; likely `OccupancyGrid` slice or custom 3D msg) | nvblox | `semantic_collision_plugin` | per-class |
 | `/scene_repr/markers/<class>` | `visualization_msgs/MarkerArray` | nvblox | RViz | debug only |
-| `/scene_repr/policy` | `std_msgs/String` (YAML inline) | `class_demux_node` (from `policy_yaml_path`) | `semantic_collision_plugin` | published once at startup (RELIABLE, depth 1; not transient-local yet) |
+| `/scene_repr/policy` | `std_msgs/String` (YAML inline) | `class_demux_node` (from `policy_yaml_path`) | tools / late subscribers | latched (RELIABLE, TRANSIENT_LOCAL, depth 1) |
+| `/scene_repr/distance_field` | `scout_piper_scene_repr/SemanticDistanceField` | `scene_query_node` (CPU map, v0) | `semantic_collision_plugin` | latched; ≤ `field_rate_hz`; ≈ 11 B per voxel |
 
 ## 7. MoveIt 2 collision plugin design
 
 The plugin lives in [`src/semantic_collision_plugin.cpp`](../src/semantic_collision_plugin.cpp).
 
-**Pluginlib export class:** `scout_piper_scene_repr::SemanticCollisionDetectorAllocator` (base `collision_detection::CollisionDetectorAllocator`, name `"Semantic"`), which allocates `scout_piper_scene_repr::CollisionEnvSemantic`.
+**Classes:** `CollisionEnvSemantic` (environment), `SemanticCollisionDetectorAllocator` (allocator, name `"Semantic"`) and `SemanticCollisionPluginLoader` (the pluginlib class, see *Plugin registration*).
 
-**Required overrides** (subset of `collision_detection::CollisionEnv`):
-- `checkSelfCollision(...)` — delegate to parent FCL impl.
-- `checkRobotCollision(req, res, state)` — main entry point:
-  1. For each link, query the four ESDFs at the link's collision shape vertices.
-  2. Per class, apply behavior:
-     - `hard` → if distance < padding, mark collision.
-     - `soft` → accumulate `cost_weight × max(0, penetration)`.
-     - `attractor` → accumulate `attract_weight × max(0, attract_radius - distance)`.
-  3. Populate `res.collision`, `res.distance`, and (for the attractor) a custom
-     `res.contacts` cost annotation.
-- `distanceRobot(req, res, state)` — return the **minimum** distance to any hard class.
+**Implementation (v0, 2026-10-07).** `CollisionEnvSemantic` derives from
+MoveIt's `CollisionEnvFCL`, so self-collision and planning-scene objects keep
+FCL's behaviour; the semantic part is added on top:
 
-**Allocator registration:** `PLUGINLIB_EXPORT_CLASS` in
+- **Robot geometry:** each link collision shape is covered once by spheres
+  (bounding cylinder on the longest axis, ⌈length / radius⌉ overlapping
+  spheres); link padding and `sphere_padding_m` are added.
+- **`checkRobotCollision(req, res, state[, acm])`:** FCL first, then each
+  sphere against the field (`SemanticDistanceField::checkSphere`, the C++ twin
+  of `scout_piper_scene_repr_py.field.FieldSampler`):
+  - hard classes merged into one field, min over classes of (distance − padding):
+    collision when that is below the sphere radius;
+  - leaf: collision when the sphere overlaps it by more than `max_penetration_m`
+    (the graded leaf cost stays with the Python query and the MPC, since MoveIt's
+    collision check is boolean);
+  - unknown or stale centre voxel: collision (`unknown_is_occupied`);
+  - centre outside the grid: no semantic information, FCL only.
+  Contacts name the field body `semantic/<class>`; an ACM entry
+  (`<link>`, `semantic`) or `ignore_links` exempts a link.
+- **Continuous checks** (FCL has none on Humble): sampled every
+  `continuous_step` of `RobotState::distance`.
+- **`distanceRobot`:** FCL's minimum, lowered by the closest sphere clearance
+  to the field, with nearest points and normal from the field gradient.
+- **No usable field** (none, too old, no TF) with `require_field`: every robot
+  check reports a collision.
+
+The field arrives through one process-wide listener node
+(`semantic_collision`) inside move_group, because MoveIt's allocator gives
+each environment only the robot model. v1 (nvblox per-class ESDFs) must
+publish the same message or replace the listener's source; the plugin side
+does not change.
+
+**Plugin registration:** MoveIt's `CollisionPluginLoader` instantiates a
+`collision_detection::CollisionPlugin` by name, so the pluginlib class is
+`scout_piper_scene_repr::SemanticCollisionPluginLoader` (name `Semantic`),
+whose `initialize()` installs `SemanticCollisionDetectorAllocator` on the
+planning scene. It is exported with `PLUGINLIB_EXPORT_CLASS` in
 [`src/semantic_collision_plugin.cpp`](../src/semantic_collision_plugin.cpp), declared in
-[`plugin_description.xml`](../plugin_description.xml) and exported via
+[`plugin_description.xml`](../plugin_description.xml) and registered via
 `pluginlib_export_plugin_description_file(moveit_core ...)` in `CMakeLists.txt`.
 
 **Activation:** in the MoveIt config's `move_group.launch.py`, override:
@@ -234,6 +261,8 @@ The plugin lives in [`src/semantic_collision_plugin.cpp`](../src/semantic_collis
 move_group:
   collision_detector: "Semantic"
 ```
+and pass [`../config/semantic_collision.yaml`](../config/semantic_collision.yaml) to the
+move_group process for the plugin's own parameters.
 
 ## 8. Benchmark plan (Phase 1 exit gate)
 
@@ -261,7 +290,7 @@ Exit gate: **≥ 30 % reduction in "no plan found" failures** vs Octomap baselin
 
 ## 10. Phase 1 task breakdown
 
-Kickoff breakdown (2026-05-17). [`../../../../PROGRESS.md`](../../../../PROGRESS.md) now tracks this work as P1.0 scaffolding, P1.1 nvblox integration, P1.2 per-class SDFs, P1.3 MoveIt 2 collision plugin, P1.4 benchmark, P1.5 v1 fork (plus P1.6 `plant_twin` and P1.7 planner distance query). The `TODO(P1.4)` comments in the plugin source use the kickoff numbering below:
+Kickoff breakdown (2026-05-17). [`../../../../PROGRESS.md`](../../../../PROGRESS.md) now tracks this work as P1.0 scaffolding, P1.1 nvblox integration, P1.2 per-class SDFs, P1.3 MoveIt 2 collision plugin, P1.4 benchmark, P1.5 v1 fork (plus P1.6 `plant_twin` and P1.7 planner distance query). The kickoff numbering was:
 
 - **P1.1** Stand up nvblox on the workstation (Docker / native).
 - **P1.2** Implement `class_demux_node` (Python — fast iteration).

@@ -9,6 +9,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
@@ -23,6 +24,8 @@
   <depend>moveit_core</depend>
   <depend>moveit_ros_planning</depend>
   <depend>nav_msgs</depend>
+  <depend>geometric_shapes</depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
 
   <!-- Python: policy loading, CPU voxel map and distance query -->
   <exec_depend>python3-numpy</exec_depend>
@@ -36,7 +39,13 @@
   <exec_depend>realsense2_camera</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>urdf</test_depend>
+  <test_depend>srdfdom</test_depend>
   <test_depend>ament_lint_common</test_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <export>
     <build_type>ament_cmake</build_type>

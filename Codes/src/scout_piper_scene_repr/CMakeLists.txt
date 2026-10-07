@@ -20,12 +20,25 @@ find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(geometric_shapes REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+# ---------------------------------------------------------------------------
+# Messages: semantic distance field snapshot (scene_query_node -> plugin)
+# ---------------------------------------------------------------------------
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/SemanticDistanceField.msg"
+  DEPENDENCIES std_msgs geometry_msgs
+)
 
 # ---------------------------------------------------------------------------
 # Semantic collision plugin (MoveIt 2 pluginlib)
 # ---------------------------------------------------------------------------
 add_library(semantic_collision_plugin SHARED
   src/semantic_collision_plugin.cpp
+  src/semantic_field_listener.cpp
 )
 target_include_directories(semantic_collision_plugin
   PUBLIC
@@ -38,7 +51,12 @@ ament_target_dependencies(semantic_collision_plugin
   moveit_core
   moveit_ros_planning
   geometry_msgs
+  std_msgs
+  tf2_ros
+  geometric_shapes
 )
+rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
+target_link_libraries(semantic_collision_plugin "${cpp_typesupport_target}")
 
 install(TARGETS semantic_collision_plugin
   EXPORT export_${PROJECT_NAME}
@@ -80,11 +98,22 @@ install(FILES plugin_description.xml
 
 ament_export_include_directories(include)
 ament_export_libraries(semantic_collision_plugin)
-ament_export_dependencies(rclcpp pluginlib moveit_core moveit_ros_planning)
+ament_export_dependencies(rclcpp pluginlib moveit_core moveit_ros_planning tf2_ros geometric_shapes
+  rosidl_default_runtime)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
+  # numpy core, field snapshot and the C++ sampler (compiled by the test itself)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(scene_repr_python test TIMEOUT 300)
+  # plugin against a real MoveIt robot model and a published synthetic field
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(urdf REQUIRED)
+  find_package(srdfdom REQUIRED)
+  ament_add_gtest(test_semantic_collision_plugin test/test_semantic_collision_plugin.cpp TIMEOUT 120)
+  target_link_libraries(test_semantic_collision_plugin semantic_collision_plugin)
+  ament_target_dependencies(test_semantic_collision_plugin rclcpp moveit_core urdf srdfdom)
 endif()
 
 ament_package()

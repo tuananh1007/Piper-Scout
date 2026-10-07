@@ -7,21 +7,31 @@ Controllers that need distances at high rate embed the same integrator in
 their own process (research plan §11).
 
 Outputs
-  /scene_repr/voxels      visualization_msgs/MarkerArray (one CUBE_LIST per class)
-  /scene_repr/map_status  std_msgs/String JSON: stamp, version, occupied voxel
-                          counts, integrate_ms
+  /scene_repr/voxels          visualization_msgs/MarkerArray (one CUBE_LIST per class)
+  /scene_repr/map_status      std_msgs/String JSON: stamp, version, occupied voxel
+                              counts, integrate_ms, export_ms
+  /scene_repr/distance_field  scout_piper_scene_repr/SemanticDistanceField, at most
+                              field_rate_hz, reliable + transient local; consumed by
+                              the MoveIt semantic collision plugin
 """
 
 from __future__ import annotations
 
 import json
+import os
+import time
 
 import rclpy
 from geometry_msgs.msg import Point
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import ColorRGBA, String
 from visualization_msgs.msg import Marker, MarkerArray
 
+from scout_piper_scene_repr.msg import SemanticDistanceField
+from scout_piper_scene_repr_py.distance_query import SemanticDistanceQuery
+from scout_piper_scene_repr_py.field import export_field, fill_msg
+from scout_piper_scene_repr_py.policy import DEFAULT_POLICIES, load_policies
 from scout_piper_scene_repr_py.ros_integrator import RosSceneIntegrator
 
 COLORS = {"stem": (0.55, 0.35, 0.15), "branch": (0.4, 0.25, 0.1),
@@ -42,6 +52,10 @@ class SceneQueryNode(Node):
             ("stride", 4),
             ("rate_hz", 5.0),
             ("max_range_m", 1.0),
+            ("policy_yaml_path", ""),          # "" = share/scout_piper_scene_repr/config/semantic_classes.yaml
+            ("min_hits", 2),
+            ("field_topic", "/scene_repr/distance_field"),
+            ("field_rate_hz", 1.0),            # 0 disables the field (≈11 B per voxel per message)
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.scene = RosSceneIntegrator(
@@ -50,13 +64,47 @@ class SceneQueryNode(Node):
             grid_center=list(p("grid_center")), half_extent_m=float(p("grid_half_extent_m")),
             voxel_size_m=float(p("voxel_size_m")), stride=int(p("stride")),
             max_range_m=float(p("max_range_m")))
+        self.query = SemanticDistanceQuery(self.scene.map, self._policies(p("policy_yaml_path")),
+                                           min_hits=int(p("min_hits")))
         self.pub_vox = self.create_publisher(MarkerArray, "/scene_repr/voxels", 1)
         self.pub_status = self.create_publisher(String, "/scene_repr/map_status", 1)
+        latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_field = self.create_publisher(SemanticDistanceField, p("field_topic"), latched)
+        self.last_export_ms = 0.0
+        self._field_version = -1
         self.create_timer(1.0 / float(p("rate_hz")), self._tick)
+        if float(p("field_rate_hz")) > 0:
+            self.create_timer(1.0 / float(p("field_rate_hz")), self._publish_field)
+
+    def _policies(self, path: str):
+        if not path:
+            try:
+                from ament_index_python.packages import get_package_share_directory  # noqa: PLC0415
+                path = os.path.join(get_package_share_directory("scout_piper_scene_repr"),
+                                    "config", "semantic_classes.yaml")
+            except Exception:  # noqa: BLE001 — not installed: fall back to the built-in policy
+                path = ""
+        if path and os.path.exists(path):
+            return load_policies(path)
+        self.get_logger().warn("semantic_classes.yaml not found; using the built-in class policy")
+        return DEFAULT_POLICIES
 
     def _tick(self) -> None:
         if self.scene.integrate_latest():
             self._publish()
+
+    def _publish_field(self) -> None:
+        vmap = self.scene.map
+        if vmap.version == self._field_version:
+            return                                     # nothing new since the last snapshot
+        t0 = time.perf_counter()
+        snap = export_field(self.query)
+        if snap is None:
+            return
+        self.pub_field.publish(fill_msg(SemanticDistanceField(), snap, self.scene.world))
+        self.last_export_ms = 1e3 * (time.perf_counter() - t0)
+        self._field_version = vmap.version
 
     def _publish(self) -> None:
         vmap = self.scene.map
@@ -79,7 +127,8 @@ class SceneQueryNode(Node):
         self.pub_status.publish(String(data=json.dumps({
             "stamp": vmap.stamp, "version": vmap.version, "frame": self.scene.world,
             "voxel_size_m": vs, "occupied": counts,
-            "integrate_ms": round(self.scene.last_integrate_ms, 1)})))
+            "integrate_ms": round(self.scene.last_integrate_ms, 1),
+            "export_ms": round(self.last_export_ms, 1)})))
 
 
 def main(args=None) -> None:

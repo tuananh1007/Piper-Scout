@@ -118,7 +118,7 @@ The headline research claim is therefore not “V-JEPA applied to agriculture,�
 | Whole-body control | `scout_piper_whole_body_mpc`: geometry-only MPPI (unicycle base + Piper FK from the URDF), safety filter, dry-run ROS node; ≈60 ms/step on 4-core x86 dev CPU (synthetic, no semantic geometry) | Not run on hardware; WE1 slip and TCP calibration (P3A.7); stalls 3–4 cm short when an obstacle blocks the straight path (P3A.6); Orin timing and GPU port; not in bringup |
 | Prediction | None | Planner cannot forecast whether motion preserves target visibility |
 | Deformation | `plant_twin`: one leaf + its stem, analytic-Jacobian LM fit ≈28 ms/frame on x86 dev CPU, RViz output | Untested on hardware; no fit-confidence/timestamp topic; current-state fitter only (no forward model); not coupled to planning/control |
-| Collision queries | `scout_piper_scene_repr` MoveIt plugin scaffold; CPU `SemanticDistanceQuery` usable in-process (used by the whole-body MPC) | Plugin still reports *no collision, infinite distance* — must not be relied on until it uses the query (P1.3.1 / P1.7.7) |
+| Collision queries | `scout_piper_scene_repr` MoveIt plugin `Semantic` = FCL + the CPU semantic distance field (P1.7.7); CPU `SemanticDistanceQuery` usable in-process (used by the whole-body MPC) | Plugin tested only in software (real MoveIt model, synthetic field); validate on recorded scenes and the robot (P1.7.6) before relying on it; no robot self-filter yet (P1.7.8); nvblox-backed field open |
 | Force sensing | Code expects `/ft_sensor/raw` | No wrist F/T sensor in the hardware list — add one or calibrate a Piper joint-effort estimate before any force gate is trusted |
 | Depth alignment | Bringup enables `align_depth`; all depth consumers (`stem_grasp`, `plant_twin`, `scout_piper_scene_repr`, `scout_piper_jepa`, bringup `system.yaml`) default to `/camera/aligned_depth_to_color/image_raw` (2026-10-06) | Hardware check of the aligned stream (P0.3.8) |
 | Language interface | Planned | No persistent linkage between grounded language target and execution target |
@@ -893,7 +893,7 @@ All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
 | No wrist F/T sensor on the platform | High | decide on an added sensor or a calibrated joint-effort estimate before Phase 2B; no force claims until then |
 | Camera minimum range blinds depth near grasp | Medium-high (D435) / low (D405) | confirm camera model; image-space servo + last valid depth for the final approach |
 | Skid-steer slip breaks the unicycle model | Medium | identify effective track width/slip (WE1); conservative base velocity near plants |
-| Semantic plugin stub mistaken for a safety layer | Medium | plugin reports no collision until P1.3.1 / P1.7.7; do not wire into execution before the query tests pass |
+| Semantic plugin trusted before validation | Medium | plugin implemented (P1.7.7) but only tested in software; keep it out of execution until the P1.7.6 scene runs pass; it refuses to plan when the field is missing or stale |
 
 ---
 

@@ -1455,7 +1455,7 @@ These criteria protect the project from confirmation bias.
 - nvblox integration (RealSense → nvblox validated);
 - class demux + semantic class policy YAML;
 - CPU `SemanticVoxelMap` + `SemanticDistanceQuery` planner distance query (`python/scout_piper_scene_repr_py/`, v0 backend, 2026-10-06);
-- MoveIt collision-query plugin (**scaffold; reports no collision until P1.3.1 / P1.7.7**).
+- MoveIt semantic collision plugin (FCL + the CPU distance field, P1.7.7; software-tested only).
 
 `plant_twin`
 - explicit leaf/stem deformation fitting (one leaf + stem, analytic-Jacobian LM).

@@ -1,12 +1,13 @@
 <library path="semantic_collision_plugin">
   <class
-    name="scout_piper_scene_repr/SemanticCollisionDetectorAllocator"
-    type="scout_piper_scene_repr::SemanticCollisionDetectorAllocator"
-    base_class_type="collision_detection::CollisionDetectorAllocator">
+    name="Semantic"
+    type="scout_piper_scene_repr::SemanticCollisionPluginLoader"
+    base_class_type="collision_detection::CollisionPlugin">
     <description>
-      Per-class semantic collision detector backed by nvblox ESDFs.
-      Class behaviors (hard / soft / attractor) are loaded from
-      semantic_classes.yaml at construction time.
+      MoveIt FCL collision checking plus the semantic distance field published by
+      scene_query_node (/scene_repr/distance_field): hard plant classes with padding,
+      the leaf penetration cap, and unknown or stale space as obstacles.
+      Select with collision_detector: "Semantic".
     </description>
   </class>
 </library>

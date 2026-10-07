@@ -31,7 +31,7 @@ import rclpy
 import yaml
 from cv_bridge import CvBridge
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
@@ -82,7 +82,8 @@ class ClassDemuxNode(Node):
         self.pub_policy = self.create_publisher(
             String,
             "/scene_repr/policy",
-            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE),
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._publish_policy()
 
