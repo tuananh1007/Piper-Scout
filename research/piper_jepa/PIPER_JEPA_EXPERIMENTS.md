@@ -67,7 +67,7 @@ Each episode should record enough information to replay perception and analyze c
 
 Record:
 - RGB image;
-- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`; several nodes still default to the unaligned `/camera/depth/image_rect_raw` and must be switched);
+- depth aligned to colour (`/camera/aligned_depth_to_color/image_raw`);
 - CameraInfo;
 - TF tree;
 - Piper joint states;
@@ -999,7 +999,7 @@ Safety stop is counted as a method outcome unless caused by unrelated hardware m
 1. Define the episode metadata schema in the repository.
 2. Add a rosbag2 recorder launch file.
 3. Add stable physical target IDs to the perception pipeline.
-4. Write the E1 annotation/evaluation script before collecting the full E1 dataset.
+4. Write the E1 annotation/evaluation script before collecting the full E1 dataset (evaluation done 2026-10-06: `jepa_episode eval` + `metrics.py`; annotation still open, P2A.5).
 5. Record the first 20-30 pilot clips.
 6. Validate synchronization and target-ID scoring.
 7. Benchmark T0/T1/T4 offline.

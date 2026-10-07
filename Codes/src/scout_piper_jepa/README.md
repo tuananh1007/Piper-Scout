@@ -13,6 +13,7 @@ state. Research plan: [`research/piper_jepa/`](../../../research/piper_jepa/).
 | `metrics.py` | E1 metrics: ID retention, false-switch rate, centre error, jitter, occlusion recovery |
 | `action.py` | Stage B action embedding Γ(x,u) = [Δs_b, Δθ_b, Δp_ee, Δr_ee, Δg] in the base frame at t |
 | `episode.py` | rosbag2 → `.npz` export and offline evaluation (`jepa_episode eval …`) |
+| `image_codec.py` | `sensor_msgs/Image` ↔ numpy without cv_bridge; shared by the node and the bag exporter |
 | `target_state_node.py` | ROS 2 node |
 
 ## Identity rule
@@ -49,7 +50,7 @@ cosine scales differ between encoders.
 ## Tests
 
 ```bash
-cd Codes && python -m pytest src/scout_piper_jepa/test -q
+cd Codes/src/scout_piper_jepa && python -m pytest test -q
 ```
 
 Synthetic two-flower scene with an identical distractor and an occluder:
@@ -60,7 +61,7 @@ and episode evaluation.
 
 ## Not done yet
 
-- V-JEPA inference has not been run here (no torch/GPU in this container);
-  the hub entry point is configuration until verified on the Orin.
+- V-JEPA inference has not been run yet (the tests use only the numpy
+  `ColorPatchEncoder`); the hub entry point is configuration until verified on the Orin.
 - Touching/merged instances are not handled specially.
 - Stage B predictor training (`action.py` is only the action embedding).

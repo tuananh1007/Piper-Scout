@@ -1,26 +1,31 @@
 # stem_grasp (ROS 2)
 
-ROS 2 Humble port of [`stem_grasp_ros1`](../../../../src/stem_grasp_ros1/).
+ROS 2 Humble port of `stem_grasp_ros1` (the ROS 1 package from the original `piper_ros` workspace on the lab machine; it is not in this repository).
 
-## Status: Phase 0 skeleton
+## Status: Phase 0 port
 
-The package compiles and the nodes start cleanly, but the algorithm bodies
-are stubbed. Each stub block carries a `TODO(port-from-ros1)` comment with
-the line range in the original ROS 1 source.
+`core.py` (servo math and skeleton/candidate helpers), `moveit_planner.py`,
+`segmentation_node`, `pointcloud_node` and most of `pipeline_node` are ported
+from the ROS 1 source. Open items are marked `TODO(P0.4.x)` in `pipeline_node.py`:
+
+- **P0.4.11**: plan → execute. The outer loop publishes `/stem_grasp/target_pose`
+  but does not call `moveit_planner` yet. `moveit_py` has no Humble binary, and
+  `moveit_planner.py` returns no plan when it is absent.
+- **P0.4.13**: iterative approach state machine (not ported).
 
 ## Nodes
 
 | Node | Executable | Status |
 |---|---|---|
-| Pipeline orchestrator | `pipeline_node` | Skeleton (state machine + timers wired) |
-| Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Empty stub |
-| Point cloud filter | `pointcloud_node` | Empty stub |
-| Hot-key e-stop | `hotkey_stop_and_zero` | Working (zero-twist publish) |
+| Pipeline orchestrator | `pipeline_node` | Ported: state machine, outer loop (skeleton + candidate selection → `/stem_grasp/target_pose`), inner-loop servo (desired image point still the image centre). Plan→execute pending (P0.4.11); iterative approach not ported (P0.4.13) |
+| Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Ported (YOLO-seg, Grounded-SAM + target caption, HSV fallback) |
+| Point cloud filter | `pointcloud_node` | Ported (`/stem_grasp/filtered_cloud`, `/stem_grasp/leaf_filtered_cloud`) |
+| Hot-key e-stop | `hotkey_stop_and_zero` | Working (zero-twist publish; zero-arm service call still TODO) |
 
 ## Port plan
 
-See [`../../PHASE0_CHECKLIST.md`](../../PHASE0_CHECKLIST.md) — the per-node
-port is broken into independent chunks, each ~1–3 days of work.
+Remaining port items are tracked under P0.4 in [`../../../PROGRESS.md`](../../../PROGRESS.md);
+the original per-node chunking is Step 6 of [`../../PHASE0_CHECKLIST.md`](../../PHASE0_CHECKLIST.md).
 
 ## Run standalone
 

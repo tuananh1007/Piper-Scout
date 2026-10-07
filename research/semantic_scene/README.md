@@ -31,7 +31,7 @@ nvblox TSDF / ESDF
 non-semantic metric geometry
 ```
 
-This stage can start immediately.
+The RealSense→nvblox smoke path runs in the dev container (P1.1.2); the Orin benchmark is open (P1.1.3).
 
 ### Stage B — Semantic class fields
 
@@ -105,11 +105,11 @@ Neither should block the other initially.
 ## Immediate starting point
 
 1. Run the current RealSense→nvblox path on the actual Orin (it has been validated in the dev container; confirm which RealSense model is on the wrist).
-2. Implement/validate the planner-facing distance query.
+2. Implement/validate the planner-facing distance query (a CPU v0 `SemanticDistanceQuery` exists and passes synthetic tests, P1.7; real-scene validation is open).
 3. Build controlled thin-structure reference scenes.
 4. Measure voxel size vs reconstruction coverage and latency.
 5. Run semantic mask gating end to end (`class_demux_node` already produces per-class masks and depth).
 6. Validate hard stem/branch and soft leaf policies.
 7. Export the stable query interface to Whole-Body MPC.
 
-**Status:** class policies, per-class nvblox config, `class_demux_node` and the RealSense→nvblox smoke path exist. The MoveIt semantic collision plugin is a scaffold that currently reports no collision; the planner query path (P1.4) is the main open item.
+**Status:** class policies (plus a default hard `other` class for non-plant depth), per-class nvblox config, `class_demux_node`, the RealSense→nvblox smoke path and a CPU v0 planner-facing query (`SemanticVoxelMap` + `SemanticDistanceQuery`, `scene_query_node`; P1.7.1–P1.7.5, synthetic tests only) exist; `scout_piper_whole_body_mpc` can embed the query in-process (`use_semantic_scene`, off by default). The MoveIt semantic collision plugin is still a scaffold that reports no collision; wiring it to the query (P1.7.7), real thin-structure runs and Orin timing (P1.7.6), and the nvblox-backed query path are the main open items.

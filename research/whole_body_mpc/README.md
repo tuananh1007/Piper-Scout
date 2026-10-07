@@ -34,7 +34,7 @@ synthetic/simple SDF
 whole-body rollout + costs
 ```
 
-This stage can start immediately.
+Implemented (P3A.1–P3A.3, offline synthetic); skid-steer slip identification still needs real-floor WE1 data.
 
 ### Stage B — Deterministic geometry-only MPC
 
@@ -143,4 +143,4 @@ A deformation term may later be added, but the deterministic controller must sta
 7. Integrate Semantic Scene distance queries when stable.
 8. Freeze the geometry-only baseline before adding Piper-JEPA predictive costs.
 
-**Status:** planned research track; implementation package `scout_piper_whole_body_mpc` is not yet complete.
+**Status:** implementation exists in [`Codes/src/scout_piper_whole_body_mpc/`](../../Codes/src/scout_piper_whole_body_mpc/) (P3A.1–P3A.5, 2026-10-06): unicycle rollout + `fit_slip`, Piper FK/Jacobian from the URDF, J_geo costs, MPPI with an arm-only W0 mode, safety filter, semantic-scene adapter and a dry-run ROS 2 node. Offline synthetic R1–R3 runs only; untested on hardware and not in `full_system.launch.py`. Open: obstacle local minima (P3A.6), WE1 slip / TCP calibration on hardware (P3A.7), Orin timing (P3A.8); the W1 sequential and W2 QP baselines are not implemented.

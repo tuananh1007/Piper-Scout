@@ -102,7 +102,7 @@ Arm kinematics include the fixed mount transform from the URDF (`base_link → p
 | Control | Executed by | Note |
 |---|---|---|
 | $(v,\omega)$ | `scout_ros2`, `/cmd_vel` | skid-steer low-level controller tracks the unicycle command |
-| $\dot q$ | integrated to joint setpoints, sent via `moveit_servo` | the existing pipeline already publishes to `/servo_node/delta_twist_cmds` |
+| $\dot q$ | `moveit_servo` joint jog: `control_msgs/JointJog` velocities on `/servo_node/delta_joint_cmds` (`/whole_body_mpc/preview/joint_jog` while `execute: false`) | the `stem_grasp` servo publishes Cartesian twists on `/servo_node/delta_twist_cmds`; servo must also accept joint commands |
 
 The MPC rate, the servo rate and the Scout command rate are different loops; WE7 measures the end-to-end delay.
 
@@ -501,44 +501,44 @@ If Orin timing is inadequate, reduce horizon/sample count or use asynchronous/sp
 
 ## 23. Implementation mapping
 
-Proposed package (the canonical layout; `ROADMAP.md` §7 and the Piper-JEPA plan point here). Piper-JEPA adds its visibility/identity terms from `scout_piper_jepa/predictive_cost.py` without changing these modules.
+Package layout (geometry-only baseline implemented 2026-10-06; `ROADMAP.md` §7 and the Piper-JEPA plan point here). Piper-JEPA adds its visibility/identity terms from `scout_piper_jepa/predictive_cost.py` through the `extra` hook in `costs/terms.py` without changing these modules.
 
 ```text
 Codes/src/scout_piper_whole_body_mpc/
-  dynamics/
-    scout_diff_drive.py
-    piper_kinematics.py
-    rollout.py
-  costs/
-    goal.py
-    collision.py
-    leaf.py
-    manipulability.py
-    base_motion.py
-    smoothness.py
-  safety/
-    projection.py
-    watchdog.py
-  solvers/
-    mppi.py
-    gradient.py
-  controller_node.py
+  scout_piper_whole_body_mpc/
+    dynamics/
+      scout.py          # unicycle + skid-steer k_v, k_ω; fit_slip (WE1)
+      piper.py          # FK / Jacobian / manipulability from the URDF
+      whole_body.py     # rollout, frames, collision spheres
+    costs/
+      terms.py          # goal, collision, unknown space, leaf, manipulability, joint margin, base, smoothness
+    safety/
+      projection.py     # limits, one-step clearance, watchdog
+    solvers/
+      mppi.py           # incl. arm_only mode (W0)
+    scene_adapter.py    # Semantic Scene distance query → cost/safety
+    sim.py
+    controller_node.py
   config/
   launch/
   benchmarks/
+    reachability.py
+  test/
 ```
+
+Not yet implemented: gradient-based solver (candidate B, P3A.6).
 
 ---
 
 ## 24. Immediate tasks
 
-1. Implement Scout unicycle rollout and identify skid-steer slip / effective track width (WE1).
-2. Integrate Piper forward kinematics/Jacobian.
-3. Create synthetic SDF benchmark environment.
-4. Implement goal, smoothness, base, and manipulability costs.
+1. Implement Scout unicycle rollout and identify skid-steer slip / effective track width (WE1) (rollout + `fit_slip` done 2026-10-06; real-floor identification open, P3A.7).
+2. Integrate Piper forward kinematics/Jacobian (done 2026-10-06, P3A.2).
+3. Create synthetic SDF benchmark environment (done 2026-10-06: `sim.py`, analytic sphere fields, `benchmarks/reachability.py`).
+4. Implement goal, smoothness, base, and manipulability costs (done 2026-10-06, P3A.3).
 5. Compare MPPI versus one gradient/QP baseline offline.
-6. Integrate Semantic Scene distance-query API when stable.
-7. Run R1-R3 before R4.
+6. Integrate Semantic Scene distance-query API when stable (adapter done 2026-10-06, `scene_adapter.py`; not yet run on real geometry).
+7. Run R1-R3 before R4 (offline synthetic R1-R3 done 2026-10-06; hardware open).
 8. Freeze W4 before integrating Piper-JEPA costs.
 
 ---

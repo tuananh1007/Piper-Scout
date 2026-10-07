@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-06 (P2A Piper-JEPA target memory, P1.7 semantic distance query, P3A whole-body MPC)
+**Last updated:** 2026-10-07 (phase sections realigned to ROADMAP phases 0, 1A/1B, 2A, 2B, 3A, 3B, 4, 5; stale stem_grasp and Phase 1 status notes corrected)
 
 ## Legend
 
@@ -46,7 +46,7 @@
 | P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ☑ | 2026-05-17 — forked piper xacro into `scout_piper_description/urdf/_piper_arm.xacro`. All 10 links + 10 joints + 8 transmissions + 8 gazebo refs prefixed via `scripts/fork_piper_arm.py` (re-runnable when upstream updates). Unified URDF now: Scout → piper_mount_link → piper_base_link → … → piper_link6 → camera_link (eye-in-hand) |
 | P0.2.4 | `view_robot.launch.py` + RViz config — visualize unified model | ☑ | Needs upstream meshes |
 | P0.2.5 | Visual sanity: arm reaches expected workspace from Scout top plate | ☐ | After P0.2.3 |
-| P0.2.6 | Add hand-eye TF (camera → link6) from existing calibration_samples.yaml | ☐ | Port [`../calibration_transform.py`](../calibration_transform.py) |
+| P0.2.6 | Add hand-eye TF (camera → link6) from existing calibration_samples.yaml | ☐ | Port `calibration_transform.py` from the ROS 1 `piper_ros` workspace on the lab machine (not in this repository) |
 | P0.2.7 | Re-do hand-eye calibration on integrated rig (arm on Scout) | ☐ | Required if mount differs from ROS 1 setup |
 
 ### P0.3 — Bringup integration (scout_piper_bringup)
@@ -64,24 +64,24 @@
 | P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☐ | Run separately: `ros2 launch piper_with_gripper_moveit demo.launch.py` |
 | P0.3.10 | All six subsystems running concurrently with stable TF tree | ◐ | 2026-05-17 — verified for: RSP (unified URDF), stem_grasp (pipeline/segmentation/pointcloud), RViz, jsp_gui. Pending: arm/base/camera (need hardware). Phase 0 exit gate. |
 | P0.3.11 | Hardware-free defaults — `full_system.launch.py` boots without CAN/USB | ☑ | 2026-05-17 — bringup_arm/base/camera default false; jsp_gui auto-spawned for URDF sliders |
-| P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3 unifies via cuMotion |
+| P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3A unifies via cuMotion |
 
 ### P0.4 — stem_grasp ROS 2 port
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P0.4.1 | Package skeleton (ament_python, setup.py, entry_points) | ☑ | |
-| P0.4.2 | `pipeline_node.py` scaffold: params, subs, pubs, timers, state machine | ☑ | Empty algorithm bodies |
-| P0.4.3 | `segmentation_node.py` scaffold | ☑ | Empty stub |
-| P0.4.4 | `pointcloud_node.py` scaffold | ☑ | Empty stub |
+| P0.4.2 | `pipeline_node.py` scaffold: params, subs, pubs, timers, state machine | ☑ | Algorithm bodies filled in by P0.4.8–P0.4.12; plan→execute (P0.4.11) and iterative approach (P0.4.13) still open |
+| P0.4.3 | `segmentation_node.py` scaffold | ☑ | Filled in by P0.4.15–P0.4.16 (2026-05-17) |
+| P0.4.4 | `pointcloud_node.py` scaffold | ☑ | Filled in by P0.4.17 (2026-05-17) |
 | P0.4.5 | `hotkey_stop_and_zero.py` ported (working) | ☑ | Zero-twist publish; service call still TODO |
-| P0.4.6 | `core.py` (servo math) — port classes from ROS 1 verbatim | ☑ | 2026-05-17 — full port of all 5 classes + 3 helpers |
-| P0.4.7 | `moveit_planner.py` — port to `moveit_py` API | ☑ | 2026-05-17 — wrapper ready; runtime requires `ros-humble-moveit-py` |
-| P0.4.8 | `pipeline_node._on_stem_mask` — centroid extraction | ☑ | 2026-05-17 — largest-blob centroid via numpy where |
+| P0.4.6 | `core.py` (servo math) — port classes from ROS 1 verbatim | ☑ | 2026-05-17 — full port: 3 classes (`StemVelocityObserver`, `OnlineJacobianEstimator`, `FullAdaptiveServoController`) + 3 helpers |
+| P0.4.7 | `moveit_planner.py` — port to `moveit_py` API | ☑ | 2026-05-17 — wrapper ready; runtime requires `moveit_py`, which has no Humble binary (build moveit2 from source; see `Codes/docker/Dockerfile.dev`) |
+| P0.4.8 | `pipeline_node._on_stem_mask` — centroid extraction | ☑ | 2026-05-17 — centroid of all mask pixels via numpy where (largest-blob selection not implemented) |
 | P0.4.9 | `pipeline_node._on_target_point` — frame conversion + cache | ☑ | 2026-05-17 — TF-based transform to planning_frame |
 | P0.4.10 | `pipeline_node._outer_loop` — skeleton + candidate selection | ☑ | 2026-05-17 — uses core.skeletonize_plant_points + extract_main_stem |
 | P0.4.11 | `pipeline_node._outer_loop` — plan_and_execute + state transition | ◐ | 2026-05-17 — target_pose pub wired; plan→execute pending moveit_py runtime |
-| P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☑ | 2026-05-17 — drives `core.FullAdaptiveServoController` and publishes TwistStamped |
+| P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☑ | 2026-05-17 — drives `core.FullAdaptiveServoController` and publishes TwistStamped; desired uv is still the image centre until the target-point projection is ported (TODO in code) |
 | P0.4.13 | Iterative approach state machine | ☐ | ROS 1 lines ~1070–1220 |
 | P0.4.14 | Multi-view capture ring + ICP merge | ⊝ | Deferred to Phase 4 (replaced by NBV+VGGT) |
 | P0.4.15 | `segmentation_node` YOLO seg path | ☑ | 2026-05-17 — full port |
@@ -126,13 +126,15 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ---
 
-## Phase 1 — Semantic 3D scene representation (nvblox)
+## Phase 1 — Semantic RGB-D scene representation + deformable plant state
 
-**Target start:** 2026-07-15  ·  **Target finish:** 2026-09-15  ·  **Status:** ◐ scaffolding shipped (2026-05-17, ahead of schedule)
+**Target start:** 2026-07-15  ·  **Target finish:** 2026-09-15  ·  **Status:** ◐ in_progress — RealSense→nvblox smoke path (2026-05-18), `plant_twin` fitter + node (2026-09-29) and CPU semantic distance query (2026-10-06) done; per-class nvblox SDFs, MoveIt plugin, benchmark and hardware runs open
 
 **Companion docs:** [`Codes/src/scout_piper_scene_repr/docs/PHASE1_DESIGN.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_DESIGN.md)
 
-### P1.0 — Scaffolding (ahead-of-schedule, this session)
+### 1A — Semantic nvblox (`scout_piper_scene_repr`)
+
+#### P1.0 — Scaffolding (ahead of schedule, 2026-05-17)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -145,7 +147,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.0.7 | `nvblox_semantic.launch.py` (4 nvblox instances + demux) | ☑ | 2026-05-17 — v0 design |
 | P1.0.8 | Wire scene_repr into `scout_piper_bringup` (off by default) | ☑ | 2026-05-17 — `bringup_scene_repr:=false` |
 
-### P1.1 — nvblox integration
+#### P1.1 — nvblox integration
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -155,7 +157,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
 | P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
 
-### P1.2 — Per-class SDFs (v0)
+#### P1.2 — Per-class SDFs (v0)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -163,22 +165,22 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.2.2 | Per-class inflation / padding configurable via YAML | ☑ | `semantic_classes.yaml` 2026-05-17 |
 | P1.2.3 | Visualize each SDF separately in RViz | ☐ | |
 
-### P1.3 — MoveIt 2 collision plugin
+#### P1.3 — MoveIt 2 collision plugin
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | Skeleton 2026-05-17; ESDF query body still TODO |
+| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | Skeleton 2026-05-17; ESDF query body still TODO (tagged `TODO(P1.4)` in the plugin source; wiring to the CPU query is P1.7.7) |
 | P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ☐ | Policy schema in place |
 | P1.3.3 | Target SDF exposed as attractor for goal generation | ☐ | Policy schema in place |
 
-### P1.4 — Benchmark
+#### P1.4 — Benchmark
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P1.4.1 | 20-scene cluttered-plant test set (recorded bags) | ☐ | |
 | P1.4.2 | Compare planning success: Octomap vs ours | ☐ | Goal: ≥ 30 % failure reduction |
 
-### P1.5 — v1 fork (research contribution)
+#### P1.5 — v1 fork (research contribution)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -186,7 +188,21 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.5.2 | Modify CUDA integration kernel | ☐ | |
 | P1.5.3 | Benchmark v0 vs v1 GPU memory + latency | ☐ | |
 
-### P1.6 — Deformable leaf + stem twin (`plant_twin`)
+#### P1.7 — Semantic scene: planner distance query (CPU v0 backend)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P1.7.1 | `SemanticVoxelMap`: per-class evidence, shared free space, unknown ≠ free, thin-stem-safe carving | ☑ | 2026-10-06 |
+| P1.7.2 | `SemanticDistanceQuery`: signed distance, hard min + padding, gradient, validity/freshness, leaf ψ with cap, grasp-mode exclusion | ☑ | 2026-10-06 — ≤ 1 voxel error on synthetic stem |
+| P1.7.3 | `other` class for non-plant depth | ☑ | 2026-10-06 — demux only fed plant classes, so pots/walls were invisible to planning |
+| P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
+| P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
+| P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
+| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
+
+### 1B — `plant_twin` integration
+
+#### P1.6 — Deformable leaf + stem twin (`plant_twin`)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -201,6 +217,18 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + F/T |
 | P1.6.10 | Fused residual+Jacobian `evaluate` + own LM solver on normal equations | ☑ | 2026-09-29 — `solver.py`; ~28 ms/frame, 1.6 mm at 5 mm/frame; TRF/FD kept as references |
 
+### P1 exit criteria
+
+- Leaf-aware planning visibly avoids leaves where Octomap planning failed.
+- nvblox update < 33 ms on Orin AGX.
+- Workshop paper draft ready.
+
+---
+
+## Phase 2A — V-JEPA 2.1 dense temporal target state
+
+**Target start:** 2026-09-15  ·  **Target finish:** 2026-11-15  ·  **Status:** ◐ in_progress — Stage A target memory shipped 2026-10-06 (P2A.1–P2A.4); E1 dataset and go/no-go benchmark (P2A.5–P2A.6) open
+
 ### P2A — Piper-JEPA Stage A: dense target memory (`scout_piper_jepa`)
 
 | ID | Task | Status | Notes |
@@ -212,42 +240,11 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P2A.5 | Record E1 dataset and annotate target/distractor masks | ☐ | |
 | P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ☐ | go/no-go gate |
 
-### P1.7 — Semantic scene: planner distance query (CPU v0 backend)
-
-| ID | Task | Status | Notes |
-|---|---|---|---|
-| P1.7.1 | `SemanticVoxelMap`: per-class evidence, shared free space, unknown ≠ free, thin-stem-safe carving | ☑ | 2026-10-06 |
-| P1.7.2 | `SemanticDistanceQuery`: signed distance, hard min + padding, gradient, validity/freshness, leaf ψ with cap, grasp-mode exclusion | ☑ | 2026-10-06 — ≤ 1 voxel error on synthetic stem |
-| P1.7.3 | `other` class for non-plant depth | ☑ | 2026-10-06 — demux only fed plant classes, so pots/walls were invisible to planning |
-| P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
-| P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
-| P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
-| P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☐ | |
-
-### P3A — Geometry-only whole-body MPC (`scout_piper_whole_body_mpc`)
-
-| ID | Task | Status | Notes |
-|---|---|---|---|
-| P3A.1 | Unicycle base model + skid-steer slip identification (`fit_slip`) | ☑ | 2026-10-06 — WE1 needs real floor data |
-| P3A.2 | Piper FK/Jacobian from the URDF (sync test) | ☑ | 2026-10-06 — TCP offset to calibrate |
-| P3A.3 | J_geo costs, MPPI with smooth noise, arm-only W0 mode | ☑ | 2026-10-06 — white noise froze or drifted the controller; W0 must not plan with the base |
-| P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
-| P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
-| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☐ | detours stall 3–4 cm short |
-| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
-| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU |
-
-### P1 exit criteria
-
-- Leaf-aware planning visibly avoids leaves where Octomap planning failed.
-- nvblox update < 33 ms on Orin AGX.
-- Workshop paper draft ready.
-
 ---
 
-## Phase 2 — MPPI visual-predictive servo
+## Phase 2B — Safety-bounded local MPPI visual servo
 
-**Target start:** 2026-09-15  ·  **Target finish:** 2026-12-15  ·  **Status:** ☐ not started
+**Target start:** 2026-10-15  ·  **Target finish:** 2027-01-15  ·  **Status:** ☐ not started
 
 ### P2.1 — MPPI core
 | ID | Task | Status | Notes |
@@ -271,9 +268,22 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ---
 
-## Phase 3 — Whole-body GPU MPC (Piper + Scout)
+## Phase 3A — Geometry-only whole-body GPU MPC (Piper + Scout)
 
-**Target start:** 2026-12-15  ·  **Target finish:** 2027-04-15  ·  **Status:** ☐ not started
+**Target start:** 2026-12-15  ·  **Target finish:** 2027-04-15  ·  **Status:** ◐ in_progress — CPU geometry-only baseline shipped 2026-10-06, ahead of schedule (P3A.1–P3A.5); hardware runs, Orin timing and the cuRobo/GPU port (P3.1) open
+
+### P3A — Geometry-only whole-body MPC (`scout_piper_whole_body_mpc`)
+
+| ID | Task | Status | Notes |
+|---|---|---|---|
+| P3A.1 | Unicycle base model + skid-steer slip identification (`fit_slip`) | ☑ | 2026-10-06 — WE1 needs real floor data |
+| P3A.2 | Piper FK/Jacobian from the URDF (sync test) | ☑ | 2026-10-06 — TCP offset to calibrate |
+| P3A.3 | J_geo costs, MPPI with smooth noise, arm-only W0 mode | ☑ | 2026-10-06 — white noise froze or drifted the controller; W0 must not plan with the base |
+| P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
+| P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
+| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☐ | detours stall 3–4 cm short |
+| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
+| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU |
 
 ### P3.1 — cuRobo extension
 | ID | Task | Status | Notes |
@@ -285,9 +295,9 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 ### P3.2 — Cost design
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P3.2.1 | Reach + manipulability + base-laziness + visibility costs | ☐ | |
-| P3.2.2 | Phase 1 semantic SDFs integrated as cost potentials | ☐ | |
-| P3.2.3 | Safety filter: clip whole-body command through Phase 2 MPPI | ☐ | |
+| P3.2.1 | Reach + manipulability + base-laziness + visibility costs | ◐ | 2026-10-06 — goal, manipulability and base-motion costs in P3A.3; visibility open (Phase 3B J_visibility) |
+| P3.2.2 | Phase 1 semantic SDFs integrated as cost potentials | ◐ | 2026-10-06 — CPU `SemanticDistanceQuery` via `scene_adapter.py` (P3A.5); nvblox-backed field open |
+| P3.2.3 | Safety filter: clip whole-body command through Phase 2B MPPI | ☐ | standalone limits/clearance/watchdog filter done in P3A.4 |
 
 ### P3.3 — Benchmark
 | ID | Task | Status | Notes |
@@ -297,9 +307,17 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ---
 
-## Phase 4 — Active perception (VGGT + task-aware NBV)
+## Phase 3B — Piper-JEPA predictive whole-body MPC
 
-**Target start:** 2027-04-15  ·  **Target finish:** 2027-06-15  ·  **Status:** ☐ not started
+**Target start:** 2027-02-15  ·  **Target finish:** 2027-07-15  ·  **Status:** ☐ not started
+
+No task rows yet. Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](research/piper_jepa/) (Stages B–C). Hooks already in the code: the Stage B action embedding Γ(x,u) (`scout_piper_jepa/action.py`) and the `WholeBodyCost.extra` cost hook for J_visibility / J_identity (`scout_piper_whole_body_mpc`).
+
+---
+
+## Phase 4 — Uncertainty-driven active perception
+
+**Target start:** 2027-05-15  ·  **Target finish:** 2027-08-15  ·  **Status:** ☐ not started
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
@@ -310,9 +328,9 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ---
 
-## Phase 5 — VLA + operator GUI for non-expert use
+## Phase 5 — Language/VLM + operator GUI for non-experts
 
-**Target start:** 2027-06-15  ·  **Target finish:** 2027-11-15  ·  **Status:** ☐ not started
+**Target start:** 2027-07-15  ·  **Target finish:** 2027-11-15  ·  **Status:** ☐ not started
 
 ### P5.1 — VLA on Orin
 | ID | Task | Status | Notes |

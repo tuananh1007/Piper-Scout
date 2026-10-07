@@ -10,33 +10,38 @@ Estimated total time: **6–8 weeks** of single-engineer effort.
 
 ## Prerequisites
 
-- Ubuntu 22.04 with ROS 2 Humble installed (`/opt/ros/humble`).
+- Ubuntu 22.04 with ROS 2 Humble installed (`/opt/ros/humble`), or, on the Ubuntu 20.04 workstation,
+  the dev container in [`docker/README.md`](docker/README.md), which already provides the packages below and in Step 2.
 - `python3-vcstool`, `python3-colcon-common-extensions`, `python3-rosdep`.
-- Two CAN interfaces (`can0` for Piper, `can1` for Scout). Use the existing
-  [`../../can_activate.sh`](../../can_activate.sh) as the template; create
-  a Scout-specific version that brings up the second bus.
-- Intel RealSense SDK 2.55+ (already present at [`../../lib/`](../../lib/)).
+- Two CAN interfaces (`can0` for Piper, `can1` for Scout). Use the
+  `can_activate.sh` that ships at the root of `piper_ros` (`src/piper_ros/can_activate.sh`
+  after Step 1's `vcs import`) as the template; create a Scout-specific version
+  that brings up the second bus.
+- Intel RealSense SDK 2.55+ (on the lab machine it is installed under `lib/` in the
+  original `piper_ros` workspace, which is not part of this repository).
 
 ## Step 1 — Pull upstream packages
 
 ```bash
-cd Piper_Scout_ws/Codes
+cd Codes                              # from the repository root
 vcs import src < repos.yaml
-./scripts/patch_upstream.sh           # apply local-only fixes (ugv_sdk build_type)
-ls src   # Expect: piper_ros/ scout_ros2/ scout_nav2/ realsense-ros/ ugv_sdk/
-         #         scout_piper_bringup/ scout_piper_description/
-         #         scout_piper_scene_repr/ stem_grasp/
+./scripts/patch_upstream.sh           # post-import fixes (ugv_sdk build_type, Isaac ROS VPI 4/NITROS patches, GXF LFS pull, nvblox submodule)
+ls src   # Expect: piper_ros/ scout_ros2/ ugv_sdk/ scout_nav2/ realsense-ros/
+         #         isaac_ros_common/ isaac_ros_nvblox/ isaac_ros_nitros/ isaac_ros_gxf/ negotiated/
+         #         plant_twin/ scout_piper_bringup/ scout_piper_description/ scout_piper_jepa/
+         #         scout_piper_scene_repr/ scout_piper_whole_body_mpc/ stem_grasp/
 ```
 
 **Verify:**
-- [ ] `piper_ros@humble` has `piper/`, `piper_control/`, `piper_description/`, `piper_moveit/`, `piper_msgs/`, `piper_sim/`.
-- [ ] `scout_ros2` has `scout_base/`, `scout_description/`, `scout_msgs/`.
-- [ ] `scout_nav2` has a `launch/navigation.launch.py`.
-- [ ] `realsense-ros@ros2-development` has `realsense2_camera/launch/rs_launch.py`.
+- [x] `piper_ros@humble` has `src/piper/` (`launch/start_single_piper.launch.py`), `src/piper_humble/`, `src/piper_description/`, `src/piper_moveit/piper_with_gripper_moveit/`, `src/piper_msgs/`, `src/piper_sim/`.
+- [x] `scout_ros2` has `scout_base/`, `scout_description/`, `scout_msgs/`.
+- [x] `scout_nav2` has `scout_nav2/launch/nav2.launch.py`.
+- [x] `realsense-ros@ros2-development` has `realsense2_camera/launch/rs_launch.py`.
 
 If any of these paths drift, fix the references in:
 - `src/scout_piper_bringup/launch/full_system.launch.py`
 - `src/scout_piper_description/urdf/scout_piper.urdf.xacro`
+- `scripts/fork_piper_arm.py`
 
 ## Step 2 — Install dependencies
 
@@ -95,11 +100,13 @@ when an individual driver is broken.
 ```bash
 ros2 launch scout_piper_bringup full_system.launch.py \
   bringup_arm:=true bringup_base:=false bringup_camera:=false \
-  bringup_pipeline:=false bringup_rviz:=true
+  bringup_pipeline:=false bringup_jsp_gui:=false bringup_rviz:=true
 ```
 
-✅ Pass: `ros2 topic list` shows `/joint_states`; MoveIt's RViz plugin
-plans a motion from home to a manual pose target.
+✅ Pass: `ros2 topic list` shows `/joint_states`. MoveIt is not part of
+`full_system.launch.py` (its demo starts its own `robot_state_publisher`, which
+conflicts with the unified URDF); run `ros2 launch piper_with_gripper_moveit demo.launch.py`
+separately and check that its RViz plugin plans a motion from home to a manual pose target.
 
 ### 4b — Scout base only
 
@@ -128,7 +135,9 @@ ros2 launch scout_piper_bringup full_system.launch.py \
 ### 4d — All three concurrently
 
 ```bash
-ros2 launch scout_piper_bringup full_system.launch.py bringup_pipeline:=false
+ros2 launch scout_piper_bringup full_system.launch.py \
+  bringup_arm:=true bringup_base:=true bringup_camera:=true \
+  bringup_pipeline:=false bringup_jsp_gui:=false
 ```
 
 ✅ Pass: All three subsystems publish their canonical topics; TF tree
@@ -141,10 +150,11 @@ connects `odom → base_link → piper_mount_link → piper_base_link → ... �
 The mount of Piper on Scout changes the camera-to-arm-base transform compared
 to the previous (table-mounted) setup.
 
-Port the existing calibration scripts:
-- [`../../calibration_transform.py`](../../calibration_transform.py)
-- [`../../calibration_samples.yaml`](../../calibration_samples.yaml)
-- [`../../calibration_cam_pose.launch`](../../calibration_cam_pose.launch)
+Port the existing calibration scripts (in the original `piper_ros` workspace on
+the lab machine; not part of this repository):
+- `calibration_transform.py`
+- `calibration_samples.yaml`
+- `calibration_cam_pose.launch`
 
 Place the ported versions in a new `scout_piper_calibration` package (or
 inside `scout_piper_bringup/scripts/`) and re-run on the integrated rig.
@@ -154,21 +164,21 @@ plumb it into the xacro `cam_xyz`/`cam_rpy` args.
 
 ## Step 6 — Port stem_grasp algorithm bodies
 
-The skeleton is at [`src/stem_grasp/`](src/stem_grasp/). Each TODO block
-references a line range in the ROS 1 source. Recommended order (each
-~1–3 days):
+The port lives in [`src/stem_grasp/`](src/stem_grasp/); the remaining
+`TODO(P0.4.x)` blocks are tracked in [`../PROGRESS.md`](../PROGRESS.md) P0.4.
+Port order and status:
 
-1. **core.py** — pure Python; no ROS deps; mechanical copy.
-2. **moveit_planner.py** — port to `moveit_py` (the new MoveIt 2 Python API).
-3. **segmentation_node.py** — YOLO seg path first, then Grounded-SAM.
-4. **pointcloud_node.py** — mask-gated filtering + `/static_cloud_out`.
-5. **pipeline_node.py outer loop** — skeleton + candidate selection.
-6. **pipeline_node.py iterative approach** — multi-step approach state machine.
-7. **pipeline_node.py inner loop** — servo step (publishes to `moveit_servo`).
+1. ☑ **core.py** — pure Python; no ROS deps; mechanical copy (P0.4.6).
+2. ☑ **moveit_planner.py** — `moveit_py` wrapper (P0.4.7); needs a `moveit_py` runtime, which has no Humble binary package.
+3. ☑ **segmentation_node.py** — YOLO seg path, then Grounded-SAM (P0.4.15, P0.4.16).
+4. ☑ **pointcloud_node.py** — mask-gated filtering → `/stem_grasp/filtered_cloud` + `/stem_grasp/leaf_filtered_cloud` (P0.4.17).
+5. ◐ **pipeline_node.py outer loop** — skeleton + candidate selection ☑ (P0.4.10); plan→execute pending `moveit_py` (P0.4.11).
+6. ☐ **pipeline_node.py iterative approach** — multi-step approach state machine (P0.4.13).
+7. ☑ **pipeline_node.py inner loop** — servo step (publishes to `moveit_servo`) (P0.4.12).
 
 After each chunk, re-run the smoke test:
 ```bash
-cd Piper_Scout_ws/Codes && colcon test --packages-select stem_grasp
+cd Codes && colcon test --packages-select stem_grasp   # /workspace inside the dev container
 ```
 
 ## Step 7 — moveit_servo wiring (the missing link from ROS 1)
@@ -177,9 +187,11 @@ The ROS 1 stack published `/servo_server/delta_twist_cmds` with no consumer.
 In ROS 2, we add `moveit_servo` to the bringup so the topic actually drives
 the arm.
 
-1. Copy the AgileX `piper_moveit` MoveIt 2 config's example servo YAML.
-2. Tune `scale.linear/angular`, `joint_topic`, `command_in_type`,
-   `singularity_threshold`, `incoming_command_timeout` for the Piper.
+1. `piper_ros` ships no servo YAML; start from the example config shipped with
+   `moveit_servo` (`config/panda_simulated_config.yaml`).
+2. Tune `scale.linear`/`scale.rotational`, `joint_topic`, `command_in_type`,
+   `lower_singularity_threshold`/`hard_stop_singularity_threshold`,
+   `incoming_command_timeout` for the Piper.
 3. Add the `moveit_servo` Node to `full_system.launch.py`.
 4. Verify: hand-publish a small TwistStamped → EE moves.
 
@@ -188,16 +200,16 @@ the arm.
 Record a "scan → candidate" episode in the ROS 1 stack first:
 
 ```bash
-# In the old ROS 1 stack:
-rosbag record -O baseline.bag /joint_states /camera/color/image_raw \
-  /camera/depth/image_rect_raw /stem_grasp/target_pose /static_cloud_out
+# In the old ROS 1 stack (realsense launched with align_depth:=true; the ROS 2 stack reads aligned depth):
+rosbag record -O baseline.bag /joint_states /camera/color/image_raw /camera/color/camera_info \
+  /camera/aligned_depth_to_color/image_raw /stem_grasp/target_pose /static_cloud_out
 ```
 
 Convert to ROS 2 bag format with [`rosbags`](https://gitlab.com/ternaris/rosbags):
 
 ```bash
 pip install rosbags
-rosbags-convert baseline.bag --dst baseline_ros2/
+rosbags-convert --src baseline.bag --dst baseline_ros2/
 ```
 
 Replay through the new stack and confirm the candidate pose matches within
@@ -206,7 +218,7 @@ tolerance (2 cm / 5°).
 ## Step 9 — Nav2 verification
 
 ```bash
-ros2 launch scout_piper_bringup full_system.launch.py bringup_nav2:=true
+ros2 launch scout_piper_bringup full_system.launch.py bringup_base:=true bringup_nav2:=true
 ```
 
 In RViz, click "2D Goal Pose" 2 m in front of the Scout. The base should

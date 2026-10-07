@@ -233,6 +233,8 @@ The recommended first implementation task is **Stage A**, not full-system integr
 
 Only after this evidence is positive should embodiment-specific action-conditioned predictor training become the main effort.
 
+**Status:** Stage A code exists in [`Codes/src/scout_piper_jepa/`](../../Codes/src/scout_piper_jepa/) (P2A.1–P2A.4, 2026-10-06): encoder interface (lazy V-JEPA via `torch.hub` + a numpy reference encoder), target memory, E1 metrics, episode export/evaluation and a ROS 2 node. It is tested only on synthetic scenes with the reference encoder, is untested on hardware and is not in `full_system.launch.py`. V-JEPA inference has not been run, the E1 dataset and the T0–T4 comparison are open (P2A.5–P2A.6), and Stage B has only the action embedding (`action.py`).
+
 ---
 
 **Summary:** Piper-JEPA can start independently. Only its final Stage C predictive-control contribution depends directly on `semantic_scene` and `whole_body_mpc`; `plant_twin` and `active_perception` remain optional/later complementary tracks.

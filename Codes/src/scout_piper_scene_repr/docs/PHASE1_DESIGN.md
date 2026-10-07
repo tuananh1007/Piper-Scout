@@ -3,7 +3,7 @@
 **Author:** Vu Tuan Anh
 **Status:** Draft (Phase 1 kickoff, 2026-05-17)
 **Companion code:** [`scout_piper_scene_repr/`](../)
-**Roadmap context:** [`../../../../ROADMAP.md#phase-1`](../../../../ROADMAP.md#phase-1)
+**Roadmap context:** [`../../../../ROADMAP.md` — Phase 1](../../../../ROADMAP.md#phase-1--semantic-rgb-d-scene-representation--deformable-plant-state-months-34)
 
 ---
 
@@ -36,9 +36,10 @@ Replace the Octomap-based collision world with a **per-class signed distance fie
 
 ```
                  ┌────────────────────────────────────────────────────┐
-                 │ Camera (RealSense D435, eye-in-hand)               │
+                 │ Camera (RealSense, eye-in-hand)                    │
+                 │   model to be confirmed (URDF D435, P1.1 D405)     │
                  │   /camera/color/image_raw                          │
-                 │   /camera/depth/image_rect_raw                     │
+                 │   /camera/aligned_depth_to_color/image_raw         │
                  │   /camera/color/camera_info                        │
                  └──────────────────┬─────────────────────────────────┘
                                     │
@@ -61,9 +62,9 @@ Replace the Octomap-based collision world with a **per-class signed distance fie
                  │     /scene_repr/mask/branch                        │
                  │     /scene_repr/mask/leaf                          │
                  │     /scene_repr/mask/target                        │
-                 │   Also republishes RGB+depth on per-class topics   │
-                 │   gated by each mask (depth pixels outside class   │
-                 │   are set to NaN so nvblox skips them).            │
+                 │   Also republishes depth on per-class topics       │
+                 │   gated by each mask (depth pixels outside the     │
+                 │   class are set to 0 so nvblox skips them).        │
                  └──────────────────┬─────────────────────────────────┘
                                     │ × 4 streams
                                     ▼
@@ -83,7 +84,7 @@ Replace the Octomap-based collision world with a **per-class signed distance fie
                                     ▼
                  ┌────────────────────────────────────────────────────┐
                  │ scout_piper_scene_repr/semantic_collision_plugin   │
-                 │   pluginlib export of moveit_core::CollisionDetector│
+                 │   exports a CollisionDetectorAllocator ("Semantic")│
                  │   Per-class behavior from semantic_classes.yaml:   │
                  │     stem     -> hard collision, padding 5 mm       │
                  │     branch   -> hard collision, padding 8 mm       │
@@ -120,8 +121,8 @@ Single channel image, encoded as `mono8`:
 When the existing segmentation node publishes separate per-class masks
 (`/stem_grasp/mask`, `/stem_grasp/target_mask`), the class_demux_node
 **accepts either format**:
-- `--input-mode merged` : a single label image (preferred).
-- `--input-mode separate` : the legacy two-topic interface (fallback).
+- `input_mode:=merged` : a single label image (preferred, default).
+- `input_mode:=separate` : the legacy two-topic interface (fallback).
 
 ### 4.2 Per-class TSDF parameters
 
@@ -176,8 +177,9 @@ classes:
 - Instantiate four `isaac_ros_nvblox` nodes with separate namespaces.
 - Each one consumes the masked depth stream for its class only.
 - 4× GPU memory and compute overhead vs single-class baseline.
-- **Acceptable on Orin AGX 64 GB**: budgeted ~8 GB total nvblox memory in
-  [`../../../../ROADMAP.md` §5](../../../../ROADMAP.md#5-compute-budget-on-jetson-orin-agx-64-gb).
+- **Acceptable on Orin AGX 64 GB**: ≈ 6–8 GB total nvblox memory estimated (§9);
+  latency, memory and sustained rate are still to be measured on the Orin per
+  [`../../../../ROADMAP.md` §5](../../../../ROADMAP.md#5-compute-and-real-time-budget-on-jetson-agx-orin-64-gb).
 - This is the **publishable workshop-paper baseline**.
 
 ### v1 — single multi-class nvblox fork (research contribution, ~4 weeks)
@@ -202,15 +204,15 @@ invisible to MoveIt.
 | `/scene_repr/depth/<class>` | `sensor_msgs/Image` 16UC1 | `class_demux_node` | nvblox-class node | mask-gated |
 | `/scene_repr/esdf/<class>` | custom (TBD; likely `OccupancyGrid` slice or custom 3D msg) | nvblox | `semantic_collision_plugin` | per-class |
 | `/scene_repr/markers/<class>` | `visualization_msgs/MarkerArray` | nvblox | RViz | debug only |
-| `/scene_repr/policy` | `std_msgs/String` (YAML inline) | static_publisher from yaml | `semantic_collision_plugin` | latched |
+| `/scene_repr/policy` | `std_msgs/String` (YAML inline) | `class_demux_node` (from `policy_yaml_path`) | `semantic_collision_plugin` | published once at startup (RELIABLE, depth 1; not transient-local yet) |
 
 ## 7. MoveIt 2 collision plugin design
 
 The plugin lives in [`src/semantic_collision_plugin.cpp`](../src/semantic_collision_plugin.cpp).
 
-**Pluginlib export class:** `collision_detection::CollisionEnvSemantic`.
+**Pluginlib export class:** `scout_piper_scene_repr::SemanticCollisionDetectorAllocator` (base `collision_detection::CollisionDetectorAllocator`, name `"Semantic"`), which allocates `scout_piper_scene_repr::CollisionEnvSemantic`.
 
-**Required overrides** (subset of `moveit_core::CollisionEnv`):
+**Required overrides** (subset of `collision_detection::CollisionEnv`):
 - `checkSelfCollision(...)` — delegate to parent FCL impl.
 - `checkRobotCollision(req, res, state)` — main entry point:
   1. For each link, query the four ESDFs at the link's collision shape vertices.
@@ -222,8 +224,10 @@ The plugin lives in [`src/semantic_collision_plugin.cpp`](../src/semantic_collis
      `res.contacts` cost annotation.
 - `distanceRobot(req, res, state)` — return the **minimum** distance to any hard class.
 
-**Allocator registration:** via `class_loader::class_loader` macros in
-[`plugin_description.xml`](../plugin_description.xml).
+**Allocator registration:** `PLUGINLIB_EXPORT_CLASS` in
+[`src/semantic_collision_plugin.cpp`](../src/semantic_collision_plugin.cpp), declared in
+[`plugin_description.xml`](../plugin_description.xml) and exported via
+`pluginlib_export_plugin_description_file(moveit_core ...)` in `CMakeLists.txt`.
 
 **Activation:** in the MoveIt config's `move_group.launch.py`, override:
 ```yaml
@@ -257,7 +261,7 @@ Exit gate: **≥ 30 % reduction in "no plan found" failures** vs Octomap baselin
 
 ## 10. Phase 1 task breakdown
 
-Mirrors the IDs in [`../../../../PROGRESS.md`](../../../../PROGRESS.md):
+Kickoff breakdown (2026-05-17). [`../../../../PROGRESS.md`](../../../../PROGRESS.md) now tracks this work as P1.0 scaffolding, P1.1 nvblox integration, P1.2 per-class SDFs, P1.3 MoveIt 2 collision plugin, P1.4 benchmark, P1.5 v1 fork (plus P1.6 `plant_twin` and P1.7 planner distance query). The `TODO(P1.4)` comments in the plugin source use the kickoff numbering below:
 
 - **P1.1** Stand up nvblox on the workstation (Docker / native).
 - **P1.2** Implement `class_demux_node` (Python — fast iteration).
@@ -273,7 +277,9 @@ Mirrors the IDs in [`../../../../PROGRESS.md`](../../../../PROGRESS.md):
 
 1. **Label image vs per-class masks** — which does the segmentation node port to?
    The label image is simpler downstream but requires a small refactor in the
-   segmentation node. Defer decision until Phase 0 segmentation porting starts.
+   segmentation node. The ported `segmentation_node` (P0.4.15/P0.4.16) still publishes
+   the two-topic format, so class_demux must be run with `input_mode:=separate`
+   until a label image is added (P1.1.4).
 
 2. **ESDF query API** — does the v0 nvblox node expose a synchronous query
    service, or do we have to subscribe to a published ESDF and cache it

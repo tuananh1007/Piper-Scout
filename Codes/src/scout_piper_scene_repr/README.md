@@ -2,9 +2,10 @@
 
 Per-class semantic 3D scene representation for the Piper+Scout stack.
 
-**Status:** P1.1 RealSense -> nvblox smoke test is working in the dev
-container. The MoveIt 2 collision plugin still returns "no collision"
-placeholders until P1.4.
+**Status:** P1.1.2 RealSense -> nvblox smoke test is working in the dev
+container. The CPU semantic voxel map + planner distance query (P1.7, see
+below) is implemented and tested without ROS. The MoveIt 2 collision plugin
+still returns "no collision" placeholders until P1.3.1 / P1.7.7.
 
 ## What's here
 
@@ -13,18 +14,21 @@ placeholders until P1.4.
 | [`docs/PHASE1_DESIGN.md`](docs/PHASE1_DESIGN.md) | done | Design doc — read first |
 | [`python/class_demux_node.py`](python/class_demux_node.py) | working | Fans semantic label image → per-class mask + gated depth |
 | [`include/.../semantic_collision_plugin.hpp`](include/scout_piper_scene_repr/semantic_collision_plugin.hpp) | scaffold | MoveIt 2 plugin interface |
-| [`src/semantic_collision_plugin.cpp`](src/semantic_collision_plugin.cpp) | scaffold | Plugin impl — TODO P1.4 |
+| [`src/semantic_collision_plugin.cpp`](src/semantic_collision_plugin.cpp) | scaffold | Plugin impl — TODO P1.3.1 / P1.7.7 |
 | [`config/semantic_classes.yaml`](config/semantic_classes.yaml) | done | Per-class policy (hard / soft / attractor) |
 | [`config/nvblox_per_class.yaml`](config/nvblox_per_class.yaml) | done | Per-class nvblox tuning |
 | [`config/realsense_nvblox.yaml`](config/realsense_nvblox.yaml) | working | Single-camera nvblox smoke-test profile |
 | [`launch/realsense_nvblox.launch.py`](launch/realsense_nvblox.launch.py) | working | P1.1.2 RealSense color/depth -> nvblox TSDF/ESDF launch |
-| [`launch/nvblox_semantic.launch.py`](launch/nvblox_semantic.launch.py) | done | Phase 1 v0 launch (demux + 4 nvblox nodes) |
+| [`launch/nvblox_semantic.launch.py`](launch/nvblox_semantic.launch.py) | untested | Phase 1 v0 launch (demux + 4 nvblox nodes); not yet run (P1.2.1) |
+| [`launch/test_class_demux.launch.py`](launch/test_class_demux.launch.py) | working | P1.1.0 plumbing test with `python/test_mask_publisher.py` (no nvblox) |
+| [`python/scout_piper_scene_repr_py/`](python/scout_piper_scene_repr_py/) | working | CPU `SemanticVoxelMap` + `SemanticDistanceQuery` (v0 query backend, see below) |
+| [`python/scene_query_node.py`](python/scene_query_node.py) | untested on hardware | Live CPU map; `/scene_repr/voxels`, `/scene_repr/map_status` |
 | [`plugin_description.xml`](plugin_description.xml) | done | pluginlib export |
 
 ## Prerequisites
 
 1. `nvblox_ros` built from source in the dev container; see [`docs/PHASE1_RUNTIME.md`](docs/PHASE1_RUNTIME.md).
-2. Intel RealSense D405 publishing aligned depth.
+2. Intel RealSense publishing aligned depth (the P1.1.2 smoke test used a D405; the URDF models a D435; model to be confirmed).
 3. For semantic v0, the `stem_grasp` segmentation node publishing either:
    - **merged mode**: a single `mono8` label image on `/stem_grasp/semantic_label` (1=stem, 2=branch, 3=leaf, 4=target), OR
    - **separate mode** (Phase 0 fallback): the legacy `/stem_grasp/mask` + `/stem_grasp/target_mask` pair.
@@ -57,7 +61,7 @@ ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separat
 
 ## Next steps
 
-See `P1.x` in [`../../../../PROGRESS.md`](../../../../PROGRESS.md).
+See `P1.x` in [`../../../PROGRESS.md`](../../../PROGRESS.md).
 
 ## CPU semantic map + planner distance query (v0 query backend)
 
@@ -70,6 +74,7 @@ It runs without nvblox and is the reference the nvblox-backed path must match.
 | `policy.py` | loads `config/semantic_classes.yaml`; adds an `other` class (hard, 1 cm) for depth outside every mask (pots, walls, supports) |
 | `voxel_map.py` | `SemanticVoxelMap`: per-class hit evidence + shared free space from aligned depth and class masks. Hits win over free space within a frame (keeps thin stems); free space clears moved leaves; never-seen voxels stay unknown |
 | `distance_query.py` | `SemanticDistanceQuery.query(points)`: per-class signed distance, hard minimum with padding, nearest hard class, gradient, `valid` (unknown / out of bounds / stale ⇒ False and hard distance clamped ≤ 0). `sphere_clearance`, `leaf_cost` (ψ with the 2 cm penetration cap ⇒ hard violation), `target_attraction`, grasp mode that releases only the target region |
+| `ros_integrator.py` | `RosSceneIntegrator`: subscribes to aligned depth, its camera info and `/scene_repr/mask/<class>`, and feeds a `SemanticVoxelMap` in the caller's process (used by `scene_query_node.py` and the whole-body MPC) |
 | `python/scene_query_node.py` | integrates live data, publishes `/scene_repr/voxels` (MarkerArray) and `/scene_repr/map_status` (JSON incl. integrate time) |
 
 Controllers should embed `SemanticVoxelMap` + `SemanticDistanceQuery` in
@@ -95,4 +100,4 @@ not reported free, stale geometry invalid, wall hard via `other`, leaf soft,
 grasp mode releases only the target region, a moved leaf is cleared.
 
 The MoveIt plugin (`src/semantic_collision_plugin.cpp`) is still the scaffold
-that reports no collision; wiring it to this query (or to nvblox) is P1.4.
+that reports no collision; wiring it to this query (or to nvblox) is P1.3.1 / P1.7.7.

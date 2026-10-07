@@ -313,6 +313,8 @@ query_distance(points, class_policy)
   -> timestamp
 ```
 
+Implemented as the CPU v0 backend (2026-10-06): `SemanticDistanceQuery.query(points, now)` in `python/scout_piper_scene_repr_py/distance_query.py` returns `hard_distance`, `hard_class`, `hard_gradient`, `valid`, per-class `class_distance` and `map_age_s`.
+
 ROS/debug topics may publish visualization, but the high-rate planner should use in-process or low-overhead query paths where possible.
 
 ---
@@ -424,20 +426,20 @@ Current implementation (see `docs/PHASE1_DESIGN.md` and `docs/PHASE1_RUNTIME.md`
 
 | Piece | Status |
 |---|---|
-| `python/class_demux_node.py` | label image (or legacy stem/target masks) → `/scene_repr/mask/<class>` and mask-gated `/scene_repr/depth/<class>`; latched `/scene_repr/policy` |
+| `python/class_demux_node.py` | label image (or legacy stem/target masks) → `/scene_repr/mask/<class>` and mask-gated `/scene_repr/depth/<class>`; `/scene_repr/policy` published once at startup (not transient-local yet) |
 | `config/semantic_classes.yaml` | class IDs 1–4 and hard/soft/attractor policies (values above) |
 | `config/nvblox_per_class.yaml` | per-class voxel size, integration distance, weighting |
 | `launch/realsense_nvblox.launch.py` | RealSense → nvblox smoke path, validated (P1.1.2) |
-| `src/semantic_collision_plugin.cpp` | MoveIt plugin **scaffold: every query currently returns no collision and infinite distance** — not a safety layer until P1.4 |
+| `python/scout_piper_scene_repr_py/` (`policy.py`, `voxel_map.py`, `distance_query.py`, `ros_integrator.py`) | CPU `SemanticVoxelMap` + `SemanticDistanceQuery` (C4 v0 backend, 2026-10-06): per-class signed distance, hard minimum with padding, gradient, `valid`/freshness (unknown never free), leaf ψ with the 2 cm cap, grasp-mode target exclusion, `other` class (hard, 1 cm) for non-plant depth; synthetic tests only |
+| `python/scene_query_node.py` | integrates aligned depth + `/scene_repr/mask/<class>`; publishes `/scene_repr/voxels` and `/scene_repr/map_status`; untested on hardware |
+| `src/semantic_collision_plugin.cpp` | MoveIt plugin **scaffold: every query currently returns no collision and infinite distance** — not a safety layer until P1.3.1 / P1.7.7 |
 
 v0 runs four parallel nvblox instances fed by `class_demux_node`; v1 (PHASE1_DESIGN §5) forks nvblox to carry a per-voxel class label.
 
-Recommended additions (new modules only; class policy and demux already exist):
+Recommended additions (new modules only; class policy, demux and the CPU distance query with freshness gating, `python/scout_piper_scene_repr_py/distance_query.py`, already exist):
 
 ```text
 scout_piper_scene_repr/
-  distance_query.py        # batched per-class ESDF queries for the MPC (C4)
-  freshness.py
   benchmarks/
     reconstruction_eval.py
     distance_eval.py
@@ -451,11 +453,11 @@ scout_piper_scene_repr/
 1. Bring up the current RealSense→nvblox path on the actual Orin.
 2. Review and freeze the existing `semantic_classes.yaml` / `nvblox_per_class.yaml` values for S1–S4.
 3. Run the four parallel fields from `class_demux_node` end to end on recorded data.
-4. Finish the planner-facing distance query and replace the plugin's stub returns (P1.4).
+4. Replace the plugin's stub returns with the planner-facing distance query (P1.3.1 / P1.7.7); the CPU `SemanticDistanceQuery` exists (2026-10-06) and an nvblox-backed query must match it.
 5. Build S1 reference scenes with thin cylinders/stems of known geometry.
 6. Measure voxel-size versus preservation/latency.
 7. Validate hard stem/branch and soft leaf behavior.
-8. Export a stable interface to Whole-Body MPC.
+8. Freeze the interface to Whole-Body MPC (in-process `SemanticDistanceQuery`, already used by `scout_piper_whole_body_mpc/scene_adapter.py`).
 
 ---
 

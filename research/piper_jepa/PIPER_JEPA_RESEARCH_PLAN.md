@@ -1454,7 +1454,8 @@ These criteria protect the project from confirmation bias.
 `scout_piper_scene_repr`
 - nvblox integration (RealSense → nvblox validated);
 - class demux + semantic class policy YAML;
-- MoveIt collision-query plugin (**scaffold; reports no collision until P1.4**).
+- CPU `SemanticVoxelMap` + `SemanticDistanceQuery` planner distance query (`python/scout_piper_scene_repr_py/`, v0 backend, 2026-10-06);
+- MoveIt collision-query plugin (**scaffold; reports no collision until P1.3.1 / P1.7.7**).
 
 `plant_twin`
 - explicit leaf/stem deformation fitting (one leaf + stem, analytic-Jacobian LM).
@@ -1462,26 +1463,27 @@ These criteria protect the project from confirmation bias.
 `scout_piper_bringup`
 - integrated system launch.
 
-### Proposed package: `scout_piper_jepa`
+### `scout_piper_jepa` (Stage A implemented 2026-10-06; not yet in `full_system.launch.py`)
 
 ```text
-scout_piper_jepa/
-  encoder.py
-  target_memory.py
-  predictor.py
-  action_embedding.py
-  target_state_node.py
-  predictive_cost.py
-  uncertainty.py
-  rosbag_dataset.py
-  train_predictor.py
-  eval_tracking.py
-  eval_prediction.py
+Codes/src/scout_piper_jepa/scout_piper_jepa/
+  encoder.py            # implemented: DenseEncoder, VJepaEncoder (torch.hub), ColorPatchEncoder (numpy reference)
+  target_memory.py      # implemented: Stage A dense target memory
+  metrics.py            # implemented: E1 tracking metrics
+  episode.py            # implemented: rosbag2 → .npz export + offline E1 evaluation (covers rosbag_dataset / eval_tracking)
+  image_codec.py        # implemented: sensor_msgs/Image ↔ numpy without cv_bridge
+  action.py             # implemented: Stage B action embedding Γ(x,u)
+  target_state_node.py  # implemented: ROS 2 node
+  predictor.py          # planned (Stage B)
+  predictive_cost.py    # planned (Stage C; plugs into WholeBodyCost.extra)
+  uncertainty.py        # planned
+  train_predictor.py    # planned
+  eval_prediction.py    # planned
 ```
 
-### Proposed package: `scout_piper_whole_body_mpc`
+### `scout_piper_whole_body_mpc` (geometry-only baseline implemented 2026-10-06; not yet in `full_system.launch.py`)
 
-Layout is owned by the whole-body MPC track ([`../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md`](../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md) §23). Piper-JEPA does not add modules there: the visibility and identity terms live in `scout_piper_jepa/predictive_cost.py` and are passed to the MPC as extra cost terms, so the geometry-only baseline (`WB:W4` / `C2`) and Piper-JEPA (`C3`) share identical dynamics, solver, geometry costs and safety layer.
+Layout is owned by the whole-body MPC track ([`../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md`](../whole_body_mpc/WHOLE_BODY_MPC_RESEARCH_PLAN.md) §23). Piper-JEPA does not add modules there: the visibility and identity terms live in `scout_piper_jepa/predictive_cost.py` and are passed to the MPC through the `extra` hook of `costs/terms.py`, so the geometry-only baseline (`WB:W4` / `C2`) and Piper-JEPA (`C3`) share identical dynamics, solver, geometry costs and safety layer.
 
 ---
 
@@ -1503,6 +1505,8 @@ Fields:
 - visible flag;
 - valid-depth flag.
 
+Implemented in Stage A (2026-10-06) by `scout_piper_jepa/target_state_node.py` as `std_msgs/String` JSON (`stamp`, `max_age`, `status`, `visible`, `confidence`, `entropy`, `u_mean`, `u_cov`, `p_world`, `p_cov`; `p_world` is null without valid depth), plus `/piper_jepa/target_point` (`PointStamped`, valid depth only) and `/piper_jepa/target_visible` (`Bool`). Re-grounding goes through `/piper_jepa/init_mask`. No target-ID field is published yet.
+
 ### Predictor output
 
 `/piper_jepa/prediction_status`
@@ -1511,16 +1515,7 @@ Avoid streaming entire dense rollouts over ordinary ROS messages in the normal c
 
 ### Planner output
 
-`/whole_body_mpc/cmd`
-
-Containing:
-- base $v,\omega$;
-- arm joint velocities;
-- timestamp;
-- safety status;
-- controller mode.
-
-This is an internal command, not an actuator interface. After the safety projection it is split into `/cmd_vel` for `scout_ros2` and servo commands for the arm through `moveit_servo`.
+Implemented in `scout_piper_whole_body_mpc/controller_node.py` (2026-10-06) without a combined command topic. After the safety filter, base $v,\omega$ go to `/cmd_vel` for `scout_ros2` and arm joint velocities go to `moveit_servo` as `control_msgs/JointJog` on `/servo_node/delta_joint_cmds`. With `execute: false` (the default) both go to `/whole_body_mpc/preview/*` instead. `/whole_body_mpc/status` (`std_msgs/String` JSON) carries controller mode, TCP error, safety reason, solve time and state/geometry ages; `/whole_body_mpc/plan` (`nav_msgs/Path`) carries the predicted TCP path.
 
 ---
 
@@ -1684,14 +1679,14 @@ Before submission:
 
 ## 39. Immediate next implementation tasks
 
-1. Build `scout_piper_jepa` package skeleton.
+1. Build `scout_piper_jepa` package skeleton (done 2026-10-06, P2A.1–P2A.4).
 2. Add rosbag2 dataset recorder for RGB-D + TF + robot state + target ID.
 3. Run V-JEPA 2.1 ViT-B inference offline on recorded Piper-Scout video.
-4. Implement mask-initialized dense target descriptor and similarity map.
+4. Implement mask-initialized dense target descriptor and similarity map (done 2026-10-06 with the numpy reference encoder; V-JEPA not yet run, item 3).
 5. Compare against the current framewise target and one strong conventional tracker.
 6. Measure target-ID retention under arm motion and temporary occlusion.
 7. Only after H1 is supported, begin embodiment-specific action-conditioned post-training.
-8. In parallel, finish Phase 3A geometry-only whole-body MPC so Piper-JEPA has a strong deterministic comparator.
+8. In parallel, finish Phase 3A geometry-only whole-body MPC so Piper-JEPA has a strong deterministic comparator (offline baseline in place 2026-10-06, P3A.1–P3A.5; P3A.6–P3A.8 open).
 
 ---
 

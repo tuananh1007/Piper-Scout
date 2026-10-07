@@ -59,10 +59,11 @@ here; the Orin CPU will be slower and semantic queries add cost.
 - R1 still drives the base 8–11 cm; `w_base` trades this against R3 speed.
 - Kinematic model only; the skid-steer correction is two scalars until WE1
   data says otherwise.
-- Not run on hardware; no ROS in the dev container.
+- Not run on hardware; the tests cover the numpy core only (no ROS needed).
 
 ## Tests
 
 ```bash
-cd Codes && python -m pytest src/scout_piper_whole_body_mpc/test -q
+cd Codes/src/scout_piper_whole_body_mpc && PYTHONPATH=../scout_piper_scene_repr/python python -m pytest test -q
+# without the PYTHONPATH the semantic-scene adapter test is skipped
 ```

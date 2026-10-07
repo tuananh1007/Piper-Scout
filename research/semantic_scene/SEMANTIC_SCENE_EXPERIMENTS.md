@@ -294,6 +294,6 @@ Planner query/update latency must be compatible with the selected whole-body con
 1. Build controlled thin-cylinder reference scene.
 2. Record RGB-D at multiple distances/orientations.
 3. Evaluate current nvblox geometry with 2-3 voxel sizes.
-4. Add semantic mask gating.
-5. Implement query test harness.
+4. Run the existing semantic mask gating (`class_demux_node.py`, CPU `SemanticVoxelMap`) on the recorded scenes.
+5. Extend the synthetic query tests (`test/test_distance_query.py`) to the S3 reference geometry.
 6. Freeze G0-G4 definitions before S4.

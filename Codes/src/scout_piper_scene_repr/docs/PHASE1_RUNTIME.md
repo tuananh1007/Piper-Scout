@@ -11,7 +11,7 @@ The companion design doc is [`PHASE1_DESIGN.md`](PHASE1_DESIGN.md).
 | `class_demux_node` (Python) | Our dev container | ☑ Built, fully testable today |
 | Synthetic mask publisher (test) | Our dev container | ☑ For plumbing tests without nvblox |
 | `nvblox_node` (Isaac ROS) | Our dev container, **built from source** | ☑ Built and validated with RealSense D405 |
-| `semantic_collision_plugin` (C++) | MoveIt 2's move_group | ☑ Built; needs nvblox ESDF API wiring (P1.4) |
+| `semantic_collision_plugin` (C++) | MoveIt 2's move_group | ◐ Scaffold builds; reports no collision / infinite distance until wired to the semantic query or nvblox ESDF (P1.3.1 / P1.7.7) |
 
 ## Why source build, not apt
 
@@ -53,7 +53,7 @@ rqt &                                       # Image View → /scene_repr/mask/le
 
 ```bash
 # Host:
-cd ~/agilex/piper_ros/Piper_Scout_ws/Codes
+cd Codes          # from the repository root
 git pull
 ./docker/build_dev.sh
 ```
@@ -64,15 +64,14 @@ libsqlite3-dev, libbenchmark-dev, libgtest-dev, libgmock-dev. ~10 min.
 ### 2b — Pull the Isaac ROS source repos
 
 ```bash
-cd ~/agilex/piper_ros/Piper_Scout_ws/Codes
+cd Codes          # from the repository root
 PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml
 ./scripts/patch_upstream.sh
 ```
 
-This adds three new source trees to `src/`:
-- `nvblox` (~50 MB, the CUDA TSDF/ESDF library)
-- `isaac_ros_nvblox` (~10 MB, the ROS 2 wrapper)
-- `isaac_ros_common` (~5 MB, support utilities)
+This adds the Isaac ROS source trees pinned in `repos.yaml` (`release-3.2`) to `src/`:
+- `isaac_ros_nvblox` (the ROS 2 wrapper; the nvblox CUDA TSDF/ESDF library, ~50 MB, is a submodule at `nvblox_ros/nvblox_core` that `patch_upstream.sh` initialises)
+- `isaac_ros_common`, `isaac_ros_nitros`, `isaac_ros_gxf` (repo `gxf`) and `negotiated` (support and transport dependencies)
 
 ### 2c — Build inside the container
 
@@ -140,11 +139,15 @@ reset the D405 can take several seconds to re-enumerate.
 ## Step 3 — Wire class_demux -> 4x nvblox
 
 Phase 1 v0 design (see `PHASE1_DESIGN.md` §5): instantiate four nvblox
-nodes, each consuming the mask-gated depth from one class. Already wired in
-[`launch/nvblox_semantic.launch.py`](../launch/nvblox_semantic.launch.py):
+nodes, each consuming the mask-gated depth from one class. Drafted in
+[`launch/nvblox_semantic.launch.py`](../launch/nvblox_semantic.launch.py) but not yet run (P1.2.1). It still
+launches `isaac_ros_nvblox`/`nvblox_node` with the older `depth/image`-style remaps, whereas the validated
+Step 2e path uses `nvblox_ros`/`nvblox_node` with `camera_0/*` remaps:
 
 ```bash
 ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=merged
+# or, while segmentation_node still publishes /stem_grasp/mask + /stem_grasp/target_mask:
+ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
 ```
 
 ## Likely build issues + workarounds
@@ -152,7 +155,7 @@ ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=merged
 | Symptom | Cause | Fix |
 |---|---|---|
 | `nvcc not found` after rebuild | PATH didn't pick up CUDA | `source /etc/bash.bashrc` or `export PATH=/usr/local/cuda-12.4/bin:$PATH` |
-| isaac_ros_nvblox doesn't have a humble tag | release-3.x deleted | Try `release-3.0`, `release-3.1`, or the `humble` branch |
+| `vcs import` cannot find an isaac_ros_* tag | Tag removed upstream | `repos.yaml` pins `release-3.2` (last Humble-targeted tag, validated in P1.1.1); try another `release-3.x` tag only if that one disappears |
 | nvblox cmake errors on `find_package(CUDAToolkit)` | CMake too old | Apt-installed cmake ≥ 3.22 should be fine; older systems may need cmake from pip |
 | Missing `gtest` | Build deps incomplete | Already added in Dockerfile rev with libgtest-dev/libgmock-dev |
 | isaac_ros_image_pipeline dep missing | Newer nvblox pulls more isaac deps | Add to repos.yaml, vcs import again |

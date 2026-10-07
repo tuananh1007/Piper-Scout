@@ -82,7 +82,7 @@ ros2 launch plant_twin plant_twin.launch.py
 | in | `/stem_grasp/leaf_filtered_cloud` | PointCloud2 (xyz+rgb) | leaf points, from `stem_grasp/pointcloud_node`; TF'd into the planning frame |
 | in | `/stem_grasp/filtered_cloud` | PointCloud2 | stem points |
 | in | `/stem_grasp/target_mask` | Image mono8 | leaf mask → outline + holes |
-| in | `/camera/depth/image_rect_raw`, `/camera/color/camera_info` | Image, CameraInfo | back-project the mask contour |
+| in | `/camera/aligned_depth_to_color/image_raw`, `/camera/color/camera_info` | Image, CameraInfo | back-project the mask contour (depth must be aligned to colour) |
 | in | `/ft_sensor/raw` | WrenchStamped | \|F\| > `contact_threshold_n` ⇒ touching |
 | in | `/joint_states` | JointState | `piper_joint7` < `gripper_closed_m` ⇒ grasped |
 | in (TF) | `piper_base_link → piper_link7` | | fingertip = contact point |
@@ -107,8 +107,8 @@ On the first frame with clouds, mask, depth and intrinsics, the node
 ## Tests
 
 ```bash
-cd Codes
-python -m pytest src/plant_twin/test -q
+cd Codes/src/plant_twin
+python -m pytest test -q
 ```
 
 Synthetic checks: rigid pose recovery from a noisy surface sample, bending
@@ -127,5 +127,4 @@ motion and stem–leaf attachment.
   it will be nearer 10–15 Hz. Each evaluation is ~3.7 ms of which the two
   KD-tree queries are ~1 ms and the (V,3,P) Jacobian assembly the rest — a
   CuPy/torch port of `evaluate` is the next lever if that is not enough.
-- **Untested on hardware** — no ROS in the dev container; only the numpy core
-  is covered by tests.
+- **Untested on hardware** — only the numpy core is covered by tests (no ROS needed).

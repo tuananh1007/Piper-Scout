@@ -3,7 +3,7 @@
 **Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense (model to be confirmed: D435 in URDF, D405 in the Phase 1 smoke test) on an AgileX Scout 2.0 skid-steer UGV  
 **Compute:** NVIDIA Jetson AGX Orin 64 GB (on-robot) + operator laptop (GUI)  
 **Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting  
-**Last updated:** 2026-10-06  
+**Last updated:** 2026-10-07  
 **Research tracks:** [`research/`](research/) — shared platform facts and the cross-track ID registry live in [`research/README.md`](research/README.md)
 
 ---
@@ -112,15 +112,15 @@ The headline research claim is therefore not “V-JEPA applied to agriculture,�
 |---|---|---|
 | ROS 2 | Humble workspace and bringup scaffolded | Hardware regression and final wiring |
 | Semantic perception | YOLO / Grounded-SAM paths | Robust open-vocabulary target initialization |
-| Geometry | RealSense → nvblox path validated | Per-class SDF completion and planner query path |
-| Target persistence | Framewise mask centroid + cached 3-D skeleton | Identity can jump under motion, sway, occlusion, or segmentation dropout |
+| Geometry | RealSense → nvblox path validated; CPU `SemanticVoxelMap` + `SemanticDistanceQuery` planner query (v0 backend, synthetic tests) | Per-class nvblox SDF completion; nvblox-backed query; real thin-structure scenes and Orin timing (P1.7.6) |
+| Target persistence | `stem_grasp`: framewise mask centroid + cached 3-D skeleton; `scout_piper_jepa`: Stage A target memory (gated dense matching, re-grounding via `/piper_jepa/init_mask`), tested only with the numpy reference encoder on synthetic scenes | `stem_grasp` identity can still jump under motion, sway, occlusion, or segmentation dropout; V-JEPA not yet run on GPU; E1 dataset and go/no-go benchmark open (P2A.5–P2A.6); `scout_piper_jepa` not in bringup or consumed by `stem_grasp`; untested on hardware |
 | Servo | `FullAdaptiveServoController` | No explicit horizon or semantic constraints |
-| Whole-body control | Planned | No coordinated non-holonomic base + arm MPC yet |
+| Whole-body control | `scout_piper_whole_body_mpc`: geometry-only MPPI (unicycle base + Piper FK from the URDF), safety filter, dry-run ROS node; ≈60 ms/step on 4-core x86 dev CPU (synthetic, no semantic geometry) | Not run on hardware; WE1 slip and TCP calibration (P3A.7); stalls 3–4 cm short when an obstacle blocks the straight path (P3A.6); Orin timing and GPU port; not in bringup |
 | Prediction | None | Planner cannot forecast whether motion preserves target visibility |
 | Deformation | `plant_twin`: one leaf + its stem, analytic-Jacobian LM fit ≈28 ms/frame on x86 dev CPU, RViz output | Untested on hardware; no fit-confidence/timestamp topic; current-state fitter only (no forward model); not coupled to planning/control |
-| Collision queries | `scout_piper_scene_repr` MoveIt plugin scaffold | Currently reports *no collision, infinite distance* — must not be relied on until P1.4 |
+| Collision queries | `scout_piper_scene_repr` MoveIt plugin scaffold; CPU `SemanticDistanceQuery` usable in-process (used by the whole-body MPC) | Plugin still reports *no collision, infinite distance* — must not be relied on until it uses the query (P1.3.1 / P1.7.7) |
 | Force sensing | Code expects `/ft_sensor/raw` | No wrist F/T sensor in the hardware list — add one or calibrate a Piper joint-effort estimate before any force gate is trusted |
-| Depth alignment | Bringup enables `align_depth` | `stem_grasp` and `plant_twin` default to unaligned `/camera/depth/image_rect_raw`; switch to `/camera/aligned_depth_to_color/image_raw` |
+| Depth alignment | Bringup enables `align_depth`; all depth consumers (`stem_grasp`, `plant_twin`, `scout_piper_scene_repr`, `scout_piper_jepa`, bringup `system.yaml`) default to `/camera/aligned_depth_to_color/image_raw` (2026-10-06) | Hardware check of the aligned stream (P0.3.8) |
 | Language interface | Planned | No persistent linkage between grounded language target and execution target |
 
 ---
@@ -140,7 +140,8 @@ The revised sequence separates **representation**, **local control**, **geometry
 - Nav2 hardware validation;
 - Piper + Scout + RealSense synchronized hardware bringup;
 - ROS 1 → ROS 2 regression;
-- E-stop / stop-and-zero validation.
+- E-stop / stop-and-zero validation;
+- pipeline plan→execute through MoveIt (P0.4.11; `moveit_py` has no Humble binary) and the iterative approach state machine (P0.4.13).
 
 **Exit criteria**
 - Arm + base + camera + TF operate together on hardware.
@@ -848,7 +849,7 @@ Do not treat projected desktop-GPU throughput as an Orin result.
 | Target-memory matching | same process as encoder | incremental latency, jitter |
 | Action predictor | compact predictor first | rollout latency vs horizon, accuracy |
 | `plant_twin` | current CPU fitter (≈28 ms/frame on 4-core x86 dev CPU, one leaf + stem) | Orin fit rate, confidence, CPU cost per tracked structure |
-| Geometry whole-body MPC | GPU-batched | solve-time distribution, missed deadlines |
+| Geometry whole-body MPC | current CPU numpy MPPI (≈60 ms/step on 4-core x86 dev CPU, no semantic geometry); GPU-batched next | solve-time distribution, missed deadlines |
 | JEPA-aware MPC | asynchronous predictor + faster controller | prediction age at command time |
 | Local MPPI / servo | highest-rate bounded loop | sustained rate, jitter, stop latency |
 | Language / VLM | laptop default if needed | instruction latency, network dependency |
@@ -892,7 +893,7 @@ All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
 | No wrist F/T sensor on the platform | High | decide on an added sensor or a calibrated joint-effort estimate before Phase 2B; no force claims until then |
 | Camera minimum range blinds depth near grasp | Medium-high (D435) / low (D405) | confirm camera model; image-space servo + last valid depth for the final approach |
 | Skid-steer slip breaks the unicycle model | Medium | identify effective track width/slip (WE1); conservative base velocity near plants |
-| Semantic plugin stub mistaken for a safety layer | Medium | plugin reports no collision until P1.4; do not wire into execution before the query tests pass |
+| Semantic plugin stub mistaken for a safety layer | Medium | plugin reports no collision until P1.3.1 / P1.7.7; do not wire into execution before the query tests pass |
 
 ---
 
