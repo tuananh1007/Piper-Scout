@@ -24,6 +24,11 @@
   <depend>moveit_ros_planning</depend>
   <depend>nav_msgs</depend>
 
+  <!-- Python: policy loading, CPU voxel map and distance query -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
   <!-- Pulled via vcs / Isaac ROS install — not via rosdep -->
   <exec_depend>isaac_ros_nvblox</exec_depend>
   <exec_depend>nvblox_ros</exec_depend>
