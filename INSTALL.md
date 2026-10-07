@@ -31,7 +31,7 @@ you power anything on.
 | `stem_grasp` plan → execute, iterative approach | **Not done** (P0.4.11, P0.4.13): the pipeline only publishes `/stem_grasp/target_pose` |
 | Software stop (`hotkey_stop_and_zero`) | `x` sends zero twists and disables `piper_servo_bridge`, so servo-driven arm motion stops and the arm holds its measured pose. It does not stop the base and is no substitute for the physical stops |
 | Hand-eye calibration | Tools are on the lab machine, not in this repository; camera and mount offsets in the URDF are placeholders |
-| Nav2 | In the bringup; driving to a goal not validated (P0.6.2) |
+| Nav2 | **Not usable on this robot as configured** (P0.6.2): `scout_nav2` expects an Ouster 3D lidar and a site map, and the bringup starts its simulation configuration (10.8) |
 | RealSense → nvblox reconstruction | Validated in the dev container with a D405 (P1.1.2) |
 | Per-class semantic nvblox (`nvblox_semantic.launch.py`) | Never run (P1.2.1) |
 | CPU semantic map, distance field, MoveIt semantic collision plugin | Unit-tested; not run in `move_group` on the robot |
@@ -88,23 +88,27 @@ repo `jetson/x86_64/jammy`, GXF prebuilts `gxf_x86_64_cuda_12_6`). The dev
 container uses host networking, so it can already talk DDS to a Jetson on the
 same LAN if both use the same `ROS_DOMAIN_ID` (the container defaults to `42`).
 
-- **TODO(maintainer):** document JetPack / L4T and Ubuntu versions, native vs. aarch64 container, aarch64 sources for CUDA, VPI and the GXF prebuilts, the nvblox build, and the torch wheel for V-JEPA.
+Constraint from the pinned upstreams: Isaac ROS release-3.2 builds its
+arm64 images on CUDA 12.6 / Ubuntu 22.04 (`isaac_ros_common` `docker/Dockerfile.x86_64`,
+`base-arm64` stage), and ROS 2 Humble needs Ubuntu 22.04, so the Jetson needs a
+JetPack 6 release with Ubuntu 22.04 and CUDA 12.6.
+
+- **TODO(maintainer):** record the Orin's JetPack / L4T version, then document native vs. aarch64 container, the aarch64 VPI and GXF sources, the nvblox build and the torch wheel for V-JEPA.
 
 ## Step 1 — Prerequisites
 
 **Hardware (robot):** AgileX Piper arm, AgileX Scout 2.0 base, one USB-CAN
 adapter per robot (the Piper on `can0`, the Scout on `can1`), and an Intel
-RealSense mounted eye-in-hand. The URDF models a D435; the Phase 1 nvblox
-smoke test used a D405. In Phase 0 the adapters and the camera plug into the
+RealSense **D405** mounted eye-in-hand (confirmed 2026-10-06; the URDF uses
+the `sensor_d405` macro). In Phase 0 the adapters and the camera plug into the
 x86_64 machine running path B or C (the dev container passes USB through).
-
-- **TODO(maintainer):** confirm which RealSense model is mounted.
 
 **Workstation (paths B and C):** x86_64 with an NVIDIA GPU and its driver
 already installed. The dev container requests the `nvidia` runtime and will
 not start without it; the nvblox build needs CUDA. Path D needs no GPU.
 
-- **TODO(maintainer):** state the minimum NVIDIA driver version and GPU.
+- **Driver:** R560 or newer. The GXF prebuilts that `patch_upstream.sh` pulls are built for CUDA 12.6 (`gxf_x86_64_cuda_12_6`) and the Isaac ROS 3.2 images are CUDA 12.6, whose release driver branch is R560. Older CUDA 12-capable drivers rely on CUDA minor-version compatibility and are untested here. Check with `nvidia-smi` (driver version and "CUDA Version: 12.6" or higher).
+- **TODO(maintainer):** record the GPU of the lab workstation where nvblox was validated (P1.1.2) as the known-good model.
 
 **Operating system:** path B Ubuntu 22.04 (jammy); path C Ubuntu 20.04
 (focal), which `install_docker_nvidia.sh` is written for; path D any OS with
@@ -292,8 +296,8 @@ base download plus the CUDA and VPI layers).
 followed by the `docker compose` command, and `docker image ls piper-scout-dev`
 lists the `humble` tag.
 
-- The image does not install `piper_sdk` and `python-can`, which the arm driver needs. **TODO(maintainer):** add them to the `pip3 install` line in `docker/Dockerfile.dev` and rebuild. Until then, run `python3 -m pip install --user piper_sdk python-can` in each new container before `bringup_arm:=true` (it is lost when the container exits).
-- `ultralytics` pulls in an unpinned `torch`. **TODO(maintainer):** pin the torch intended for V-JEPA.
+- The image installs `piper_sdk` and `python-can` (the arm driver's runtime dependencies) since 2026-10-07; an image built before that needs `./docker/build_dev.sh` again.
+- `ultralytics` pulls in an unpinned `torch`. V-JEPA additionally needs `timm` and `einops` (vjepa2 `requirements.txt`: `torch>=2`); they are not in the image, so install them when switching the JEPA node to `encoder: vjepa` (10.12).
 
 ## Step 4 — Pull the upstream packages
 
@@ -314,7 +318,7 @@ PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml  # path C (vcstool from 
 | `scout_ros2/` | `agilexrobotics/scout_ros2@humble` | Scout base CAN driver |
 | `ugv_sdk/` | `westonrobot/ugv_sdk@main` | CAN SDK used by `scout_base` |
 | `scout_nav2/` | `AIRLab-POLIMI/scout_nav2@main` | Nav2 stack tuned for the Scout |
-| `realsense-ros/` | `IntelRealSense/realsense-ros@ros2-development` | Camera driver |
+| `realsense-ros/` | `IntelRealSense/realsense-ros@4.58.4` | Camera driver (matches ROS Humble's librealsense2 2.58, 9.2) |
 | `isaac_ros_common/`, `isaac_ros_nvblox/`, `isaac_ros_nitros/`, `isaac_ros_gxf/` | `NVIDIA-ISAAC-ROS/*@release-3.2` (`isaac_ros_gxf` is the `gxf` repo) | nvblox from source; release-3.2 is the last Humble tag and there are no Isaac ROS apt packages for Humble any more |
 | `negotiated/` | `osrf/negotiated@master` | Needed by `isaac_ros_nitros` |
 
@@ -396,15 +400,18 @@ colcon build --symlink-install
 rebuilds only: it runs `rosdep install ... || true`, which hides failures,
 and skips `rosdep init` / `rosdep update`.
 
-Building without CUDA is not validated. Going by the `package.xml`
-dependencies, this should leave out the Isaac ROS packages, and with them
-`scout_piper_scene_repr` and `scout_piper_whole_body_mpc`:
+Without CUDA, build only the packages that do not depend on Isaac ROS:
 
 ```bash
 colcon build --symlink-install --packages-up-to scout_piper_bringup plant_twin scout_piper_jepa
 ```
 
-- **TODO(maintainer):** confirm a supported way to build only the packages that do not need CUDA.
+`colcon list --packages-up-to` on the imported workspace resolves this to 19
+packages (our bringup, description, `stem_grasp`, `plant_twin`,
+`scout_piper_jepa`, the Piper, Scout and RealSense packages, `ugv_sdk`,
+`scout_nav2`) and none from Isaac ROS. `scout_piper_scene_repr` and
+`scout_piper_whole_body_mpc` each pull in 26 Isaac ROS packages, so they need
+the CUDA setup; their pure-Python parts still run without ROS (path D).
 - If the upstream `piper_ros` build needs apt packages that rosdep does not cover, see its README (`src/piper_ros/README(EN).MD`).
 
 ### 6C — Inside the dev container (path C)
@@ -447,8 +454,8 @@ Notes on the container:
 - Every `docker compose ... run --rm dev` creates a new container and removes it on exit; only `/workspace` (`Codes/`) persists.
 - It runs privileged with host networking, host IPC, the NVIDIA runtime, X11, USB (`/dev/bus/usb`) and `/sys/class/net`, so it sees the host's CAN interfaces and the camera.
 - `ROS_DOMAIN_ID` defaults to `42`; machines outside the container must use the same value to see its topics.
-- A second shell in the **same** container (standard Docker): `docker exec -it $(docker ps -q --filter ancestor=piper-scout-dev:humble | head -n 1) bash`.
-- **TODO(maintainer):** confirm the second-shell method and whether `xhost` is needed for RViz.
+- A second shell in the **same** container: `docker exec -it $(docker ps -q --filter ancestor=piper-scout-dev:humble | head -n 1) bash` (standard Docker; `docker compose run` containers have generated names, so filter by image). Each new shell sources ROS from `~/.bashrc`.
+- X11: the container runs as your UID with host networking and mounts `~/.Xauthority` and `/tmp/.X11-unix`, so RViz authenticates with your own X cookie and `xhost` is not needed as long as `~/.Xauthority` holds the cookie for `$DISPLAY` (the check above). If RViz still reports `Authorization required`, allow your local user only: `xhost +SI:localuser:$(id -un)` (never `xhost +`).
 
 ## Step 7 — Source the environment
 
@@ -472,7 +479,7 @@ ros2 pkg prefix scout_piper_bringup     # expect: .../Codes/install/scout_piper_
 ros2 pkg list | grep -E 'scout_piper|stem_grasp|plant_twin'
 ```
 
-- **TODO(maintainer):** state which RMW to use (`ros-humble-rmw-cyclonedds-cpp` is installed, but `RMW_IMPLEMENTATION` is never set).
+- RMW: nothing in the repository sets `RMW_IMPLEMENTATION`, so everything so far, including the nvblox validation (P1.1.2), ran on Humble's default, Fast DDS (`rmw_fastrtps_cpp`). Keep the default. `rmw_cyclonedds_cpp` is installed as an alternative; if you switch, export the same `RMW_IMPLEMENTATION` on every machine and container, since mixed RMWs do not reliably talk to each other.
 
 ## Step 8 — Verify the build
 
@@ -521,11 +528,15 @@ interfaces are brought up on the host; the dev container shares the host
 network namespace). **sudo:** yes.
 
 > **Safety.** Nothing in this step moves the robot, but Step 10 does. Before
-> Step 10.3, make sure you know how to cut power to the Piper and the Scout:
-> there is no validated software stop. Read the
-> [`/joint_states` warning](#before-you-start-what-works-today) above.
+> Step 10.3, make sure you know how to cut power to the Piper and the Scout.
+> Read the [`/joint_states` warning](#before-you-start-what-works-today) above.
+> Software stops, none of them a substitute for cutting power:
 >
-> - **TODO(maintainer):** document the physical emergency-stop procedure for both robots and how to disable the arm safely.
+> - servo-driven arm motion: `ros2 service call /piper_servo_bridge/enable std_srvs/srv/SetBool "{data: false}"` or `x` in `hotkey_stop_and_zero`; the arm holds its measured pose (10.4);
+> - Scout: `ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"`; nothing stops the base when commands stop arriving (10.5);
+> - Piper motors: `ros2 service call /enable_srv piper_msgs/srv/Enable "enable_request: false"` (driver `DisableArm`). Upstream does not say whether the arm holds or drops when disabled, so support the arm the first time you try it.
+>
+> - **TODO(maintainer):** record the physical stop procedure of this robot (how the Scout and the Piper are stopped or their power cut) and the result of the first disable test.
 
 **9.1 CAN interfaces.** The bringup hardcodes the interface names in
 `full_system.launch.py`: `can_port: can0` for the Piper, `port_name: can1`
@@ -549,19 +560,42 @@ ip -details link show can0     # expect: state UP, bitrate 1000000
 ip -details link show can1     # expect: state UP, bitrate 500000
 ```
 
-- These invocations follow the upstream READMEs (`src/piper_ros/README(EN).MD`, `src/scout_ros2/README.md`) and have not been run on this robot yet. **TODO(maintainer):** confirm them on the robot, add a Scout script, and make the `can0` / `can1` mapping persistent across reboots.
+**Fixed names across reboots.** The bus-info is the physical USB port, so as
+long as each adapter stays in its port the mapping is stable. Upstream
+`can_config.sh` brings up both adapters with per-port names and bitrates (no
+separate Scout script needed). Copy it outside the workspace so `vcs import`
+does not overwrite it, and fill in the two ports:
 
-**9.2 RealSense.** The checklist asks for Intel RealSense SDK 2.55+, but the
-`realsense-ros@ros2-development` branch that Step 4 imports currently requires
-**librealsense2 ≥ 2.59.0** at configure time (its `CMakeLists.txt`, checked
-in October 2026). Check what is installed with `dpkg -l | grep librealsense2`;
-if it is older, install a newer librealsense2 or pin `realsense-ros` in
-`repos.yaml` to a tag that matches the installed SDK. The dev image and 3B.2
-also install `ros-humble-realsense2-camera` from apt.
+```bash
+cp src/piper_ros/can_config.sh ~/can_config.sh      # from Codes/
+# edit ~/can_config.sh: keep EXPECTED_CAN_COUNT=2 and replace the USB_PORTS lines with
+#   USB_PORTS["<piper-bus-info>"]="can0:1000000"
+#   USB_PORTS["<scout-bus-info>"]="can1:500000"
+bash ~/can_config.sh                                 # run after every boot (or from a systemd unit)
+```
 
-**Check:** `lsusb | grep -i intel` lists the camera; the real check is Step 10.6.
+- These commands follow the upstream scripts and READMEs (`src/piper_ros/README(EN).MD` §2, `src/scout_ros2/README.md`) and have not been run on this robot yet. **TODO(maintainer):** record the two bus-info values once confirmed.
 
-- **TODO(maintainer):** document the librealsense install and udev rules for a fresh host, and which `realsense2_camera` (apt or source) is intended.
+**9.2 RealSense (D405).** The SDK is ROS Humble's `ros-humble-librealsense2`
+(2.58.4 as of October 2026), which rosdep and the `ros-humble-realsense2-camera`
+apt package install; no separate Intel SDK is needed. `repos.yaml` pins the
+source `realsense-ros` to `4.58.4`, which needs librealsense2 ≥ 2.58.0 (the
+`ros2-development` branch needs 2.59 and would not configure). After
+`source install/setup.bash` the workspace build of `realsense2_camera`
+overrides the apt one; both are 4.58.x.
+
+The ROS SDK package uses the libusb backend and installs no udev rules. On a
+fresh host (the one the camera plugs into), install Intel's rules for that
+release, then replug the camera:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/IntelRealSense/librealsense/v2.58.4/config/99-realsense-libusb.rules \
+  | sudo tee /etc/udev/rules.d/99-realsense-libusb.rules > /dev/null
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**Check:** `dpkg -l | grep librealsense2` shows 2.58.x; `lsusb | grep -i intel`
+lists the camera; the real check is Step 10.6.
 
 **9.3 Calibration placeholders.** The Piper mount offset (`base_link` →
 `piper_mount_link`, xyz `0.15 0.0 0.18`) and the camera offset (`cam_xyz`
@@ -743,9 +777,21 @@ In a second terminal, with the base on the ground and the area clear:
 ros2 topic pub /cmd_vel geometry_msgs/msg/Twist '{linear: {x: 0.1}}' --rate 5
 ```
 
-**Pass:** the Scout creeps forward at 0.1 m/s; Ctrl-C stops publishing.
+Then stop it explicitly: Ctrl-C only stops publishing, it does not command a stop.
 
-- **TODO(maintainer):** document whether the Scout driver stops on a `/cmd_vel` timeout.
+```bash
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"
+```
+
+**Pass:** the Scout creeps forward at 0.1 m/s and halts on the zero twist.
+
+Neither `scout_ros2` (each `/cmd_vel` goes straight to `SetMotionCommand`) nor
+`ugv_sdk` has a command timeout, so whether the base stops when commands stop
+arriving depends on the Scout firmware, which these sources do not document.
+Find out with the wheels off the ground first: publish as above, press Ctrl-C
+**without** sending the zero twist, and watch the wheels.
+
+- **TODO(maintainer):** record the result of that test.
 
 ### 10.6 RealSense only
 
@@ -780,10 +826,19 @@ ros2 launch scout_piper_bringup full_system.launch.py \
   bringup_base:=true bringup_nav2:=true bringup_pipeline:=false
 ```
 
-In RViz, add the "2D Goal Pose" tool (`full_system.rviz` does not include
-it) and send a goal 2 m in front of the Scout; the base should drive there.
+**Not usable on this robot as configured.** `scout_nav2` (AIRLab-POLIMI) is
+set up for a Scout with an **Ouster 3D lidar**: its AMCL and SLAM-toolbox
+parameters read `/ouster/points` and `/ouster/scan` and odometry on
+`/odometry` (this robot has no lidar, and `scout_base` publishes `odom`). Its
+`nav2.launch.py` loads the simulated warehouse map and parameters unless
+`simulation:=false`, and `full_system.launch.py` does not pass that argument;
+the real-robot branch expects `maps/airlab/map_lidar3d_v3.yaml`, which the
+repository does not contain. Running Nav2 here needs a laser-scan source on
+the base (the eye-in-hand camera is unsuitable), a map of your site, and
+parameters for both.
 
-- **TODO(maintainer):** document the map and localization that `scout_nav2` expects.
+To try the plumbing anyway, add the "2D Goal Pose" tool in RViz
+(`full_system.rviz` does not include it).
 
 ### 10.9 stem_grasp pipeline
 
@@ -806,7 +861,8 @@ segmentation settings are not applied, because `system.yaml` keys them under
 `groundingdino-py`, `segment-anything` and checkpoints, none of which are
 installed.
 
-- **TODO(maintainer):** say where to get the YOLO weights and the Grounded-SAM checkpoints.
+- **YOLO:** the node loads `yolo_model_path` only if the file exists (no automatic download) and keeps only class `yolo_stem_class_id`. Stock Ultralytics weights have no stem class, so this is the lab's custom-trained stem model. **TODO(maintainer):** record where the trained weights are kept and the class id they use.
+- **Grounded-SAM** (public weights): GroundingDINO config `groundingdino/config/GroundingDINO_SwinT_OGC.py` (inside the `groundingdino` package) and checkpoint `https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth`; SAM for the default `sam_model_type: vit_b`: `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` (from the two projects' READMEs). Set `gdino_config`, `gdino_checkpoint` and `sam_checkpoint` to the downloaded paths.
 
 **Check:**
 
@@ -896,7 +952,7 @@ Details: [`PHASE1_RUNTIME.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_RUNT
    until `/scene_repr/distance_field` arrives and TF connects the robot model
    frame to `odom`.
 
-   - **TODO(maintainer):** name the MoveIt config / `move_group` launch to edit; the repository has none for the unified robot.
+   - The unified robot now has an SRDF (`scout_piper_bringup/config/moveit/scout_piper.srdf`, used by servo), but the repository has no `move_group` launch for it yet (planning pipeline and controller configuration missing). **TODO(maintainer):** add one when planning is needed; set `is_primary_planning_scene_monitor: false` in `servo.yaml` when both run.
 
 ### 10.11 plant_twin
 
@@ -915,7 +971,7 @@ so with YOLO or `hsv_green` the node never initialises.
 **Check:** `ros2 topic echo /plant_twin/leaf_tip` and the `/plant_twin/markers`
 MarkerArray in RViz. Untested on hardware.
 
-- **TODO(maintainer):** name the driver that publishes `/ft_sensor/raw`.
+- Nothing publishes `/ft_sensor/raw`: the platform has no wrist force/torque sensor ([research platform facts](research/README.md)). Without it `plant_twin` never sees a pull force, and force-based gates stay inactive until a sensor or a joint-effort estimate is added.
 
 ### 10.12 Piper-JEPA target state node
 
@@ -932,11 +988,15 @@ new one. `/piper_jepa/target_point` also needs aligned depth and TF from
 `ros2 topic echo /piper_jepa/target_visible`.
 
 The default encoder, `color_patch`, is a numpy reference, not V-JEPA. To use
-V-JEPA, set `encoder: vjepa` and `vjepa_hub_entry` in a copy of the config and
-retune `visible_similarity`; this needs torch, and V-JEPA has never been run
-(with an empty `vjepa_hub_entry` the node fails on the first frame).
+V-JEPA, set `encoder: vjepa` in a copy of the config and retune
+`visible_similarity`. The config already names the hub entry
+`vjepa2_1_vit_base_384` (V-JEPA 2.1 ViT-B/16 at 384 px, from vjepa2's
+`hubconf.py`); larger ones are `vjepa2_1_vit_large_384` and
+`vjepa2_1_vit_giant_384`. It needs `torch>=2`, `timm` and `einops`
+(`python3 -m pip install --user timm einops`), downloads the hub repository
+and checkpoint on first use, and has never been run on this robot.
 
-- **TODO(maintainer):** name the tool that publishes the grounding mask, the V-JEPA hub entry and the torch version.
+- **TODO(maintainer):** there is no grounding tool yet (the operator GUI is Phase 5); any mono8 mask the size of the colour image works. Decide what publishes it for experiments.
 
 ### 10.13 Whole-body MPC (dry run)
 
@@ -997,7 +1057,7 @@ python -m pip install 'numpy<2' scipy pyyaml pytest opencv-python-headless
 - `scipy` is needed by all four suites (`scout_piper_jepa` uses it in its tests without declaring it); `pyyaml` reads the scene policy files; `opencv-python-headless` enables `plant_twin`'s outline test (skipped without it).
 - Optional, torch (the two torch tests in `scout_piper_jepa`, and the E3 benchmark): `python -m pip install torch`. On Linux this installs the CUDA build (~4–5 GB); on a CPU-only machine use PyTorch's CPU index instead: `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 - Optional: a C++17 compiler (`sudo apt-get install -y build-essential`) enables the C++ sampler check in `scout_piper_scene_repr` (skipped otherwise).
-- **TODO(maintainer):** pin a torch version, with CUDA and Jetson wheel sources.
+- Versions known to work here: torch 2.14.1 (PyPI, Python 3.13) and the conda-forge CPU build used for the E3 benchmark. The Jetson wheel source is part of the Path A TODO.
 
 Run the tests from each package directory with `python -m pytest` (plain
 `pytest`, or running from `Codes/`, fails with `ModuleNotFoundError`):

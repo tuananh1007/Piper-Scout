@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-07 (INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -42,7 +42,7 @@
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P0.2.1 | Package skeleton (package.xml, CMakeLists.txt) | ☑ | ament_cmake |
-| P0.2.2 | `scout_piper.urdf.xacro` composing scout_description + piper_description + realsense | ☑ | Verify upstream paths after vcs import |
+| P0.2.2 | `scout_piper.urdf.xacro` composing scout_description + piper_description + realsense | ☑ | Verify upstream paths after vcs import. 2026-10-07: camera switched to `sensor_d405` (the mounted D405); `piper_gazebo` declared as a dependency (the arm xacro reads its controller config) |
 | P0.2.3 | Confirm no TF name collisions between Piper's `base_link` and Scout's `base_link` | ☑ | 2026-05-17 — forked piper xacro into `scout_piper_description/urdf/_piper_arm.xacro`. All 10 links + 10 joints + 8 transmissions + 8 gazebo refs prefixed via `scripts/fork_piper_arm.py` (re-runnable when upstream updates). Unified URDF now: Scout → piper_mount_link → piper_base_link → … → piper_link6 → camera_link (eye-in-hand) |
 | P0.2.4 | `view_robot.launch.py` + RViz config — visualize unified model | ☑ | Needs upstream meshes |
 | P0.2.5 | Visual sanity: arm reaches expected workspace from Scout top plate | ☐ | After P0.2.3 |
@@ -108,7 +108,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | ID | Task | Status | Notes |
 |---|---|---|---|
 | P0.6.1 | Drop in `scout_nav2` launches via include | ☑ | Wired in `full_system.launch.py` (default off) |
-| P0.6.2 | Verify Scout drives 2 m to a goal pose with arm folded | ☐ | Needs odom + 2D costmap |
+| P0.6.2 | Verify Scout drives 2 m to a goal pose with arm folded | ☐ | Blocked: `scout_nav2` is configured for an Ouster 3D lidar (`/ouster/points`, `/ouster/scan`, `/odometry`) and a site map, and `full_system.launch.py` starts its simulation configuration (`simulation` defaults to true). Needs a scan source on the base, a map and parameters (INSTALL.md 10.8) |
 | P0.6.3 | `goal_pose` rviz tool functional | ☐ | |
 
 ### P0.7 — Phase 0 regression test

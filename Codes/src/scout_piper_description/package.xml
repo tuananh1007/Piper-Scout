@@ -19,6 +19,8 @@
 
   <!-- These come from the vcs-imported upstream packages. -->
   <exec_depend>piper_description</exec_depend>
+  <!-- _piper_arm.xacro reads $(find piper_gazebo)/config/ros2_controllers.yaml -->
+  <exec_depend>piper_gazebo</exec_depend>
   <exec_depend>scout_description</exec_depend>
   <exec_depend>realsense2_description</exec_depend>
 

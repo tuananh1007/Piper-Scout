@@ -99,7 +99,9 @@ def main() -> int:
         results.append(bool(cond))
         print(("PASS " if cond else "FAIL ") + f"{name}: {detail}", flush=True)
 
-    spin(2.0)
+    end = time.time() + 10.0                       # DDS discovery can take a few seconds
+    while time.time() < end and not (fb and all(f"piper_joint{i}" in js for i in range(1, 9))):
+        spin(0.1)
     check("relay publishes piper_joint1..8", all(f"piper_joint{i}" in js for i in range(1, 9)), str(sorted(js)))
     call(Trigger, "/servo_node/start_servo", Trigger.Request())
     spin(2.0)

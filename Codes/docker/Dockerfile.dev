@@ -44,7 +44,8 @@ RUN pip3 install --no-cache-dir \
       'numpy<2' scipy scikit-image scikit-learn networkx \
       open3d \
       ultralytics \
-      'transforms3d>=0.4'
+      'transforms3d>=0.4' \
+      piper_sdk python-can
 
 # CUDA toolkit + nvblox build-time deps.
 # Needed because NVIDIA dropped the Isaac ROS apt builds for Ubuntu 22.04 +

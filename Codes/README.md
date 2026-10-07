@@ -35,7 +35,7 @@ Upstream packages will be cloned into `src/` by `vcs import`:
 - `piper_ros/` from `agilexrobotics/piper_ros@humble` (arm driver, ros2_control, MoveIt 2 config)
 - `scout_ros2/` from `agilexrobotics/scout_ros2@humble` (Scout base CAN driver)
 - `scout_nav2/` from `AIRLab-POLIMI/scout_nav2` (Nav2 stack tuned for Scout)
-- `realsense-ros/` from `IntelRealSense/realsense-ros@ros2-development` (camera driver)
+- `realsense-ros/` from `IntelRealSense/realsense-ros@4.58.4` (camera driver; matches ROS Humble's librealsense2 2.58)
 - `ugv_sdk/` from `westonrobot/ugv_sdk@main` (CAN SDK used by `scout_base`)
 - Phase 1 nvblox source build (`release-3.2`, the last Humble tags): `isaac_ros_common/`, `isaac_ros_nvblox/`,
   `isaac_ros_nitros/`, `isaac_ros_gxf/` (repo `NVIDIA-ISAAC-ROS/gxf`), plus `negotiated/` from `osrf/negotiated@master`
@@ -82,7 +82,7 @@ See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
 | Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; cross-build later via Docker or native rebuild. |
 | Arm driver | `agilexrobotics/piper_ros@humble` | Official, ros2_control + MoveIt 2 included. |
 | Base driver | `agilexrobotics/scout_ros2` + POLIMI `scout_nav2` | Official CAN driver + community Nav2 tuning. |
-| Camera | `realsense-ros@ros2-development` | Upstream; no functional change vs ROS 1. |
+| Camera | `realsense-ros@4.58.4` (D405) | Upstream; no functional change vs ROS 1. Pinned to the release matching ROS Humble's librealsense2. |
 
 ## Cross-references
 

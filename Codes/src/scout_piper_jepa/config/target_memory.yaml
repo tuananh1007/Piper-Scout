@@ -6,11 +6,14 @@ piper_jepa_target_state:
     init_mask_topic: "/piper_jepa/init_mask"   # publish a mono8 mask to (re)ground
     world_frame: "odom"
     # 'color_patch' = numpy reference encoder (runs anywhere, NOT a V-JEPA result)
-    # 'vjepa'       = V-JEPA 2/2.1 via torch.hub; set vjepa_hub_entry from the
-    #                 facebookresearch/vjepa2 README for the checkpoint you deploy
+    # 'vjepa'       = V-JEPA 2/2.1 via torch.hub (needs torch, timm, einops; the
+    #                 first load downloads the hub repo and the checkpoint).
+    #                 vjepa2_1_vit_base_384 = V-JEPA 2.1 ViT-B/16 at 384 px, the
+    #                 recommended first checkpoint (hubconf.py of vjepa2 @204698b;
+    #                 also vjepa2_1_vit_large_384, vjepa2_1_vit_giant_384, ...)
     encoder: "color_patch"
     vjepa_hub_repo: "facebookresearch/vjepa2"
-    vjepa_hub_entry: ""
+    vjepa_hub_entry: "vjepa2_1_vit_base_384"
     vjepa_image_size: 384
     vjepa_device: "cuda"
     clip_length: 2

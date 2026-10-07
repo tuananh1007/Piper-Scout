@@ -18,7 +18,10 @@ repositories:
   realsense-ros:
     type: git
     url: https://github.com/IntelRealSense/realsense-ros.git
-    version: ros2-development
+    # Matches the librealsense2 that ROS Humble ships (ros-humble-librealsense2
+    # 2.58.4; 4.58.4 needs >= 2.58.0). ros2-development needs >= 2.59 and fails
+    # to configure against it. Supports the D405.
+    version: 4.58.4
 
   # ---- NVIDIA Isaac ROS (Phase 1: nvblox semantic SDF) ----
   # Source builds because the apt repo dropped jammy/Humble in Q4 2025.

@@ -3,13 +3,13 @@
 
   <!--
     Unified URDF for AgileX Piper 6-DoF arm mounted on Scout 2.0 UGV with an
-    eye-in-hand RealSense D435.
+    eye-in-hand RealSense D405.
 
     Composes three subtrees:
       1. Scout 2.0 base       — upstream scout_description (root link: base_link)
       2. Piper arm + gripper  — forked piper_description, prefixed `piper_` and
                                 wrapped in a macro (see _piper_arm.xacro)
-      3. RealSense D435       — upstream realsense2_description, mounted on
+      3. RealSense D405       — upstream realsense2_description, mounted on
                                 piper_link6 (the EE flange)
 
     TF tree:
@@ -66,12 +66,12 @@
   </xacro:piper_arm>
 
   <!-- =========================================================== -->
-  <!-- 4. RealSense D435 (eye-in-hand on the EE flange)             -->
+  <!-- 4. RealSense D405 (eye-in-hand on the EE flange)             -->
   <!-- =========================================================== -->
-  <xacro:include filename="$(find realsense2_description)/urdf/_d435.urdf.xacro"/>
+  <xacro:include filename="$(find realsense2_description)/urdf/_d405.urdf.xacro"/>
 
-  <xacro:sensor_d435 name="camera" parent="piper_link6" use_nominal_extrinsics="true">
+  <xacro:sensor_d405 name="camera" parent="piper_link6" use_nominal_extrinsics="true">
     <origin xyz="$(arg cam_xyz)" rpy="$(arg cam_rpy)"/>
-  </xacro:sensor_d435>
+  </xacro:sensor_d405>
 
 </robot>

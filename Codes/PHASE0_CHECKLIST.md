@@ -13,12 +13,11 @@ Estimated total time: **6–8 weeks** of single-engineer effort.
 - Ubuntu 22.04 with ROS 2 Humble installed (`/opt/ros/humble`), or, on the Ubuntu 20.04 workstation,
   the dev container in [`docker/README.md`](docker/README.md), which already provides the packages below and in Step 2.
 - `python3-vcstool`, `python3-colcon-common-extensions`, `python3-rosdep`.
-- Two CAN interfaces (`can0` for Piper, `can1` for Scout). Use the
-  `can_activate.sh` that ships at the root of `piper_ros` (`src/piper_ros/can_activate.sh`
-  after Step 1's `vcs import`) as the template; create a Scout-specific version
-  that brings up the second bus.
-- Intel RealSense SDK 2.55+ (on the lab machine it is installed under `lib/` in the
-  original `piper_ros` workspace, which is not part of this repository).
+- Two CAN interfaces (`can0` for Piper at 1 Mbit/s, `can1` for Scout at 500 kbit/s),
+  brought up by `piper_ros`'s `can_config.sh` with both USB ports listed
+  (INSTALL.md 9.1; `src/piper_ros/` after Step 1's `vcs import`).
+- Intel RealSense SDK: ROS Humble's `ros-humble-librealsense2` (2.58.x, installed
+  by rosdep) plus Intel's udev rules (INSTALL.md 9.2). The camera is a D405.
 
 ## Step 1 — Pull upstream packages
 
@@ -36,7 +35,7 @@ ls src   # Expect: piper_ros/ scout_ros2/ ugv_sdk/ scout_nav2/ realsense-ros/
 - [x] `piper_ros@humble` has `src/piper/` (`launch/start_single_piper.launch.py`), `src/piper_humble/`, `src/piper_description/`, `src/piper_moveit/piper_with_gripper_moveit/`, `src/piper_msgs/`, `src/piper_sim/`.
 - [x] `scout_ros2` has `scout_base/`, `scout_description/`, `scout_msgs/`.
 - [x] `scout_nav2` has `scout_nav2/launch/nav2.launch.py`.
-- [x] `realsense-ros@ros2-development` has `realsense2_camera/launch/rs_launch.py`.
+- [x] `realsense-ros` (pinned to `4.58.4` since 2026-10-07; was `ros2-development`) has `realsense2_camera/launch/rs_launch.py`.
 
 If any of these paths drift, fix the references in:
 - `src/scout_piper_bringup/launch/full_system.launch.py`
