@@ -1,6 +1,6 @@
 """Whole-body MPC core (no ROS):
 
-    cd Codes && python -m pytest src/scout_piper_whole_body_mpc/test -q
+    cd Codes/src/scout_piper_whole_body_mpc && PYTHONPATH=../scout_piper_scene_repr/python python -m pytest test -q
 """
 
 import os
@@ -9,6 +9,7 @@ import sys
 import numpy as np
 import pytest
 
+from scout_piper_whole_body_mpc.baselines.sequential import choose_base_pose, run_sequential
 from scout_piper_whole_body_mpc.costs.terms import Goal, WholeBodyCost
 from scout_piper_whole_body_mpc.dynamics.piper import JOINTS, PiperKinematics, parse_xacro_joints
 from scout_piper_whole_body_mpc.dynamics.scout import ScoutParams, fit_slip, rollout_base
@@ -101,26 +102,84 @@ def test_r3_unreachable_target_moves_the_base_and_beats_arm_only():
     assert err_arm > 0.5                       # W0 cannot reach R3
 
 
-def test_obstacle_on_the_direct_path_is_avoided():
+OBSTACLE_GOAL = np.array([0.62, -0.35, 0.40])
+OBSTACLE = ([0.58, -0.145, 0.434], 0.03)
+
+
+@pytest.mark.parametrize("seed", [0, 2])
+def test_obstacle_on_the_direct_path_is_avoided_and_the_goal_reached(seed):
     """The obstacle blocks the straight TCP path (the unobstructed run passes
     6 cm *through* it) while the goal configuration itself is 7 cm clear.
 
-    Known limitation, measured over seeds: MPPI detours safely but stalls
-    3–4 cm short of the goal (a sampling-limited local minimum). The test
-    therefore checks safety and progress, not millimetre convergence; a
-    gradient refinement (solver candidate B) is the planned fix.
+    Before P3A.6 the plain MPPI detoured safely but ended 3–5 cm short (seed 2
+    also froze for 120 steps against the safety filter). Elitism, gradient
+    refinement and a planner margin above the filter's d_safe fix both: 8/8
+    seeds ≤ 1 cm in the offline sweep.
     """
-    goal = np.array([0.62, -0.35, 0.40])
-    obstacle = ([0.58, -0.145, 0.434], 0.03)
-    m, cost, mppi, safety = _controller(goal, obstacles=[obstacle])
+    m, cost, mppi, safety = _controller(OBSTACLE_GOAL, obstacles=[OBSTACLE], seed=seed)
     log = run_closed_loop(X0, mppi, cost, safety, steps=150)
-    dist = spheres_distance_fn([obstacle[0]], [obstacle[1]])
+    dist = spheres_distance_fn([OBSTACLE[0]], [OBSTACLE[1]])
     clear = [(dist(m.collision_spheres(x[None])[0][0])[0] - m.collision_spheres(x[None])[1]).min()
              for x in log.X]
     assert min(clear) > 0.02, min(clear)                      # never inside d_safe
-    start_err = np.linalg.norm(m.tcp_world(X0)[:3, 3] - goal)
-    err = np.linalg.norm(m.tcp_world(log.X[-1])[:3, 3] - goal)
-    assert err < 0.15 * start_err, (err, start_err)           # ≥ 85 % of the way there
+    err = np.linalg.norm(m.tcp_world(log.X[-1])[:3, 3] - OBSTACLE_GOAL)
+    assert err < 0.015, err
+    assert log.reasons.count("clearance") == 0                # no deadlock against the filter
+
+
+def test_solve_never_returns_worse_than_stopping():
+    """Elitism: the zero ("stop") sequence is always scored, so the returned
+    plan cannot cost more than holding still (the old weighted average often
+    did, and the arm wandered around the goal)."""
+    m, cost, mppi, safety = _controller([0.58, 0.10, 0.40])
+    x = X0.copy()
+    x[3:] = [0.1, 1.4, -1.2, 0.0, 0.6, 0.0]
+    zero = np.zeros((1, mppi.cfg.horizon, 8))
+    for _ in range(5):
+        mppi.solve(x, cost, np.zeros(8))
+        assert mppi.last_cost <= cost(m.rollout(x, zero), zero, np.zeros(8))[0] + 1e-9
+
+
+def test_gradient_refinement_lowers_the_cost():
+    m, cost, _, _ = _controller(OBSTACLE_GOAL, obstacles=[OBSTACLE])
+    x = X0.copy()
+    plain = MPPI(m, MPPIConfig(seed=3, refine_iters=0))
+    refined = MPPI(m, MPPIConfig(seed=3, refine_iters=3))
+    plain.solve(x, cost, np.zeros(8))
+    refined.solve(x, cost, np.zeros(8))
+    assert refined.last_cost < plain.last_cost
+
+
+# ----------------------------------------------------- W1 sequential baseline
+def test_sequential_baseline_skips_the_base_when_the_goal_is_reachable():
+    m = WholeBodyModel()
+    plan = choose_base_pose(m, np.array([0.58, 0.10, 0.40]), X0)
+    assert plan is not None and np.allclose(plan.pose, X0[:3]) and plan.travel == 0.0
+
+
+def test_sequential_baseline_reaches_r3_base_first_then_arm_only():
+    goal = np.array([1.5, 0.3, 0.40])
+    m = WholeBodyModel()
+    cost = WholeBodyCost(m, Goal(p=goal))
+    res = run_sequential(X0, cost, SafetyFilter(m), steps=150, seed=0)
+    assert res.plan is not None and res.plan.ik_error_m < 0.005 and res.switch_step > 0
+    P = np.array([x[:3] for x in res.log.X])
+    assert np.allclose(P[res.switch_step:], P[res.switch_step])           # base frozen in the arm phase
+    assert np.linalg.norm(P[res.switch_step, :2] - res.plan.pose[:2]) < 0.04
+    q = np.array([x[3:] for x in res.log.X[:res.switch_step + 1]])
+    assert np.allclose(q, X0[3:])                                          # arm frozen in the base phase
+    assert np.linalg.norm(m.tcp_world(res.log.X[-1])[:3, 3] - goal) < 0.02
+
+
+def test_sequential_baseline_avoids_base_poses_in_collision():
+    goal = np.array([1.5, 0.3, 0.40])
+    m = WholeBodyModel()
+    free = choose_base_pose(m, goal, X0)
+    blocker = spheres_distance_fn([np.r_[free.pose[:2], 0.15]], [0.1])     # obstacle at that pose
+    plan = choose_base_pose(m, goal, X0, distance_fn=blocker)
+    assert plan is not None and np.linalg.norm(plan.pose[:2] - free.pose[:2]) > 0.1
+    C, r = m.collision_spheres(np.r_[plan.pose, plan.q][None])
+    assert (blocker(C[0])[0] - r).min() > 0.03
 
 
 # ----------------------------------------------------------------- safety

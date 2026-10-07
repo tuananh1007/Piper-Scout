@@ -515,7 +515,9 @@ Codes/src/scout_piper_whole_body_mpc/
     safety/
       projection.py     # limits, one-step clearance, watchdog
     solvers/
-      mppi.py           # incl. arm_only mode (W0)
+      mppi.py           # incl. arm_only mode (W0), elitism, knot-space gradient refinement (candidate B)
+    baselines/
+      sequential.py     # W1: IK base pose, base phase, arm-only phase
     scene_adapter.py    # Semantic Scene distance query → cost/safety
     sim.py
     controller_node.py
@@ -526,7 +528,7 @@ Codes/src/scout_piper_whole_body_mpc/
   test/
 ```
 
-Not yet implemented: gradient-based solver (candidate B, P3A.6).
+Candidate B is implemented as a gradient refinement of the MPPI result (P3A.6), not as a standalone solver; W2 (QP) is not implemented.
 
 ---
 
@@ -536,7 +538,7 @@ Not yet implemented: gradient-based solver (candidate B, P3A.6).
 2. Integrate Piper forward kinematics/Jacobian (done 2026-10-06, P3A.2).
 3. Create synthetic SDF benchmark environment (done 2026-10-06: `sim.py`, analytic sphere fields, `benchmarks/reachability.py`).
 4. Implement goal, smoothness, base, and manipulability costs (done 2026-10-06, P3A.3).
-5. Compare MPPI versus one gradient/QP baseline offline.
+5. Compare MPPI versus one gradient/QP baseline offline (MPPI ± gradient refinement compared on O1, 2026-10-07; QP baseline W2 open).
 6. Integrate Semantic Scene distance-query API when stable (adapter done 2026-10-06, `scene_adapter.py`; not yet run on real geometry).
 7. Run R1-R3 before R4 (offline synthetic R1-R3 done 2026-10-06; hardware open).
 8. Freeze W4 before integrating Piper-JEPA costs.

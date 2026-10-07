@@ -61,7 +61,8 @@ class WholeBodyMpcNode(Node):
             ("horizon", 20), ("samples", 256), ("iterations", 2), ("temperature", 0.1),
             ("v_max", 0.3), ("omega_max", 0.6), ("qd_max", 0.6),
             ("k_v", 1.0), ("k_omega", 1.0),
-            ("w_base", 100.0), ("d_safe", 0.02),
+            ("w_base", 100.0), ("d_safe", 0.02), ("plan_margin_m", 0.01),
+            ("refine_iters", 2),
             ("use_semantic_scene", False),
             ("scene_grid_center", [0.6, 0.0, 0.6]), ("scene_half_extent_m", 0.5),
             ("scene_voxel_size_m", 0.01), ("max_state_age_s", 0.2), ("max_geometry_age_s", 1.0),
@@ -79,8 +80,11 @@ class WholeBodyMpcNode(Node):
             kin=PiperKinematics(tcp_offset_m=float(p("tcp_offset_m"))))
         self.mppi = MPPI(self.model, MPPIConfig(horizon=int(p("horizon")), samples=int(p("samples")),
                                                 iterations=int(p("iterations")),
-                                                temperature=float(p("temperature"))))
-        self.weights = CostWeights(base=float(p("w_base")), d_safe=float(p("d_safe")))
+                                                temperature=float(p("temperature")),
+                                                refine_iters=int(p("refine_iters"))))
+        # the planner keeps plan_margin_m more clearance than the safety filter enforces
+        self.weights = CostWeights(base=float(p("w_base")),
+                                   d_safe=float(p("d_safe")) + max(float(p("plan_margin_m")), 0.0))
         self.d_safe = float(p("d_safe"))
         self.max_state_age = float(p("max_state_age_s"))
         self.max_geom_age = float(p("max_geometry_age_s"))

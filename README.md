@@ -29,7 +29,7 @@ visual servo for the final approach.
 | 1 | Semantic RGB-D scene (nvblox) + deformable plant state (`plant_twin`) | ◐ in progress (RealSense→nvblox validated; `plant_twin` core + node done; CPU semantic distance query and MoveIt semantic collision plugin done, not yet on hardware) |
 | 2A | V-JEPA 2.1 dense temporal target state | ◐ in progress (Stage A target memory in `scout_piper_jepa` done; E1 dataset + V-JEPA runs pending) |
 | 2B | Safety-bounded local MPPI visual servo | ☐ not started |
-| 3A | Geometry-only whole-body GPU MPC (Scout + Piper) | ◐ in progress (`scout_piper_whole_body_mpc` CPU MPPI + safety filter + dry-run node done; obstacle local minima, hardware and Orin runs pending) |
+| 3A | Geometry-only whole-body GPU MPC (Scout + Piper) | ◐ in progress (`scout_piper_whole_body_mpc` CPU MPPI + safety filter + dry-run node, convergence near obstacles and W0/W1 baselines done; hardware and Orin runs pending) |
 | 3B | Piper-JEPA predictive whole-body MPC (headline) | ☐ not started |
 | 4 | Uncertainty-driven active perception | ☐ not started |
 | 5 | Language/VLM + operator GUI for non-experts | ☐ not started |

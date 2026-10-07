@@ -21,7 +21,9 @@ whole_body_mpc:
     k_v: 1.0                                  # from WE1 slip identification (fit_slip)
     k_omega: 1.0
     w_base: 100.0
-    d_safe: 0.02
+    d_safe: 0.02                              # safety filter: hard one-step clearance
+    plan_margin_m: 0.01                       # planner penalises below d_safe + this (0 deadlocks)
+    refine_iters: 2                           # gradient refinement steps per solve (0 = pure MPPI)
     use_semantic_scene: false                 # true = in-process SemanticVoxelMap
     scene_grid_center: [0.6, 0.0, 0.6]
     scene_half_extent_m: 0.5

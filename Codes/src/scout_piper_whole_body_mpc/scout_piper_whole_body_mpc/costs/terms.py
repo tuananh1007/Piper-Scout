@@ -52,7 +52,10 @@ class CostWeights:
     omega: float = 0.5                    # λ_ω inside J_base
     smooth: float = 0.5
     joint_limit: float = 100.0
-    d_safe: float = 0.02
+    # Clearance below which the collision penalty starts. Keep it above the
+    # safety filter's d_safe (0.02): with equal margins the planner grazes the
+    # boundary the filter refuses to cross and the robot deadlocks there (P3A.6).
+    d_safe: float = 0.03
 
 
 @dataclass

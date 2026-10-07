@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (P1.7.7 MoveIt semantic collision plugin; phase sections realigned to ROADMAP phases 0, 1A/1B, 2A, 2B, 3A, 3B, 4, 5)
+**Last updated:** 2026-10-07 (P3A.6 MPPI convergence near obstacles, P3A.9 W1 sequential baseline; P1.7.7 MoveIt semantic collision plugin; phase sections realigned to ROADMAP phases)
 
 ## Legend
 
@@ -271,7 +271,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ## Phase 3A — Geometry-only whole-body GPU MPC (Piper + Scout)
 
-**Target start:** 2026-12-15  ·  **Target finish:** 2027-04-15  ·  **Status:** ◐ in_progress — CPU geometry-only baseline shipped 2026-10-06, ahead of schedule (P3A.1–P3A.5); hardware runs, Orin timing and the cuRobo/GPU port (P3.1) open
+**Target start:** 2026-12-15  ·  **Target finish:** 2027-04-15  ·  **Status:** ◐ in_progress — CPU geometry-only baseline shipped 2026-10-06, ahead of schedule (P3A.1–P3A.6, W0/W1 comparators); hardware runs, Orin timing and the cuRobo/GPU port (P3.1) open
 
 ### P3A — Geometry-only whole-body MPC (`scout_piper_whole_body_mpc`)
 
@@ -282,9 +282,11 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P3A.3 | J_geo costs, MPPI with smooth noise, arm-only W0 mode | ☑ | 2026-10-06 — white noise froze or drifted the controller; W0 must not plan with the base |
 | P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
 | P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
-| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☐ | detours stall 3–4 cm short |
+| P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☑ | 2026-10-07 — not a minimum: the MPPI average was worse than "stop" (elitism fixes), sampling missed the last cm (knot-space gradient refinement), planner and filter shared d_safe and deadlocked (planner margin +1 cm); O1 8/8 seeds ≤ 1 cm |
 | P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
-| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU |
+| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU (≈85 ms with an obstacle field) |
+| P3A.9 | W1 sequential baseline (IK base pose → base phase → arm-only MPPI) | ☑ | 2026-10-07 — R3: W1 3/3 in 150 steps, 0.85 m base travel vs W3 3/3 in 59–92 steps, 0.65 m (offline, synthetic) |
+| P3A.10 | W2 holistic / reactive QP baseline | ☐ | |
 
 ### P3.1 — cuRobo extension
 | ID | Task | Status | Notes |

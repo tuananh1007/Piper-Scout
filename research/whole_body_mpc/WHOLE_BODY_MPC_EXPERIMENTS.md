@@ -272,7 +272,7 @@ Timing must support a stable receding-horizon loop with documented latency.
 
 1. Build kinematic/dynamic validation scripts (`fit_slip` and the URDF FK/Jacobian tests exist; the real-floor WE1 script is open).
 2. Create 10 synthetic R1-R3 scenes.
-3. Implement W0/W1 first (W0 = MPPI `arm_only`, 2026-10-06; W1 open).
+3. Implement W0/W1 first (W0 = MPPI `arm_only`, 2026-10-06; W1 = `baselines/sequential.py`, 2026-10-07).
 4. Implement W3 with synthetic SDF (done offline 2026-10-06, analytic sphere fields).
 5. Connect Semantic Scene for W4 (adapter done 2026-10-06, `scene_adapter.py`; not yet run on real geometry).
 6. Freeze W4 before Piper-JEPA integration.
