@@ -322,7 +322,7 @@ Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](res
 | P3B.2 | §12 read-outs (û, entropy, identity, visibility) from predicted features | ☑ | 2026-10-07 — spatial prior needed against the identical twin |
 | P3B.3 | Γ from whole-body states (batched) for training data and MPC rollouts | ☑ | 2026-10-07 |
 | P3B.4 | Learned predictor P0 / P2 / P3 + target-weighted training (§10–11) | ☑ | 2026-10-07 — CPU torch; P1 (V-JEPA 2-AC) needs the real encoder |
-| P3B.5 | E3 metrics + synthetic E3 benchmark | ☑ | 2026-10-07 — see `scout_piper_jepa/README.md` |
+| P3B.5 | E3 metrics + synthetic E3 benchmark | ☑ | 2026-10-07 — synthetic, one seed: P3 E_target(4) 13.0 px vs 18.0 persistence / 21.9 P2; see `scout_piper_jepa/README.md` |
 | P3B.6 | `JepaVisibilityCost` in `WholeBodyCost.extra`, geometry-anchored read-out | ☑ | 2026-10-07 — anchor fixes the identical-twin failure of the plain §12 read-out |
 | P3B.7 | Synthetic closed loop C2 vs C3-oracle | ◐ | 2026-10-07 — inconclusive: C3 trades goal error for visibility without a reliable gain; needs a feasibility check, near-goal constraint, more samples |
 | P3B.8 | Record and annotate E3 robot episodes (arm-only, base-only, combined, occlusion) | ☐ | bags → features + Γ + masks |

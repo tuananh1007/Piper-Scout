@@ -72,23 +72,32 @@ cost falls back to the sequential read-out.
 
 ## Synthetic results (offline, 4-core x86 CPU; not robot evidence)
 
-**E3, preliminary** (300 training steps, 600 training / 200 test
-random-motion episodes, 393 test windows, predictor step 0.2 s; an earlier
-version of the synthetic wall; `benchmarks/e3_synthetic.py --steps 1500` is
-the full run):
+**E3** (`benchmarks/e3_synthetic.py`, defaults: 1,500 training / 300 test
+random-motion episodes of 14 frames, 1,500 training steps per model,
+predictor step 0.2 s, one seed; 416 test windows; flower visible in 47 % of
+frames):
 
-| At 4 steps (0.8 s) | Persistence | P0 action-free | P2 unweighted | P3 target-weighted |
+| Horizon 4 steps (0.8 s) | Persistence | P0 action-free | P2 unweighted | P3 target-weighted |
 |---|---|---|---|---|
-| Target error E_target(4) | 18.3 px | 19.7 px | 19.4 px | **17.2 px** |
-| Target-region latent L1 | 4.51 | 3.77 | 3.72 | **3.02** |
-| Global latent L1 | 3.52 | 2.53 | 2.49 | 2.53 |
-| Visibility F1 (threshold 0.6) | 0.65 | 0.00 | 0.28 | 0.63 |
+| Target error E_target(4) | 18.0 px | 21.6 px | 21.9 px | **13.0 px** |
+| Visibility AUROC | 0.46 | 0.61 | 0.58 | **0.73** |
+| Visibility F1 (threshold 0.6) | 0.66 | 0.00 | 0.06 | **0.71** |
+| Identity accuracy | 0.19 | 0.16 | 0.16 | **0.43** |
+| Target-region latent L1 | 4.42 | 3.63 | 3.58 | **2.21** |
+| Global latent L1 | 3.35 | 2.39 | **2.24** | 2.39 |
 
-At 8 steps P3 reaches 23.3 px against 26 px for persistence and P2. P3 vs P2
-shows the signature the plan predicts (§10.7): target-region error down ≈ 19 %
-with global error unchanged. Deterministic L1 training blurs a 1–2-cell
-target, which is why fixed-threshold F1 collapses for P0/P2; AUROC (now
-reported) separates ranking from calibration.
+| E_target (px) at 1 / 4 / 8 steps | Persistence | P0 | P2 | P3 |
+|---|---|---|---|---|
+| | 9.6 / 18.0 / 23.9 | 11.5 / 21.6 / 26.8 | 13.1 / 21.9 / 27.2 | **7.9 / 13.0 / 17.2** |
+
+P3 against P2 shows the signature the plan predicts (§10.7): at 4 steps the
+target-region error is 38 % lower while the global error is 7 % higher, i.e.
+capacity moved from the background to the flower. P0 and P2 model the scene
+better than persistence (lower global error) but locate the flower worse:
+deterministic L1 training blurs a 1–2-cell target, which also collapses their
+fixed-threshold F1. P3 is the only predictor that beats persistence on every
+target metric, at every horizon. Caveats: synthetic features, one seed, a
+small CPU model; P1 (V-JEPA 2-AC) is not in the comparison.
 
 **Closed loop (C2 vs C3 with the oracle predictor), `benchmarks/visibility_mpc.py`:
 inconclusive.** Pre-grasp goal between the flower and its twin, 2 seeds,
