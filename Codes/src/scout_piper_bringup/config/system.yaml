@@ -121,6 +121,20 @@ stem_grasp_pipeline:
 
     # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
     servo_cmd_topic: "/servo_node/delta_twist_cmds"
+    # Image-based servo (P0.4.12). The target must appear where the gripper
+    # approach axis (eef_frame z, TCP tcp_offset_m along it) crosses its depth;
+    # the stem position is read from the mask rows around the target's row.
+    # The gain is lambda_inf + (lambda_0 - lambda_inf) exp(-rho e_px), scaled
+    # down within 0.25 m of the stem; above ~10 px it is lambda_inf. moveit_servo
+    # realises ~55 % of a commanded velocity, so 0.5 converges 60 -> 4 px in
+    # ~15 s hardware-free (ROS 1 used 0.07: ~4x slower). Tune on the robot.
+    tcp_offset_m: 0.14
+    servo_lambda_0: 0.8
+    servo_lambda_inf: 0.5
+    servo_rho: 0.3
+    servo_row_band_px: 12
+    target_point_max_age_sec: 0.5
+    servo_mask_max_age_sec: 0.3
     # Move to the pre-grasp pose (P0.4.11): "none" only publishes
     # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
     # (run it with execute:=true and bringup_servo:=true), waits for "reached",

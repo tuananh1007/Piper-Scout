@@ -598,8 +598,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 lists the camera; the real check is Step 10.6.
 
 **9.3 Calibration placeholders.** The Piper mount offset (`base_link` →
-`piper_mount_link`, xyz `0.15 0.0 0.18`) and the camera offset (`cam_xyz`
-`0.05 0.0 0.05`) in `scout_piper.urdf.xacro` are placeholders; no launch file
+`piper_mount_link`, xyz `0.15 0.0 0.18`) and the camera pose (`cam_xyz`
+`0.05 0.0 0.05`, `cam_rpy` `0 -1.5708 0`, which points the camera along the
+gripper approach axis, `piper_link6` z) in `scout_piper.urdf.xacro` are
+placeholders. The image-based servo (10.9) takes the camera-to-gripper
+transform from TF, so its accuracy depends on this calibration. No launch file
 passes `cam_xyz` / `cam_rpy`, so a calibrated pose currently means editing
 the xacro defaults. The hand-eye calibration scripts are still on the lab
 machine ([checklist Step 5](Codes/PHASE0_CHECKLIST.md)).
@@ -885,8 +888,24 @@ and switches to SERVOING, where its image-based servo sends twists to
 `moveit_servo` (10.4). A timeout (`reach_timeout_sec`, 60 s) or a silent MPC
 cancels and returns to SCANNING. "Reached" means TCP within 1 cm and approach
 axis within 15° (`approach_tolerance_deg`); in practice the axis ends close to
-that bound. Hardware-free check, with a synthetic stem cloud published by the
-check itself:
+that bound. The MPC keeps the arm bent at the goal (`w_reach`, 10.13), so the
+servo and the final approach have room to move the gripper forward.
+
+**Image-based servo (P0.4.12).** In SERVOING the pipeline steps its servo once
+per new `/stem_grasp/mask`. It moves the camera (no rotation) until the stem,
+at the image row where the grasp point projects, appears where the gripper
+approach axis crosses the stem's depth. That pixel is computed from TF
+(`eef_frame` plus `tcp_offset_m`), not the image centre: the camera is beside
+the gripper. Twists go to `moveit_servo` in `camera_optical_frame`.
+`/stem_grasp/servo_status` (JSON, ~10 Hz) reports the image error, depth,
+pixels, velocity, gain and the sway estimate. The servo stops commanding when
+the mask is older than `servo_mask_max_age_sec` (0.3 s), and servo then halts
+on its command timeout. Gains are `servo_lambda_0` / `servo_lambda_inf`
+(0.8 / 0.5; ROS 1 used 0.07 at large errors, about 4x slower) and are not yet
+tuned on the robot.
+
+Hardware-free check, with a synthetic stem published by the check itself (a
+point cloud, and a mask rendered from the live camera pose):
 
 ```bash
 ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true fake_arm:=true \
@@ -896,10 +915,19 @@ ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc  
 ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15                        # terminal 4: stem x y
 ```
 
-**Pass:** six `PASS` lines and `GRASP CHAIN OK` (REACHING → SERVOING, TCP at
-the pre-grasp position from TF, MPC idle and no more joint commands after the
-handoff, base stopped, no servo halt). On the robot, the same handoff starts
-from real segmentation and point clouds; run it only after 10.4 and 10.13.
+**Pass:** eight `PASS` lines and `GRASP CHAIN OK`:
+- REACHING → SERVOING;
+- the TCP at the pre-grasp position from TF;
+- the servo's image error below 8 px after `--servo-seconds` (15 s);
+- the gripper axis within 1.5 cm of the grasp point;
+- the MPC idle, with no more joint commands after the handoff;
+- the base stopped;
+- no servo halt (singularity, collision or joint limit).
+
+Measured hardware-free at four stem positions (x 0.8–1.25 m): handoff after
+7–12 s, image error 33–65 px → 0.8–5 px, axis 0.04–0.25 cm from the grasp
+point. On the robot, the same chain starts from real segmentation and point
+clouds; run it only after 10.4 and 10.13.
 
 The hot-key helper `ros2 run stem_grasp hotkey_stop_and_zero`
 (`x` sends zero twists and disables the servo bridge, `q` quits) stops
@@ -1070,6 +1098,11 @@ ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true fake_arm
 ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py execute:=true       # terminal 2
 ros2 run scout_piper_bringup mpc_chain_check.py 1.0 0.2 0.45                        # terminal 3: goal x y z
 ```
+
+With a far goal the MPC moves the base rather than stretch the arm: the
+`w_reach` term keeps the shoulder-to-wrist distance under `reach_max_m`
+(0.36 m of at most 0.54 m), which leaves the gripper room to advance from the
+pre-grasp pose.
 
 **Pass:** five `PASS` lines and `MPC CHAIN OK`: the MPC reports `reached`,
 the TCP measured from TF is within 2 cm of the goal, the base has stopped,

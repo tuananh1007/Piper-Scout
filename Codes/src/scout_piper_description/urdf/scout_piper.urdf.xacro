@@ -26,7 +26,11 @@
   <!-- Eye-in-hand camera placement on the EE flange. Override at launch
        once hand-eye calibration is done. -->
   <xacro:arg name="cam_xyz" default="0.05 0.0 0.05"/>
-  <xacro:arg name="cam_rpy" default="0.0 0.0 0.0"/>
+  <!-- Placeholder until hand-eye calibration (INSTALL.md 9.3). The pitch turns the
+       camera's viewing axis (camera_link x, optical z) onto piper_link6 z, the
+       gripper approach axis; with rpy 0 the camera looked sideways, across the
+       gripper, and could not see what the gripper approaches. -->
+  <xacro:arg name="cam_rpy" default="0.0 -1.5708 0.0"/>
 
   <!-- =========================================================== -->
   <!-- 1. Scout 2.0 base                                            -->

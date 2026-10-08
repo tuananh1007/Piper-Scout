@@ -10,6 +10,8 @@ end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
     with ``reach_executor: whole_body_mpc`` (SCANNING -> REACHING -> SERVOING,
     see reach_handoff.py); the default ``none`` only publishes the target pose.
     MoveIt (moveit_planner) stays unwired: moveit_py has no Humble binary.
+  * _inner_loop — image-based servo of the stem onto the gripper approach
+    axis, one step per new mask (P0.4.12, see servo_geometry.py).
   * Iterative approach state machine (TODO P0.4.13) and multi-view ring
     (deferred to Phase 4).
 
@@ -28,6 +30,7 @@ from enum import Enum, auto
 from typing import Optional
 
 import json
+import signal
 
 import numpy as np
 import rclpy
@@ -44,6 +47,7 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
 from std_msgs.msg import Empty, Float32, String
 from tf2_ros import Buffer, TransformListener
@@ -52,6 +56,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 from stem_grasp import core
 from stem_grasp.moveit_planner import MoveItPlanner
 from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
+from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
+from stem_grasp.servo_geometry import project, stem_feature_uv
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +120,13 @@ class PipelineParams:
 
     # Servo
     servo_cmd_topic: str = "/servo_node/delta_twist_cmds"
+    tcp_offset_m: float = 0.14            # eef_frame -> grasp point along its z (as the MPC)
+    servo_lambda_0: float = 0.8           # IBVS gain at zero image error (as ROS 1)
+    servo_lambda_inf: float = 0.5         # IBVS gain at large image error (ROS 1: 0.07)
+    servo_rho: float = 0.3                # gain decay per pixel of error
+    servo_row_band_px: int = 12           # mask rows around the target row for the stem position
+    target_point_max_age_sec: float = 0.5  # live /stem_grasp/target_point preferred when fresher
+    servo_mask_max_age_sec: float = 0.3   # no servo command on an older mask (servo then halts)
 
     # Reach to the pre-grasp pose (P0.4.11): "none" only publishes the target
     # pose; "whole_body_mpc" hands it to scout_piper_whole_body_mpc
@@ -148,7 +161,11 @@ class StemGraspPipeline(Node):
         # Latest observations
         self.current_force: float = 0.0
         self.last_mask_centroid_uv: Optional[np.ndarray] = None
+        self.last_mask: Optional[np.ndarray] = None
         self.last_mask_stamp: Optional[float] = None
+        self._servo_mask_stamp: Optional[float] = None   # mask the servo last stepped on
+        self._servo_cam_prev = None    # (time, world <- camera) at the previous servo step
+        self.grasp_target_world: Optional[np.ndarray] = None   # in mpc_world_frame
         self.last_target_point: Optional[np.ndarray] = None  # in planning_frame
         self.last_target_stamp: Optional[float] = None
         self.last_stem_cloud: Optional[np.ndarray] = None  # (N, 3) in planning_frame
@@ -244,6 +261,10 @@ class StemGraspPipeline(Node):
         self.pub_mpc_cancel = self.create_publisher(
             Empty, self.params.mpc_cancel_topic, 5
         )
+        self.pub_servo_status = self.create_publisher(
+            String, "/stem_grasp/servo_status", 10
+        )
+        self._servo_status_t = 0.0
 
         # ---------- timers ----------
         outer_period = 1.0 / max(self.params.outer_loop_hz, 1e-3)
@@ -287,7 +308,9 @@ class StemGraspPipeline(Node):
         u = float(xs.mean())
         v = float(ys.mean())
         self.last_mask_centroid_uv = np.array([u, v])
-        self.last_mask_stamp = self._now()
+        self.last_mask = mask > 0
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.last_mask_stamp = stamp if stamp > 0 else self._now()
 
     def _on_target_point(self, msg: PointStamped) -> None:
         # Convert to planning_frame for reuse downstream
@@ -342,17 +365,23 @@ class StemGraspPipeline(Node):
         self.params.fx, self.params.fy = float(msg.k[0]), float(msg.k[4])
         self.params.cx, self.params.cy = float(msg.k[2]), float(msg.k[5])
         if self.servo is None:
-            self.servo = core.FullAdaptiveServoController(
-                fx=self.params.fx,
-                fy=self.params.fy,
-                cx=self.params.cx,
-                cy=self.params.cy,
-            )
+            self.servo = self._make_servo()
             self.get_logger().info(
                 f"servo controller initialized: fx={self.params.fx:.1f} "
                 f"fy={self.params.fy:.1f}"
             )
         self.camera_info_ready = True
+
+    def _make_servo(self) -> "core.FullAdaptiveServoController":
+        return core.FullAdaptiveServoController(
+            fx=self.params.fx,
+            fy=self.params.fy,
+            cx=self.params.cx,
+            cy=self.params.cy,
+            lambda_0=float(self.params.servo_lambda_0),
+            lambda_inf=float(self.params.servo_lambda_inf),
+            rho=float(self.params.servo_rho),
+        )
 
     def _on_mpc_status(self, msg: String) -> None:
         try:
@@ -445,6 +474,8 @@ class StemGraspPipeline(Node):
         T[:3, 3] = [tf.transform.translation.x, tf.transform.translation.y,
                     tf.transform.translation.z]
         p, quat = candidate_goal_in_world(candidate["pre_pos"], candidate["quat"], T)
+        # the grasp point itself, kept world-fixed for the servo (the base moves while reaching)
+        self.grasp_target_world = T[:3, :3] @ np.asarray(candidate["pos"], float) + T[:3, 3]
         goal = PoseStamped()
         goal.header.frame_id = world
         goal.pose.position.x, goal.pose.position.y, goal.pose.position.z = map(float, p)
@@ -488,25 +519,104 @@ class StemGraspPipeline(Node):
             )
             self._set_state(PipelineState.SCANNING)
             return
-        if self.servo is None or self.last_mask_centroid_uv is None:
+        if self.servo is None or self.last_mask is None:
             return
-        if self.last_target_point is None:
+        # one control step per new mask: repeated measurements would read as
+        # a stopped stem. A stale mask gets no command, so servo halts.
+        if self.last_mask_stamp == self._servo_mask_stamp:
             return
-
-        # Drive the IBVS toward the image-plane centroid; the desired uv is
-        # the projection of the 3D target onto the image (here approximated
-        # as image center; the proper projection comes in TODO P0.4.12 once
-        # the target_point projection helper is ported).
-        desired_uv = np.array([self.params.cx, self.params.cy])
-        depth_z = float(max(self.last_target_point[2], 0.05))
+        if self._age(self.last_mask_stamp) > self.params.servo_mask_max_age_sec:
+            return
+        dt = None
+        if self._servo_mask_stamp is not None:
+            dt = float(np.clip(self.last_mask_stamp - self._servo_mask_stamp, 1e-3, 0.5))
+        self._servo_mask_stamp = self.last_mask_stamp
+        geo = self._servo_geometry()
+        if geo is None:
+            return
+        target_cam, tcp_cam, approach_cam = geo
+        camera_vel = self._camera_velocity()
+        depth_z = float(target_cam[2])
+        if depth_z < 0.05:
+            return
+        K = np.array([[self.params.fx, 0.0, self.params.cx],
+                      [0.0, self.params.fy, self.params.cy], [0.0, 0.0, 1.0]])
+        target_uv = project(K, target_cam)
+        # P0.4.12: the target must appear where the gripper approach axis
+        # crosses its depth (image centre only as a fallback)
+        desired = servo_desired_uv(K, tcp_cam, approach_cam, depth_z)
+        if desired is None:
+            desired = np.array([self.params.cx, self.params.cy])
+        raw = stem_feature_uv(self.last_mask, target_uv[1], int(self.params.servo_row_band_px))
+        if raw is None:
+            return
         vel, diag = self.servo.step(
-            raw_uv=self.last_mask_centroid_uv,
-            desired_uv=desired_uv,
+            raw_uv=raw,
+            desired_uv=desired,
             depth_z=depth_z,
             force_n=self.current_force,
             commanded_vel=None,
+            dt=dt,
+            camera_vel=camera_vel,
         )
-        self._publish_twist(vel)
+        # the IBVS velocity is a camera translation in the camera optical frame
+        self._publish_twist(vel, self.params.camera_optical_frame)
+        now = self._now()
+        if now - self._servo_status_t > 0.1:
+            self._servo_status_t = now
+            self.pub_servo_status.publish(String(data=json.dumps({
+                "error_px": diag["error_norm"], "depth_m": depth_z,
+                "raw_uv": [float(v) for v in raw], "desired_uv": [float(v) for v in desired],
+                "vel_cam": [float(v) for v in vel], "lambda": diag["lambda"],
+                "sway_px_s": diag["sway_px_s"]})))
+
+    def _camera_velocity(self) -> Optional[np.ndarray]:
+        """Measured camera translation velocity (camera optical frame) since the
+        previous servo step, from TF; None on the first step or without TF."""
+        T = self._lookup(self.params.mpc_world_frame, self.params.camera_optical_frame)
+        if T is None:
+            return None
+        now, prev = self._now(), self._servo_cam_prev
+        self._servo_cam_prev = (now, T)
+        if prev is None or now - prev[0] < 1e-3 or now - prev[0] > 0.5:
+            return None
+        return T[:3, :3].T @ (T[:3, 3] - prev[1][:3, 3]) / (now - prev[0])
+
+    def _lookup(self, target: str, source: str) -> Optional[np.ndarray]:
+        """4x4 transform target <- source (latest), or None."""
+        try:
+            tf = self.tf_buffer.lookup_transform(target, source, rclpy.time.Time())
+        except Exception:  # noqa: BLE001
+            return None
+        from scipy.spatial.transform import Rotation as R_scipy
+        q = tf.transform.rotation
+        T = np.eye(4)
+        T[:3, :3] = R_scipy.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        T[:3, 3] = [tf.transform.translation.x, tf.transform.translation.y,
+                    tf.transform.translation.z]
+        return T
+
+    def _servo_geometry(self):
+        """(target, TCP, approach axis) in the camera optical frame, or None.
+
+        Target: the live /stem_grasp/target_point when fresh, else the grasp
+        point chosen before the reach (world-fixed)."""
+        cam = self.params.camera_optical_frame
+        if (self.last_target_point is not None
+                and self._age(self.last_target_stamp) < self.params.target_point_max_age_sec):
+            T = self._lookup(cam, self.params.planning_frame)
+            target = None if T is None else T[:3, :3] @ self.last_target_point + T[:3, 3]
+        elif self.grasp_target_world is not None:
+            T = self._lookup(cam, self.params.mpc_world_frame)
+            target = None if T is None else T[:3, :3] @ self.grasp_target_world + T[:3, 3]
+        else:
+            return None
+        T_ce = self._lookup(cam, self.params.eef_frame)
+        if target is None or T_ce is None:
+            return None
+        approach = T_ce[:3, 2]
+        tcp = T_ce[:3, 3] + self.params.tcp_offset_m * approach
+        return target, tcp, approach
 
     # ----------------------------------------------------------------- helpers
     def _now(self) -> float:
@@ -517,10 +627,10 @@ class StemGraspPipeline(Node):
             return float("inf")
         return self._now() - t
 
-    def _publish_twist(self, vel: np.ndarray) -> None:
+    def _publish_twist(self, vel: np.ndarray, frame_id: str) -> None:
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.params.planning_frame
+        msg.header.frame_id = frame_id
         msg.twist.linear.x = float(vel[0])
         msg.twist.linear.y = float(vel[1])
         msg.twist.linear.z = float(vel[2])
@@ -566,6 +676,11 @@ class StemGraspPipeline(Node):
             if new_state == self.state:
                 return
             self.get_logger().info(f"{self.state.name} -> {new_state.name}")
+            if new_state == PipelineState.SERVOING and self.servo is not None:
+                # fresh observer and last command for every servo phase
+                self.servo = self._make_servo()
+                self._servo_mask_stamp = None
+                self._servo_cam_prev = None
             self.state = new_state
 
     def _publish_state(self) -> None:
@@ -574,8 +689,16 @@ class StemGraspPipeline(Node):
         self.pub_state.publish(msg)
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(args=None) -> None:
-    rclpy.init(args=args)
+    # Handle SIGINT/SIGTERM here: with rclpy's handler the context goes away
+    # under the multi-threaded executor's worker threads at shutdown.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = StemGraspPipeline()
     executor = MultiThreadedExecutor()
     executor.add_node(node)
@@ -584,6 +707,7 @@ def main(args=None) -> None:
     except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / ros2 launch shutdown
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -1,8 +1,22 @@
 """Servo math + skeleton extraction + grasp candidate selection.
 
-Ported verbatim from ROS 1 stem_grasp_ros1/src/stem_grasp_ros1/core.py.
-None of these classes/functions depend on rospy — the port is a
-mechanical copy with no semantic changes.
+Ported from ROS 1 stem_grasp_ros1/src/stem_grasp_ros1/core.py (no rospy).
+Deliberate changes since the mechanical copy (2026-10-08): the sway observer
+starts at its first measurement instead of pixel (0, 0); the image Jacobian
+uses image coordinates relative to the principal point, (u - cx) / Z, as the
+point-feature interaction matrix requires (raw u made the depth column as
+large as the lateral one, so lateral errors also drove the camera forward or
+back); the sway estimate subtracts the image motion the camera's own motion
+causes (J v), since sway means the plant moving, and the camera's own motion
+of a few px/s otherwise tripped the sway damping and slowed the servo ~2.5x
+(v is the measured camera velocity when the caller passes ``camera_vel``,
+else the previous command: moveit_servo realises only ~35-65 % of a
+commanded velocity, so the command overstates the motion);
+the observer and ``step`` take the time since the previous measurement
+(``dt``): the pipeline steps once per new mask (10-30 Hz), and a fixed 10 ms
+step with repeated measurements made the velocity estimate (and the sway
+damping) flip every other step; select_grasp_candidates takes an
+approach_hint.
 
 Phase 2 of the ROADMAP replaces FullAdaptiveServoController with MPPI-VS;
 preserve the .step() signature so the pipeline node doesn't need to change.
@@ -30,13 +44,21 @@ class StemVelocityObserver:
         self.x = np.zeros(4)
         self.P = np.eye(4) * 100.0
         self.F = np.array(
-            [[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]]
+            [[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=float
         )
         self.H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
         self.Q = np.eye(4) * process_noise
         self.R = np.eye(2) * measurement_noise
+        self.initialized = False
 
-    def update(self, observed_uv):
+    def update(self, observed_uv, dt=None):
+        """One measurement; ``dt`` (s) since the previous one, default the
+        constructor's."""
+        if not self.initialized:
+            self.x[:2] = observed_uv
+            self.initialized = True
+        if dt is not None and dt > 0:
+            self.F[0, 2] = self.F[1, 3] = dt
         x_pred = self.F @ self.x
         P_pred = self.F @ self.P @ self.F.T + self.Q
         y = np.array(observed_uv) - self.H @ x_pred
@@ -110,6 +132,7 @@ class FullAdaptiveServoController:
         self.sway_damp = sway_damping
         self.sway_observer = StemVelocityObserver(dt=0.01)
         self.jacobian_est = OnlineJacobianEstimator()
+        self.last_vel = np.zeros(3)
 
     def _adaptive_gain(self, error_norm):
         return self.lambda_inf + (self.lambda_0 - self.lambda_inf) * np.exp(
@@ -125,23 +148,31 @@ class FullAdaptiveServoController:
             depth_scale = 1.0
         return lam_base * depth_scale
 
-    def step(self, raw_uv, desired_uv, depth_z, force_n, commanded_vel=None):
-        filt_uv, sway_vel = self.sway_observer.update(np.array(raw_uv))
-        sway_speed = float(np.linalg.norm(sway_vel))
+    def step(self, raw_uv, desired_uv, depth_z, force_n, commanded_vel=None, dt=None,
+             camera_vel=None):
+        """One control step per new image measurement; ``dt`` (s) since the
+        previous one; ``camera_vel`` the measured camera translation velocity
+        (camera optical frame) over that interval, if known."""
+        filt_uv, feature_vel = self.sway_observer.update(np.array(raw_uv), dt)
         e = filt_uv - np.array(desired_uv)
         error_norm = float(np.linalg.norm(e))
+
+        # point-feature interaction matrix for camera translation, in pixels
+        J_analytical = np.array(
+            [
+                [-self.fx / depth_z, 0, (filt_uv[0] - self.cx) / depth_z],
+                [0, -self.fy / depth_z, (filt_uv[1] - self.cy) / depth_z],
+            ]
+        )
+        # sway = image motion of the stem not explained by the camera's motion
+        ego = self.last_vel if camera_vel is None else np.asarray(camera_vel, float)
+        sway_vel = feature_vel - J_analytical @ ego
+        sway_speed = float(np.linalg.norm(sway_vel))
 
         lam = self._depth_compensated_gain(error_norm, depth_z)
         if sway_speed > self.sway_thresh:
             lam *= self.sway_damp
         lam = float(np.clip(lam, 0.01, 1.2))
-
-        J_analytical = np.array(
-            [
-                [-self.fx / depth_z, 0, filt_uv[0] / depth_z],
-                [0, -self.fy / depth_z, filt_uv[1] / depth_z],
-            ]
-        )
         if not self.jacobian_est.initialized:
             self.jacobian_est.initialize(J_analytical)
         if commanded_vel is not None:
@@ -149,9 +180,11 @@ class FullAdaptiveServoController:
 
         vel = -lam * np.linalg.pinv(self.jacobian_est.J_hat) @ e
         vel = np.clip(vel, -0.05, 0.05)
+        self.last_vel = vel
         diag = {
             "error_norm": error_norm,
             "lambda": lam,
+            "sway_px_s": sway_speed,
             "sway_speed": sway_speed,
             "filtered_uv": filt_uv.tolist(),
             "force_n": force_n,

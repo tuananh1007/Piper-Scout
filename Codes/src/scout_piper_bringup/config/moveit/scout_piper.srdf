@@ -7,7 +7,7 @@
   with the piper_ prefix. The disable_collisions list was computed with MoveIt's
   Setup Assistant routine (moveit_setup_srdf_plugins::computeDefaultCollisions,
   10000 random states, 95 % threshold) on the unified URDF; its arm pairs agree with
-  upstream's except piper_link1/piper_link4, which is kept enabled as upstream does.
+  upstream's; arm-only pairs are kept only where upstream also disables them.
   The Scout chassis stays checked against piper_link3 onwards.
 
   The mount and camera offsets in the URDF are placeholders (INSTALL.md, Step 9.3):
@@ -55,16 +55,16 @@
     <disable_collisions link1="piper_link3" link2="piper_link4" reason="Adjacent"/>
     <disable_collisions link1="piper_link4" link2="piper_link5" reason="Adjacent"/>
     <disable_collisions link1="piper_link5" link2="piper_link6" reason="Adjacent"/>
+    <disable_collisions link1="camera_link" link2="piper_gripper_base" reason="Default"/>
+    <disable_collisions link1="camera_link" link2="piper_link7" reason="Default"/>
+    <disable_collisions link1="camera_link" link2="piper_link8" reason="Default"/>
     <disable_collisions link1="piper_link7" link2="piper_link8" reason="Default"/>
     <disable_collisions link1="base_link" link2="piper_base_link" reason="Never"/>
     <disable_collisions link1="base_link" link2="piper_link1" reason="Never"/>
     <disable_collisions link1="base_link" link2="piper_link2" reason="Never"/>
-    <disable_collisions link1="camera_link" link2="piper_gripper_base" reason="Never"/>
     <disable_collisions link1="camera_link" link2="piper_link3" reason="Never"/>
     <disable_collisions link1="camera_link" link2="piper_link4" reason="Never"/>
     <disable_collisions link1="camera_link" link2="piper_link5" reason="Never"/>
-    <disable_collisions link1="camera_link" link2="piper_link7" reason="Never"/>
-    <disable_collisions link1="camera_link" link2="piper_link8" reason="Never"/>
     <disable_collisions link1="front_left_wheel_link" link2="front_right_wheel_link" reason="Never"/>
     <disable_collisions link1="front_left_wheel_link" link2="piper_base_link" reason="Never"/>
     <disable_collisions link1="front_left_wheel_link" link2="piper_link1" reason="Never"/>
