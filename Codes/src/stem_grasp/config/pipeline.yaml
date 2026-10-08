@@ -34,6 +34,17 @@ stem_grasp_pipeline:
     grasp_strategy: "nearest_target"
     target_point_timeout_sec: 3.5
     servo_cmd_topic: "/servo_node/delta_twist_cmds"
+    # Move to the pre-grasp pose (P0.4.11): "none" only publishes
+    # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
+    # (run it with execute:=true and bringup_servo:=true), waits for "reached",
+    # cancels the MPC and starts the image-based servo (INSTALL.md 10.9).
+    reach_executor: "none"
+    mpc_world_frame: "odom"
+    mpc_goal_pose_topic: "/whole_body_mpc/goal_pose"
+    mpc_status_topic: "/whole_body_mpc/status"
+    mpc_cancel_topic: "/whole_body_mpc/cancel"
+    reach_timeout_sec: 60.0
+    reach_settle_sec: 1.0
 
 stem_grasp_segmentation:
   ros__parameters:

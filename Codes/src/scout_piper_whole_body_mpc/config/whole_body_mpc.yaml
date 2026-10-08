@@ -6,6 +6,8 @@ whole_body_mpc:
     rate_hz: 10.0
     world_frame: "odom"
     goal_topic: "/whole_body_mpc/goal"        # or /piper_jepa/target_point
+    goal_pose_topic: "/whole_body_mpc/goal_pose"   # PoseStamped: position + approach (z) axis
+    cancel_topic: "/whole_body_mpc/cancel"    # std_msgs/Empty: drop the goal, stop, go idle
     # Names on /joint_states. The Piper driver itself publishes joint1..joint6
     # on /joint_states_single; full_system.launch.py relays them as these
     # (scout_piper_bringup/scripts/piper_joint_state_relay.py).
@@ -33,3 +35,7 @@ whole_body_mpc:
     max_geometry_age_s: 1.0
     goal_tolerance_m: 0.01
     handoff_distance_m: 0.05                  # report handoff_ready to the local servo
+    # With a pose goal, "reached" also needs the TCP z axis within this angle of
+    # the approach axis (stem_grasp's ROS 1 MoveIt tolerance was 0.35 rad = 20 deg).
+    approach_tolerance_deg: 15.0
+    w_orient: 2.0                             # weight of the approach-axis cost

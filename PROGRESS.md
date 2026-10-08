@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-08 (P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-08 (P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -80,8 +80,8 @@
 | P0.4.7 | `moveit_planner.py` — port to `moveit_py` API | ☑ | 2026-05-17 — wrapper ready; runtime requires `moveit_py`, which has no Humble binary (build moveit2 from source; see `Codes/docker/Dockerfile.dev`) |
 | P0.4.8 | `pipeline_node._on_stem_mask` — centroid extraction | ☑ | 2026-05-17 — centroid of all mask pixels via numpy where (largest-blob selection not implemented) |
 | P0.4.9 | `pipeline_node._on_target_point` — frame conversion + cache | ☑ | 2026-05-17 — TF-based transform to planning_frame |
-| P0.4.10 | `pipeline_node._outer_loop` — skeleton + candidate selection | ☑ | 2026-05-17 — uses core.skeletonize_plant_points + extract_main_stem |
-| P0.4.11 | `pipeline_node._outer_loop` — plan_and_execute + state transition | ◐ | 2026-05-17 — target_pose pub wired; plan→execute pending moveit_py runtime |
+| P0.4.10 | `pipeline_node._outer_loop` — skeleton + candidate selection | ☑ | 2026-05-17 — uses core.skeletonize_plant_points + extract_main_stem. 2026-10-08 — three porting bugs fixed, found by the hardware-free grasp chain: clouds are read with `read_points_numpy` (Humble's `read_points` returns a structured array and the old code crashed on the first cloud); the main stem is searched along z of `planning_frame` (`skeleton_vertical_axis: 2`; the ROS 1 default was the optical-frame y, which found 2–4 points instead of the stem); candidates approach from the arm's side (`approach_hint`; `cross(stem_dir, x)` meant "from the camera" only in the optical frame) |
+| P0.4.11 | `pipeline_node._outer_loop` — plan_and_execute + state transition | ☑ | 2026-10-08 — through the whole-body MPC instead of MoveIt (`reach_executor: whole_body_mpc`): SCANNING → REACHING (pre-grasp pose → `/whole_body_mpc/goal_pose`) → MPC "reached" for 1 s → cancel → SERVOING (`reach_handoff.py`). Hardware-free (`grasp_chain_check.py`): reach in 7–12 s, TCP within 0.2–1 cm of the pre-grasp, approach axis within 15°, MPC idle and silent after the handoff. The moveit_py path stays unwired; not run on hardware |
 | P0.4.12 | `pipeline_node._inner_loop` — visual servo step | ☑ | 2026-05-17 — drives `core.FullAdaptiveServoController` and publishes TwistStamped; desired uv is still the image centre until the target-point projection is ported (TODO in code) |
 | P0.4.13 | Iterative approach state machine | ☐ | ROS 1 lines ~1070–1220 |
 | P0.4.14 | Multi-view capture ring + ICP merge | ⊝ | Deferred to Phase 4 (replaced by NBV+VGGT) |

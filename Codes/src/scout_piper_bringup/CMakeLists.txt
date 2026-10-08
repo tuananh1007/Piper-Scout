@@ -16,6 +16,7 @@ install(
     scripts/fake_scout_base.py
     scripts/servo_chain_check.py
     scripts/mpc_chain_check.py
+    scripts/grasp_chain_check.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

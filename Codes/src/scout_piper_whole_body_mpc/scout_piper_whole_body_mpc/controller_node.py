@@ -7,13 +7,18 @@ Inputs
   /joint_states                  sensor_msgs/JointState  arm joints (joint_names)
   goal_topic                     geometry_msgs/PointStamped grasp point (world_frame);
                                  e.g. /piper_jepa/target_point
+  goal_pose_topic                geometry_msgs/PoseStamped pre-grasp pose (world_frame); its
+                                 z axis is the desired TCP approach direction (stem_grasp)
+  cancel_topic                   std_msgs/Empty: drop the goal, send one stop, go idle
+                                 (hands the arm to another servo client)
   geometry (use_semantic_scene)  in-process SemanticVoxelMap from aligned depth +
                                  /scene_repr/mask/<class> (scout_piper_scene_repr)
 
 Outputs
   execute == false (default): /whole_body_mpc/preview/cmd_vel, /whole_body_mpc/preview/joint_jog
   execute == true:            /cmd_vel (scout_ros2) and /servo_node/delta_joint_cmds (moveit_servo)
-  /whole_body_mpc/status         std_msgs/String JSON (cost, safety reason, timing, ages)
+  /whole_body_mpc/status         std_msgs/String JSON (mode, TCP and approach-angle error,
+                                 safety reason, timing, ages); mode "idle" after a cancel
   /whole_body_mpc/plan           nav_msgs/Path of the predicted TCP trajectory
 
 Executing on hardware requires the Phase 0 exit criteria (E-stop and
@@ -40,9 +45,9 @@ from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 
-from .costs.terms import CostWeights, Goal, WholeBodyCost
+from .costs.terms import CostWeights, Goal, WholeBodyCost, same_goal
 from .dynamics.piper import PiperKinematics
 from .dynamics.scout import ScoutParams
 from .dynamics.whole_body import ArmParams, WholeBodyModel
@@ -63,6 +68,8 @@ class WholeBodyMpcNode(Node):
             ("rate_hz", 10.0),
             ("world_frame", "odom"),
             ("goal_topic", "/whole_body_mpc/goal"),
+            ("goal_pose_topic", "/whole_body_mpc/goal_pose"),
+            ("cancel_topic", "/whole_body_mpc/cancel"),
             ("joint_names", [f"piper_joint{i}" for i in range(1, 7)]),
             ("tcp_offset_m", 0.14),
             ("horizon", 20), ("samples", 256), ("iterations", 2), ("temperature", 0.1),
@@ -74,6 +81,7 @@ class WholeBodyMpcNode(Node):
             ("scene_grid_center", [0.6, 0.0, 0.6]), ("scene_half_extent_m", 0.5),
             ("scene_voxel_size_m", 0.01), ("max_state_age_s", 0.2), ("max_geometry_age_s", 1.0),
             ("goal_tolerance_m", 0.01), ("handoff_distance_m", 0.05),
+            ("approach_tolerance_deg", 15.0), ("w_orient", 2.0),
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.execute = bool(p("execute"))
@@ -90,13 +98,14 @@ class WholeBodyMpcNode(Node):
                                                 temperature=float(p("temperature")),
                                                 refine_iters=int(p("refine_iters"))))
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
-        self.weights = CostWeights(base=float(p("w_base")),
+        self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
                                    d_safe=float(p("d_safe")) + max(float(p("plan_margin_m")), 0.0))
         self.d_safe = float(p("d_safe"))
         self.max_state_age = float(p("max_state_age_s"))
         self.max_geom_age = float(p("max_geometry_age_s"))
         self.tol = float(p("goal_tolerance_m"))
         self.handoff = float(p("handoff_distance_m"))
+        self.approach_tol = float(p("approach_tolerance_deg"))
 
         self.scene = None
         if p("use_semantic_scene"):
@@ -111,12 +120,14 @@ class WholeBodyMpcNode(Node):
         self.base: Optional[np.ndarray] = None
         self.q: Optional[np.ndarray] = None
         self.t_base = self.t_q = -np.inf
-        self.goal: Optional[np.ndarray] = None
+        self.goal: Optional[Goal] = None
         self.u_prev = np.zeros(8)
 
         self.create_subscription(Odometry, "/odom", self._odom, 10)
         self.create_subscription(JointState, "/joint_states", self._js, 20)
         self.create_subscription(PointStamped, p("goal_topic"), self._goal, 5)
+        self.create_subscription(PoseStamped, p("goal_pose_topic"), self._goal_pose, 5)
+        self.create_subscription(Empty, p("cancel_topic"), self._cancel, 5)
         pre = "" if self.execute else "/whole_body_mpc/preview"
         self.pub_twist = self.create_publisher(Twist, f"{pre}/cmd_vel", 1)
         self.pub_jog = self.create_publisher(
@@ -141,12 +152,37 @@ class WholeBodyMpcNode(Node):
             self.q = np.array([msg.position[idx[n]] for n in self.joint_names])
             self.t_q = self._now()
 
-    def _goal(self, msg: PointStamped) -> None:
-        if msg.header.frame_id and msg.header.frame_id != self.world:
-            self.get_logger().warn(f"goal in {msg.header.frame_id}, expected {self.world}; ignored")
+    def _set_goal(self, frame_id: str, goal: Goal) -> None:
+        if frame_id and frame_id != self.world:
+            self.get_logger().warn(f"goal in {frame_id}, expected {self.world}; ignored")
             return
-        self.goal = np.array([msg.point.x, msg.point.y, msg.point.z])
+        if not same_goal(self.goal, goal):     # republishing a goal keeps the warm start
+            self.mppi.reset()
+        self.goal = goal
+
+    def _goal(self, msg: PointStamped) -> None:
+        self._set_goal(msg.header.frame_id, Goal(p=np.array([msg.point.x, msg.point.y, msg.point.z])))
+
+    def _goal_pose(self, msg: PoseStamped) -> None:
+        q = msg.pose.orientation
+        z_axis = np.array([2 * (q.x * q.z + q.w * q.y), 2 * (q.y * q.z - q.w * q.x),
+                           1 - 2 * (q.x * q.x + q.y * q.y)])
+        if not np.isfinite(z_axis).all() or np.linalg.norm(z_axis) < 0.5:
+            self.get_logger().warn("goal pose has an invalid orientation; ignored")
+            return
+        pos = msg.pose.position
+        self._set_goal(msg.header.frame_id, Goal(p=np.array([pos.x, pos.y, pos.z]),
+                                                 approach_axis=z_axis / np.linalg.norm(z_axis)))
+
+    def _cancel(self, msg: Empty) -> None:
+        if self.goal is None:
+            return
+        self.goal = None
         self.mppi.reset()
+        self.stop_motion()
+        self.u_prev = np.zeros(8)
+        self.pub_status.publish(String(data=json.dumps({"mode": "idle", "execute": self.execute})))
+        self.get_logger().info("goal cancelled; idle")
 
     # ---------------------------------------------------------------- loop
     def _send(self, u: np.ndarray) -> None:
@@ -178,13 +214,18 @@ class WholeBodyMpcNode(Node):
             dist_fn = semantic_distance_fn(self.query, now=self.scene.map.stamp)
             leaf_fn = semantic_leaf_fn(self.query)
         x = np.r_[self.base, self.q]
-        cost = WholeBodyCost(self.model, Goal(p=self.goal), distance_fn=dist_fn,
+        cost = WholeBodyCost(self.model, self.goal, distance_fn=dist_fn,
                              leaf_fn=leaf_fn, w=self.weights)
         safety = SafetyFilter(self.model, distance_fn=dist_fn, d_safe=self.d_safe,
                               max_state_age_s=self.max_state_age, max_geometry_age_s=self.max_geom_age)
-        err = float(np.linalg.norm(self.model.tcp_world(x)[:3, 3] - self.goal))
+        T_tcp = self.model.tcp_world(x)
+        err = float(np.linalg.norm(T_tcp[:3, 3] - self.goal.p))
+        angle = None
+        if self.goal.approach_axis is not None:
+            angle = float(np.degrees(np.arccos(np.clip(T_tcp[:3, 2] @ self.goal.approach_axis, -1, 1))))
         t0 = time.perf_counter()
-        if err < self.tol:
+        # with a pose goal, "reached" also needs the approach axis within tolerance
+        if err < self.tol and (angle is None or angle < self.approach_tol):
             u_mpc, mode = np.zeros(8), "reached"
         else:
             u_mpc = self.mppi.solve(x, cost, self.u_prev)
@@ -194,11 +235,12 @@ class WholeBodyMpcNode(Node):
         self._send(rep.u)
         self.u_prev = rep.u
         self.mppi.shift()
-        self._publish(err, mode, rep, solve_ms, state_age, geom_age)
+        self._publish(err, angle, mode, rep, solve_ms, state_age, geom_age)
 
-    def _publish(self, err, mode, rep, solve_ms, state_age, geom_age) -> None:
+    def _publish(self, err, angle, mode, rep, solve_ms, state_age, geom_age) -> None:
         self.pub_status.publish(String(data=json.dumps({
-            "mode": mode, "tcp_error_m": err, "safety": rep.reason, "scale": rep.scale,
+            "mode": mode, "tcp_error_m": err, "approach_error_deg": angle,
+            "safety": rep.reason, "scale": rep.scale,
             "min_clearance_m": None if not np.isfinite(rep.min_clearance) else rep.min_clearance,
             "cost": self.mppi.last_cost, "solve_ms": round(solve_ms, 1),
             "state_age_s": state_age, "geometry_age_s": None if not np.isfinite(geom_age) else geom_age,

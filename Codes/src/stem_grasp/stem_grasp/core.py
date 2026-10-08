@@ -295,7 +295,17 @@ def select_grasp_candidates(
     num_candidates: int = 5,
     gripper_offset: float = 0.05,
     target_offset=None,
+    approach_hint=None,
 ):
+    """Grasp candidates along the main stem.
+
+    The gripper approaches perpendicular to the stem. ``approach_hint`` is a
+    direction (same frame as the points) the approach should come from, e.g.
+    from the stem toward the arm base; its component perpendicular to the stem
+    is used. Without a hint the ROS 1 rule ``cross(stem_dir, x)`` applies,
+    which in the ROS 1 camera optical frame meant "from the camera" but in a
+    z-up robot frame approaches from the side.
+    """
     n = len(stem_points)
     if n < 2:
         return []
@@ -313,11 +323,18 @@ def select_grasp_candidates(
         stem_dir = p1 - p0
         stem_dir /= np.linalg.norm(stem_dir) + 1e-9
 
-        world_x = np.array([1.0, 0.0, 0.0])
-        approach = np.cross(stem_dir, world_x)
-        if np.linalg.norm(approach) < 1e-3:
-            approach = np.cross(stem_dir, np.array([0.0, 0.0, 1.0]))
-        approach /= np.linalg.norm(approach)
+        approach = None
+        if approach_hint is not None:
+            hint = np.asarray(approach_hint, dtype=float)
+            hint = hint - (hint @ stem_dir) * stem_dir
+            if np.linalg.norm(hint) > 1e-3:
+                approach = hint
+        if approach is None:
+            world_x = np.array([1.0, 0.0, 0.0])
+            approach = np.cross(stem_dir, world_x)
+            if np.linalg.norm(approach) < 1e-3:
+                approach = np.cross(stem_dir, np.array([0.0, 0.0, 1.0]))
+        approach = approach / np.linalg.norm(approach)
 
         z_axis = -approach
         y_axis = stem_dir

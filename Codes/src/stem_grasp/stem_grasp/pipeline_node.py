@@ -5,9 +5,11 @@ parameter wiring, topic plumbing, and the inner-loop visual servo are functional
 end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
 
   * _outer_loop — skeleton extraction + candidate selection are wired through
-    core.skeletonize_plant_points / extract_main_stem / select_grasp_candidates,
-    but the plan-and-execute path needs a stem cloud subscriber + the live
-    target-pose handoff to moveit_planner. See TODO(P0.4.11).
+    core.skeletonize_plant_points / extract_main_stem / select_grasp_candidates.
+    The move to the pre-grasp pose (P0.4.11) runs through the whole-body MPC
+    with ``reach_executor: whole_body_mpc`` (SCANNING -> REACHING -> SERVOING,
+    see reach_handoff.py); the default ``none`` only publishes the target pose.
+    MoveIt (moveit_planner) stays unwired: moveit_py has no Humble binary.
   * Iterative approach state machine (TODO P0.4.13) and multi-view ring
     (deferred to Phase 4).
 
@@ -25,6 +27,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
+import json
+
 import numpy as np
 import rclpy
 import sensor_msgs_py.point_cloud2 as pc2
@@ -37,16 +41,17 @@ from geometry_msgs.msg import (
     WrenchStamped,
 )
 from rclpy.callback_groups import ReentrantCallbackGroup
-from rclpy.executors import MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Empty, Float32, String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from stem_grasp import core
 from stem_grasp.moveit_planner import MoveItPlanner
+from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +62,7 @@ from stem_grasp.moveit_planner import MoveItPlanner
 class PipelineState(Enum):
     IDLE = auto()
     SCANNING = auto()
+    REACHING = auto()
     SERVOING = auto()
     ABORTED = auto()
 
@@ -91,6 +97,8 @@ class PipelineParams:
     approach_goal_orientation_tolerance: float = 0.05
 
     # Skeleton stability
+    skeleton_vertical_axis: int = 2      # "up" axis of planning_frame (z for piper_base_link;
+                                         # ROS 1 worked in the camera optical frame, axis 1)
     skeleton_min_stem_points: int = 6
     skeleton_max_endpoint_jump_m: float = 0.05
     skeleton_cache_max_age_sec: float = 2.0
@@ -106,6 +114,16 @@ class PipelineParams:
 
     # Servo
     servo_cmd_topic: str = "/servo_node/delta_twist_cmds"
+
+    # Reach to the pre-grasp pose (P0.4.11): "none" only publishes the target
+    # pose; "whole_body_mpc" hands it to scout_piper_whole_body_mpc
+    reach_executor: str = "none"
+    mpc_world_frame: str = "odom"
+    mpc_goal_pose_topic: str = "/whole_body_mpc/goal_pose"
+    mpc_status_topic: str = "/whole_body_mpc/status"
+    mpc_cancel_topic: str = "/whole_body_mpc/cancel"
+    reach_timeout_sec: float = 60.0
+    reach_settle_sec: float = 1.0
 
     # Camera intrinsics — populated at runtime from CameraInfo
     fx: float = 600.0
@@ -136,6 +154,12 @@ class StemGraspPipeline(Node):
         self.last_stem_cloud: Optional[np.ndarray] = None  # (N, 3) in planning_frame
         self.last_stem_cloud_stamp: Optional[float] = None
         self.camera_info_ready = False
+
+        # Reach handoff (REACHING state)
+        self.mpc_mode: Optional[str] = None
+        self.mpc_status_t: Optional[float] = None
+        self.reach_monitor: Optional[ReachMonitor] = None
+        self.reach_goal: Optional[PoseStamped] = None
 
         # Skeleton cache
         self.cached_skeleton: Optional[np.ndarray] = None
@@ -190,6 +214,10 @@ class StemGraspPipeline(Node):
             JointState, "/joint_states", self._on_joint_state,
             qos_reliable, callback_group=self.cb_group,
         )
+        self.create_subscription(
+            String, self.params.mpc_status_topic, self._on_mpc_status,
+            qos_reliable, callback_group=self.cb_group,
+        )
 
         # ---------- publishers ----------
         self.pub_state = self.create_publisher(
@@ -209,6 +237,12 @@ class StemGraspPipeline(Node):
         )
         self.pub_servo_cmd = self.create_publisher(
             TwistStamped, self.params.servo_cmd_topic, 5
+        )
+        self.pub_mpc_goal = self.create_publisher(
+            PoseStamped, self.params.mpc_goal_pose_topic, 5
+        )
+        self.pub_mpc_cancel = self.create_publisher(
+            Empty, self.params.mpc_cancel_topic, 5
         )
 
         # ---------- timers ----------
@@ -279,10 +313,9 @@ class StemGraspPipeline(Node):
 
     def _on_stem_cloud(self, msg: PointCloud2) -> None:
         # Pull XYZ points; transform to planning_frame.
-        pts = np.array(
-            list(pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)),
-            dtype=np.float32,
-        )
+        # Humble's read_points returns a structured array; read_points_numpy
+        # gives the plain (N, 3) array.
+        pts = pc2.read_points_numpy(msg, field_names=("x", "y", "z"), skip_nans=True).astype(np.float32)
         if len(pts) == 0:
             return
         try:
@@ -321,6 +354,13 @@ class StemGraspPipeline(Node):
             )
         self.camera_info_ready = True
 
+    def _on_mpc_status(self, msg: String) -> None:
+        try:
+            self.mpc_mode = json.loads(msg.data).get("mode")
+        except (ValueError, AttributeError):
+            return
+        self.mpc_status_t = self._now()
+
     def _on_joint_state(self, msg: JointState) -> None:
         # TODO(P0.4.13): use joint vel for the stationary-gate of segmentation
         # and as an IK seed for moveit_py replan calls.
@@ -328,6 +368,9 @@ class StemGraspPipeline(Node):
 
     # ------------------------------------------------------------------ loops
     def _outer_loop(self) -> None:
+        if self.state == PipelineState.REACHING:
+            self._reach_tick()
+            return
         if self.state != PipelineState.SCANNING:
             return
         if self.last_stem_cloud is None:
@@ -339,7 +382,7 @@ class StemGraspPipeline(Node):
         G, sk_pts = core.skeletonize_plant_points(self.last_stem_cloud, voxel_size=0.003)
         if len(sk_pts) < self.params.skeleton_min_stem_points:
             return
-        stem = core.extract_main_stem(G, sk_pts)
+        stem = core.extract_main_stem(G, sk_pts, vertical_axis=int(self.params.skeleton_vertical_axis))
         if len(stem) < self.params.skeleton_min_stem_points:
             return
 
@@ -356,8 +399,10 @@ class StemGraspPipeline(Node):
 
         # 3) Select candidates (ratio mode or nearest_target mode)
         target_offset = self.params.target_position_offset_m
+        # approach from the arm's side: from the stem toward planning_frame's origin
         candidates = core.select_grasp_candidates(
-            stem, num_candidates=5, target_offset=target_offset
+            stem, num_candidates=5, target_offset=target_offset,
+            approach_hint=-np.mean(stem, axis=0),
         )
         if not candidates:
             return
@@ -376,8 +421,63 @@ class StemGraspPipeline(Node):
         score_msg.data = float(best["score"])
         self.pub_best_score.publish(score_msg)
 
-        # TODO(P0.4.11): planner.plan_to_pose_with_diagnostics(best["pre_pos"], best["quat"])
-        # When moveit_py is wired up, call plan -> execute -> set_state(SERVOING).
+        # 5) Move to the pre-grasp pose (P0.4.11)
+        if self.params.reach_executor == "whole_body_mpc":
+            self._start_reach(best)
+
+    # ------------------------------------------------------------- reaching
+    def _start_reach(self, candidate: dict) -> None:
+        """Send the candidate's pre-grasp pose to the whole-body MPC."""
+        world = self.params.mpc_world_frame
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                world, self.params.planning_frame, rclpy.time.Time(),
+                timeout=rclpy.duration.Duration(seconds=0.1),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"no TF {world} <- {self.params.planning_frame}: {exc}",
+                                   throttle_duration_sec=5.0)
+            return
+        from scipy.spatial.transform import Rotation as R_scipy
+        q = tf.transform.rotation
+        T = np.eye(4)
+        T[:3, :3] = R_scipy.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
+        T[:3, 3] = [tf.transform.translation.x, tf.transform.translation.y,
+                    tf.transform.translation.z]
+        p, quat = candidate_goal_in_world(candidate["pre_pos"], candidate["quat"], T)
+        goal = PoseStamped()
+        goal.header.frame_id = world
+        goal.pose.position.x, goal.pose.position.y, goal.pose.position.z = map(float, p)
+        (goal.pose.orientation.x, goal.pose.orientation.y,
+         goal.pose.orientation.z, goal.pose.orientation.w) = map(float, quat)
+        self.reach_goal = goal
+        self.reach_monitor = ReachMonitor(start_t=self._now(),
+                                          timeout_s=self.params.reach_timeout_sec,
+                                          settle_s=self.params.reach_settle_sec)
+        self._set_state(PipelineState.REACHING)
+        self.get_logger().info(f"reaching pre-grasp {np.round(p, 3)} in {world} via the whole-body MPC")
+        self._reach_tick()
+
+    def _reach_tick(self) -> None:
+        if self.reach_monitor is None or self.reach_goal is None:
+            self._set_state(PipelineState.SCANNING)
+            return
+        decision = self.reach_monitor.update(self.mpc_mode, self.mpc_status_t, self._now())
+        if decision == "wait":
+            # republished every outer cycle: the goal topic is best effort and the
+            # MPC keeps its warm start for a repeated goal. Never after the
+            # decision, or the goal could overtake the cancel on the other topic.
+            self.reach_goal.header.stamp = self.get_clock().now().to_msg()
+            self.pub_mpc_goal.publish(self.reach_goal)
+            return
+        self.pub_mpc_cancel.publish(Empty())       # MPC stops and releases servo
+        self.reach_monitor = None
+        if decision == "handoff":
+            self.get_logger().info("pre-grasp reached; image-based servo takes over")
+            self._set_state(PipelineState.SERVOING)
+        else:
+            self.get_logger().warn("reach timed out or the MPC stopped reporting; back to SCANNING")
+            self._set_state(PipelineState.SCANNING)
 
     def _inner_loop(self) -> None:
         if self.state != PipelineState.SERVOING:
@@ -481,11 +581,12 @@ def main(args=None) -> None:
     executor.add_node(node)
     try:
         executor.spin()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / ros2 launch shutdown
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

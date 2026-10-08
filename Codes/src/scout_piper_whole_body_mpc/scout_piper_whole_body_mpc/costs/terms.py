@@ -37,6 +37,15 @@ class Goal:
     approach_axis: Optional[np.ndarray] = None   # desired TCP z direction (world), optional
 
 
+def same_goal(a: Optional[Goal], b: Goal, tol_m: float = 1e-3, tol_axis: float = 1e-3) -> bool:
+    """True when b repeats a (position within tol_m, same approach axis)."""
+    if a is None or np.linalg.norm(a.p - b.p) > tol_m:
+        return False
+    if (a.approach_axis is None) != (b.approach_axis is None):
+        return False
+    return a.approach_axis is None or float(np.linalg.norm(a.approach_axis - b.approach_axis)) < tol_axis
+
+
 @dataclass
 class CostWeights:
     goal: float = 50.0

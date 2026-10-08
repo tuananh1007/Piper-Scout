@@ -27,6 +27,8 @@ arm-only (W0) and sequential base-then-arm (W1) comparators live alongside it.
 in   /odom                          nav_msgs/Odometry
 in   /joint_states                  sensor_msgs/JointState (joint_names param)
 in   /whole_body_mpc/goal           geometry_msgs/PointStamped in world_frame
+in   /whole_body_mpc/goal_pose      geometry_msgs/PoseStamped in world_frame; z axis = approach direction
+in   /whole_body_mpc/cancel         std_msgs/Empty: drop the goal, stop, mode "idle"
 in   geometry                       in-process semantic map (use_semantic_scene: true)
 out  /whole_body_mpc/preview/cmd_vel, /whole_body_mpc/preview/joint_jog   (execute: false)
 out  /cmd_vel, /servo_node/delta_joint_cmds (control_msgs/JointJog)     (execute: true)
@@ -39,6 +41,13 @@ execute:=true`) only after the Phase 0 E-stop / stop-and-zero validation. Arm
 velocities go to `moveit_servo` as `JointJog` and reach the Piper through
 `piper_servo_bridge` (scout_piper_bringup, `bringup_servo:=true`); the joint
 states come from the bringup's relay as `piper_joint1..6`.
+
+**Pose goals and handoff.** A `goal_pose` adds the approach axis as a soft
+cost (`w_orient`) and to the `reached` test (`approach_tolerance_deg`, 15°);
+re-sending the same goal keeps the solver's warm start. `stem_grasp` uses this
+to reach its pre-grasp pose and then cancels the MPC so its image-based servo
+has `moveit_servo` to itself (scout_piper_bringup `grasp_chain_check.py`,
+INSTALL.md 10.9).
 
 **Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an
 exception) it publishes zero base and joint velocities before shutting down.

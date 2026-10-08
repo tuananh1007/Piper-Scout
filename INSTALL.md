@@ -28,7 +28,7 @@ you power anything on.
 | Piper driver ↔ unified URDF | The driver publishes `joint1`…`joint6` + `gripper` on `/joint_states_single`; the bringup's `piper_joint_state_relay.py` republishes them as `piper_joint1`…`piper_joint8` on `/joint_states` (tested offline, not on hardware) |
 | MoveIt 2 demo for the Piper | Upstream demo, separate from the bringup; not validated (P0.3.9) |
 | `moveit_servo` | Wired (`bringup_servo:=true`, P0.5.1): reaches the arm only through `piper_servo_bridge`, which starts disabled. Verified end to end on the fake arm (`servo_chain_check.py`); **not yet run on hardware**, speeds not tuned on the robot (P0.5.2, P0.5.3) |
-| `stem_grasp` plan → execute, iterative approach | **Not done** (P0.4.11, P0.4.13): the pipeline only publishes `/stem_grasp/target_pose` |
+| `stem_grasp` reach → servo, iterative approach | Reach to the pre-grasp pose through the whole-body MPC (`reach_executor: whole_body_mpc`, P0.4.11) runs end to end on the fake drivers (10.9), not on hardware; the default `none` only publishes `/stem_grasp/target_pose`. Iterative approach not done (P0.4.13) |
 | Software stop (`hotkey_stop_and_zero`) | `x` sends zero twists and disables `piper_servo_bridge`, so servo-driven arm motion stops and the arm holds its measured pose. It does not stop the base and is no substitute for the physical stops |
 | Hand-eye calibration | Tools are on the lab machine, not in this repository; camera and mount offsets in the URDF are placeholders |
 | Nav2 | **Not usable on this robot as configured** (P0.6.2): `scout_nav2` expects an Ouster 3D lidar and a site map, and the bringup starts its simulation configuration (10.8) |
@@ -760,8 +760,9 @@ plans from home to a manual pose target (not yet validated: P0.3.9).
 
 `moveit_py` has no Humble binary, so `stem_grasp` cannot plan and execute;
 the documented options are building moveit2 from source in the container
-(~30 min) or `pymoveit2`. Until then the `stem_grasp` pipeline never reaches
-its servoing state, so it publishes no twists.
+(~30 min) or `pymoveit2`. `stem_grasp` reaches its pre-grasp pose through
+the whole-body MPC instead (10.9); only in its SERVOING state does it publish
+twists to servo.
 
 ### 10.5 Scout base only
 
@@ -872,8 +873,35 @@ ros2 topic hz /stem_grasp/mask
 ros2 topic echo /stem_grasp/target_pose
 ```
 
-The pipeline publishes the target pose and markers but does not plan,
-execute or servo (P0.4.11). The hot-key helper `ros2 run stem_grasp hotkey_stop_and_zero`
+With the default `reach_executor: none` the pipeline publishes the target
+pose and markers and stays in SCANNING.
+
+**Reach and handoff (`reach_executor: whole_body_mpc`, P0.4.11).** The
+pipeline sends the best candidate's pre-grasp pose (12 cm in front of the stem
+on the arm's side, gripper z axis toward the stem) to the whole-body MPC on
+`/whole_body_mpc/goal_pose`, goes to REACHING, and once the MPC has reported
+`reached` for `reach_settle_sec` (1 s) cancels it on `/whole_body_mpc/cancel`
+and switches to SERVOING, where its image-based servo sends twists to
+`moveit_servo` (10.4). A timeout (`reach_timeout_sec`, 60 s) or a silent MPC
+cancels and returns to SCANNING. "Reached" means TCP within 1 cm and approach
+axis within 15° (`approach_tolerance_deg`); in practice the axis ends close to
+that bound. Hardware-free check, with a synthetic stem cloud published by the
+check itself:
+
+```bash
+ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true fake_arm:=true \
+  bringup_base:=true fake_base:=true bringup_servo:=true bringup_pipeline:=false   # terminal 1
+ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py execute:=true      # terminal 2
+ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc     # terminal 3
+ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15                        # terminal 4: stem x y
+```
+
+**Pass:** six `PASS` lines and `GRASP CHAIN OK` (REACHING → SERVOING, TCP at
+the pre-grasp position from TF, MPC idle and no more joint commands after the
+handoff, base stopped, no servo halt). On the robot, the same handoff starts
+from real segmentation and point clouds; run it only after 10.4 and 10.13.
+
+The hot-key helper `ros2 run stem_grasp hotkey_stop_and_zero`
 (`x` sends zero twists and disables the servo bridge, `q` quits) stops
 servo-driven arm motion only; it is not an emergency stop.
 
@@ -1008,7 +1036,10 @@ ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py
 
 The node stays silent until it has `/odom`, `/joint_states` containing every
 name in `joint_names` (default `piper_joint1` … `piper_joint6`), and a goal on
-`/whole_body_mpc/goal` in `odom`. In dry run it publishes only
+`/whole_body_mpc/goal` (PointStamped) or `/whole_body_mpc/goal_pose`
+(PoseStamped, whose z axis is the desired approach direction) in `odom`;
+`/whole_body_mpc/cancel` (std_msgs/Empty) drops the goal and stops it. In dry
+run it publishes only
 `/whole_body_mpc/preview/cmd_vel`, `/whole_body_mpc/preview/joint_jog`,
 `/whole_body_mpc/status` and `/whole_body_mpc/plan`. On the robot the arm
 state comes from the bringup's relay (10.3).
