@@ -39,3 +39,8 @@ whole_body_mpc:
     # the approach axis (stem_grasp's ROS 1 MoveIt tolerance was 0.35 rad = 20 deg).
     approach_tolerance_deg: 15.0
     w_orient: 2.0                             # weight of the approach-axis cost
+    # Keep the arm's shoulder-to-wrist distance below reach_max_m (max 0.537)
+    # and move the base for the rest, so the pre-grasp pose leaves room for the
+    # stem servo and the final approach. 0 disables.
+    w_reach: 10000.0
+    reach_max_m: 0.36

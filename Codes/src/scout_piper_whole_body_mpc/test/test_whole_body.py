@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scout_piper_whole_body_mpc.baselines.sequential import choose_base_pose, run_sequential
-from scout_piper_whole_body_mpc.costs.terms import Goal, WholeBodyCost
+from scout_piper_whole_body_mpc.costs.terms import CostWeights, Goal, WholeBodyCost
 from scout_piper_whole_body_mpc.dynamics.piper import JOINTS, PiperKinematics, parse_xacro_joints
 from scout_piper_whole_body_mpc.dynamics.scout import ScoutParams, fit_slip, rollout_base
 from scout_piper_whole_body_mpc.dynamics.whole_body import WholeBodyModel
@@ -60,6 +60,15 @@ def test_jacobian_matches_finite_differences():
     assert k.manipulability(q) > 0
 
 
+def test_wrist_extension_depends_on_the_elbow_only():
+    k = PiperKinematics()
+    Q = np.random.default_rng(1).uniform(k.lower, k.upper, (500, 6))
+    F = k.link_frames(Q)
+    ref = np.linalg.norm(F[..., 4, :3, 3] - F[..., 2, :3, 3], axis=-1)
+    assert np.allclose(k.wrist_extension(Q), ref, atol=1e-12)
+    assert 0.08 < k.wrist_extension(Q).min() and k.wrist_extension(Q).max() < 0.54
+
+
 # ---------------------------------------------------------------- control
 def _controller(goal_p, obstacles=(), seed=0, samples=256):
     m = WholeBodyModel()
@@ -100,6 +109,17 @@ def test_r3_unreachable_target_moves_the_base_and_beats_arm_only():
     arm_only = run_closed_loop(X0, mppi2, cost2, safety2, steps=150, freeze_base=True)
     err_arm = np.linalg.norm(m2.tcp_world(arm_only.X[-1])[:3, 3] - cost2.goal.p)
     assert err_arm > 0.5                       # W0 cannot reach R3
+
+
+def test_reach_margin_moves_the_base_instead_of_stretching_the_arm():
+    """A stretched arm at the goal leaves the stem servo and the final approach
+    no room; with the reach term the base covers the rest (R3: the arm ends at
+    0.54 m, fully stretched, without it)."""
+    m = WholeBodyModel()
+    cost = WholeBodyCost(m, Goal(p=np.array([1.5, 0.3, 0.40])), w=CostWeights(reach=1e4))
+    log = run_closed_loop(X0, MPPI(m, MPPIConfig(seed=0)), cost, SafetyFilter(m), steps=150)
+    assert np.linalg.norm(m.tcp_world(log.X[-1])[:3, 3] - cost.goal.p) < 0.02
+    assert m.kin.wrist_extension(log.X[-1][3:]) < cost.w.reach_max_m + 0.02
 
 
 OBSTACLE_GOAL = np.array([0.62, -0.35, 0.40])

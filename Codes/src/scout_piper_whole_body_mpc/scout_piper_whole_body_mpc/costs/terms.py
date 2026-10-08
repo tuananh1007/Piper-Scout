@@ -61,6 +61,13 @@ class CostWeights:
     omega: float = 0.5                    # λ_ω inside J_base
     smooth: float = 0.5
     joint_limit: float = 100.0
+    # Reach margin: penalise wrist extension above reach_max_m so far goals
+    # move the base instead of stretching the arm. A stretched arm at the
+    # pre-grasp pose leaves the visual servo and the final approach (which
+    # advances the gripper ~0.12 m) no room, and moveit_servo halts near the
+    # singularity. Off here; whole_body_mpc.yaml enables it.
+    reach: float = 0.0
+    reach_max_m: float = 0.36
     # Clearance below which the collision penalty starts. Keep it above the
     # safety filter's d_safe (0.02): with equal margins the planner grazes the
     # boundary the filter refuses to cross and the robot deadlocks there (P3A.6).
@@ -111,6 +118,9 @@ class WholeBodyCost:
         margin = 0.05
         lim = np.clip(m.kin.lower + margin - q, 0, None) + np.clip(q - (m.kin.upper - margin), 0, None)
         J += w.joint_limit * (lim ** 2).sum((1, 2))
+        if w.reach > 0:
+            over = np.clip(m.kin.wrist_extension(q) - w.reach_max_m, 0, None)
+            J += w.reach * (over ** 2).mean(1)
 
         J += w.base * (U[..., 0] ** 2 + w.omega * U[..., 1] ** 2).mean(1)
         dU = np.diff(U, axis=1)

@@ -49,6 +49,17 @@ to reach its pre-grasp pose and then cancels the MPC so its image-based servo
 has `moveit_servo` to itself (scout_piper_bringup `grasp_chain_check.py`,
 INSTALL.md 10.9).
 
+**Reach margin (2026-10-08).** The node adds `w_reach` (1e4) times the squared
+excess of the shoulder-to-wrist distance over `reach_max_m` (0.36 m; the arm's
+maximum is 0.537 m). The distance depends only on the elbow angle, so the term
+costs about 1.5 ms per solve. Without it a far goal ended with the arm
+stretched (0.54 m on R3), which leaves the stem servo and the final approach no
+room to advance the gripper, and moveit_servo then halted at the singularity.
+With it the base covers the rest: 0.35 m on R3, with the base travelling 0.81 m
+instead of 0.65 m. `CostWeights.reach` defaults to 0, so the offline benchmark
+below is unchanged; `test_reach_margin_moves_the_base_instead_of_stretching_the_arm`
+covers the term.
+
 **Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an
 exception) it publishes zero base and joint velocities before shutting down.
 Neither `scout_ros2` nor `ugv_sdk` stops the Scout when `/cmd_vel` stops

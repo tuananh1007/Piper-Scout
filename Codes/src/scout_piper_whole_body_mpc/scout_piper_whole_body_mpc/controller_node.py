@@ -82,6 +82,7 @@ class WholeBodyMpcNode(Node):
             ("scene_voxel_size_m", 0.01), ("max_state_age_s", 0.2), ("max_geometry_age_s", 1.0),
             ("goal_tolerance_m", 0.01), ("handoff_distance_m", 0.05),
             ("approach_tolerance_deg", 15.0), ("w_orient", 2.0),
+            ("w_reach", 1e4), ("reach_max_m", 0.36),
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.execute = bool(p("execute"))
@@ -99,6 +100,7 @@ class WholeBodyMpcNode(Node):
                                                 refine_iters=int(p("refine_iters"))))
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
         self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
+                                   reach=float(p("w_reach")), reach_max_m=float(p("reach_max_m")),
                                    d_safe=float(p("d_safe")) + max(float(p("plan_margin_m")), 0.0))
         self.d_safe = float(p("d_safe"))
         self.max_state_age = float(p("max_state_age_s"))
