@@ -5,14 +5,18 @@ ROS 2 Humble port of `stem_grasp_ros1` (the ROS 1 package from the original `pip
 ## Status: Phase 0 port
 
 `core.py` (servo math and skeleton/candidate helpers), `moveit_planner.py`,
-`segmentation_node`, `pointcloud_node` and most of `pipeline_node` are ported
-from the ROS 1 source. Open items are marked `TODO(P0.4.x)` in `pipeline_node.py`:
+`segmentation_node`, `pointcloud_node` and `pipeline_node` are ported from the
+ROS 1 source. The grasp sequence runs hardware-free, not yet on the robot:
 
-- **P0.4.11**: plan → execute. Done through the whole-body MPC instead
-  (`reach_executor: whole_body_mpc`, `reach_handoff.py`). The MoveIt path is
-  still unwired: `moveit_py` has no Humble binary, and `moveit_planner.py`
-  returns no plan when it is absent.
-- **P0.4.13**: iterative approach state machine (not ported).
+- reach to the pre-grasp pose through the whole-body MPC (P0.4.11,
+  `reach_executor: whole_body_mpc`);
+- image-based servo (P0.4.12);
+- stepwise final approach (P0.4.13, `approach_enabled`).
+
+Open:
+- The MoveIt path is unwired: `moveit_py` has no Humble binary, and
+  `moveit_planner.py` returns no plan when it is absent.
+- Nothing closes the gripper at the end.
 
 ## Image-based servo (P0.4.12)
 
@@ -34,11 +38,28 @@ the camera's TF motion. Hardware-free (`grasp_chain_check.py`, INSTALL.md 10.9)
 the error falls from 33–65 px to 0.8–5 px in 15 s at four stem positions. The
 gains are not tuned on the robot.
 
+## Final approach (P0.4.13)
+
+`approach.py` is a new design, because the ROS 1 state machine is not in this
+repository; it keeps the ROS 1 `approach_*` parameter names. With
+`approach_enabled: true` the reach handoff goes to APPROACHING:
+
+- the servo keeps the stem on the gripper axis;
+- once aligned, the gripper advances along its axis in `approach_step` steps,
+  re-aligning between steps;
+- it stops in AT_GRASP at `approach_distance_tolerance` from the grasp point;
+- it goes to ABORTED (and stops) on too many steps, a lost mask, a start too far
+  away, or a timeout.
+
+Hardware-free: AT_GRASP after 3 steps in 17–24 s, with the TCP within 1 cm of
+the grasp point (INSTALL.md 10.9). Off by default. It drives the gripper onto
+the stem, and the Piper has no force sensor for the contact stop.
+
 ## Nodes
 
 | Node | Executable | Status |
 |---|---|---|
-| Pipeline orchestrator | `pipeline_node` | Ported: state machine, outer loop (skeleton + candidate selection → `/stem_grasp/target_pose`), inner-loop image-based servo toward the gripper axis (P0.4.12). Reach to the pre-grasp pose through the whole-body MPC with `reach_executor: whole_body_mpc` (P0.4.11, `reach_handoff.py`; default `none` only publishes the pose); iterative approach not ported (P0.4.13) |
+| Pipeline orchestrator | `pipeline_node` | Ported: state machine, outer loop (skeleton + candidate selection → `/stem_grasp/target_pose`), inner-loop image-based servo toward the gripper axis (P0.4.12), stepwise final approach (P0.4.13, `approach_enabled`). Reach to the pre-grasp pose through the whole-body MPC with `reach_executor: whole_body_mpc` (P0.4.11, `reach_handoff.py`; default `none` only publishes the pose) |
 | Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Ported (YOLO-seg, Grounded-SAM + target caption, HSV fallback) |
 | Point cloud filter | `pointcloud_node` | Ported (`/stem_grasp/filtered_cloud`, `/stem_grasp/leaf_filtered_cloud`) |
 | Hot-key stop | `hotkey_stop_and_zero` | Working: `x` publishes zero twists and disables `piper_servo_bridge` (the arm holds its measured pose); stops servo-driven motion only, not the base; zero-arm service not ported |

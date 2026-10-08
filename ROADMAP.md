@@ -136,12 +136,12 @@ The revised sequence separates **representation**, **local control**, **geometry
 **Current status:** ROS 2 workspace, Piper+Scout description, segmentation path, masked point cloud, skeleton/candidate logic, bringup scaffolding, and live RealSense→nvblox smoke path are present.
 
 **Remaining work**
-- moveit_servo wiring;
+- moveit_servo on hardware (wired and checked on the fake arm, P0.5);
 - Nav2 hardware validation;
 - Piper + Scout + RealSense synchronized hardware bringup;
 - ROS 1 → ROS 2 regression;
 - E-stop / stop-and-zero validation;
-- pipeline plan→execute through MoveIt (P0.4.11; `moveit_py` has no Humble binary) and the iterative approach state machine (P0.4.13).
+- the stem_grasp reach, servo and final approach (P0.4.11–P0.4.13) on hardware: they run hardware-free through the whole-body MPC; plan→execute through MoveIt stays unwired (`moveit_py` has no Humble binary), and nothing closes the gripper yet.
 
 **Exit criteria**
 - Arm + base + camera + TF operate together on hardware.

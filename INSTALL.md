@@ -28,7 +28,7 @@ you power anything on.
 | Piper driver ↔ unified URDF | The driver publishes `joint1`…`joint6` + `gripper` on `/joint_states_single`; the bringup's `piper_joint_state_relay.py` republishes them as `piper_joint1`…`piper_joint8` on `/joint_states` (tested offline, not on hardware) |
 | MoveIt 2 demo for the Piper | Upstream demo, separate from the bringup; not validated (P0.3.9) |
 | `moveit_servo` | Wired (`bringup_servo:=true`, P0.5.1): reaches the arm only through `piper_servo_bridge`, which starts disabled. Verified end to end on the fake arm (`servo_chain_check.py`); **not yet run on hardware**, speeds not tuned on the robot (P0.5.2, P0.5.3) |
-| `stem_grasp` reach → servo, iterative approach | Reach to the pre-grasp pose through the whole-body MPC (`reach_executor: whole_body_mpc`, P0.4.11) runs end to end on the fake drivers (10.9), not on hardware; the default `none` only publishes `/stem_grasp/target_pose`. Iterative approach not done (P0.4.13) |
+| `stem_grasp` reach → servo, iterative approach | Reach to the pre-grasp pose through the whole-body MPC (`reach_executor: whole_body_mpc`, P0.4.11), the image-based servo (P0.4.12) and the stepwise approach to the stem (`approach_enabled`, P0.4.13) run end to end on the fake drivers (10.9), not on hardware; the default `none` only publishes `/stem_grasp/target_pose`. Nothing closes the gripper yet |
 | Software stop (`hotkey_stop_and_zero`) | `x` sends zero twists and disables `piper_servo_bridge`, so servo-driven arm motion stops and the arm holds its measured pose. It does not stop the base and is no substitute for the physical stops |
 | Hand-eye calibration | Tools are on the lab machine, not in this repository; camera and mount offsets in the URDF are placeholders |
 | Nav2 | **Not usable on this robot as configured** (P0.6.2): `scout_nav2` expects an Ouster 3D lidar and a site map, and the bringup starts its simulation configuration (10.8) |
@@ -898,7 +898,8 @@ approach axis crosses the stem's depth. That pixel is computed from TF
 (`eef_frame` plus `tcp_offset_m`), not the image centre: the camera is beside
 the gripper. Twists go to `moveit_servo` in `camera_optical_frame`.
 `/stem_grasp/servo_status` (JSON, ~10 Hz) reports the image error, depth,
-pixels, velocity, gain and the sway estimate. The servo stops commanding when
+pixels, velocity, gain, sway estimate, the grasp point's distance along and
+from the gripper axis, and the approach phase and step. The servo stops commanding when
 the mask is older than `servo_mask_max_age_sec` (0.3 s), and servo then halts
 on its command timeout. Gains are `servo_lambda_0` / `servo_lambda_inf`
 (0.8 / 0.5; ROS 1 used 0.07 at large errors, about 4x slower) and are not yet
@@ -926,8 +927,41 @@ ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15                     
 
 Measured hardware-free at four stem positions (x 0.8–1.25 m): handoff after
 7–12 s, image error 33–65 px → 0.8–5 px, axis 0.04–0.25 cm from the grasp
-point. On the robot, the same chain starts from real segmentation and point
-clouds; run it only after 10.4 and 10.13.
+point.
+
+**Final approach (`approach_enabled: true`, P0.4.13; off by default).** The
+handoff goes to APPROACHING instead of SERVOING. The servo keeps the stem on
+the gripper axis, and once the image error has stayed under
+`approach_align_tolerance_px` (8 px) for `approach_settle_sec`, the gripper
+advances along its axis at `approach_speed_mps` (2 cm/s). Each advance is one
+`approach_step` (5 cm), and the gripper re-aligns between steps. The pipeline
+stops commanding and goes to AT_GRASP when the grasp point is within
+`approach_distance_tolerance` (1 cm) along the axis. It goes to ABORTED (and
+stops) on any of these:
+- the TCP is farther than `approach_target_distance` (0.25 m) at the start;
+- more than `approach_max_steps`;
+- no usable stem mask for `approach_mask_wait_sec`;
+- `approach_timeout_sec` passes.
+
+A force above `contact_threshold_n` also ends the approach, but the Piper has no
+force sensor (`/ft_sensor/raw`), so on the robot only the geometry stops it.
+Nothing closes the gripper yet. To check, run terminal 3 with
+`-p approach_enabled:=true`:
+
+```bash
+ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc -p approach_enabled:=true
+```
+
+**Pass:** eight `PASS` lines and `GRASP CHAIN OK`, as above, but with
+REACHING → APPROACHING → AT_GRASP, the TCP at the grasp point (within 1.5 cm
+along and 1 cm off the gripper axis) and the arm holding there for 1 s. These
+replace the image-error and axis checks. Measured hardware-free in seven runs
+at four stem positions: AT_GRASP after 3 steps and 17–24 s, the TCP 0.85–0.97
+cm short of the grasp point along the axis and 0.06–0.84 cm off it.
+
+On the robot, the same chain starts from real segmentation and point clouds;
+run it only after 10.4 and 10.13, and the approach only with someone at the
+stops.
 
 The hot-key helper `ros2 run stem_grasp hotkey_stop_and_zero`
 (`x` sends zero twists and disables the servo bridge, `q` quits) stops

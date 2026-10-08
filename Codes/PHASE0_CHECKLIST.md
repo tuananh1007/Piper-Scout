@@ -185,8 +185,8 @@ Port order and status:
 2. ☑ **moveit_planner.py** — `moveit_py` wrapper (P0.4.7); needs a `moveit_py` runtime, which has no Humble binary package.
 3. ☑ **segmentation_node.py** — YOLO seg path, then Grounded-SAM (P0.4.15, P0.4.16).
 4. ☑ **pointcloud_node.py** — mask-gated filtering → `/stem_grasp/filtered_cloud` + `/stem_grasp/leaf_filtered_cloud` (P0.4.17).
-5. ◐ **pipeline_node.py outer loop** — skeleton + candidate selection ☑ (P0.4.10); plan→execute pending `moveit_py` (P0.4.11).
-6. ☐ **pipeline_node.py iterative approach** — multi-step approach state machine (P0.4.13).
+5. ☑ **pipeline_node.py outer loop** — skeleton + candidate selection (P0.4.10); reach to the pre-grasp pose through the whole-body MPC (P0.4.11; the MoveIt path stays unwired, `moveit_py` has no Humble binary).
+6. ☑ **pipeline_node.py iterative approach** — new design on top of the servo, `approach.py` (P0.4.13; off by default, `approach_enabled`).
 7. ☑ **pipeline_node.py inner loop** — servo step (publishes to `moveit_servo`) (P0.4.12).
 
 After each chunk, re-run the smoke test:

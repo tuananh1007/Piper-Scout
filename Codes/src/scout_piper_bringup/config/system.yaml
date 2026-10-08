@@ -85,7 +85,17 @@ stem_grasp_pipeline:
     enable_context_prompt: false
     context_prompt_fallback_to_base: true
 
-    # --- Iterative approach ---
+    # --- Iterative approach (P0.4.13, stem_grasp/approach.py) ---
+    # After the reach handoff: servo, then advance along the gripper axis in
+    # approach_step steps, re-aligning (image error <= approach_align_tolerance_px
+    # for approach_settle_sec) between steps, until the grasp point is within
+    # approach_distance_tolerance or contact_threshold_n is felt. Aborts when the
+    # TCP starts farther than approach_target_distance, after approach_max_steps,
+    # without a stem mask (>= approach_min_leaf_pixels) for approach_mask_wait_sec,
+    # or after approach_timeout_sec. approach_goal_orientation_tolerance (a ROS 1
+    # MoveIt tolerance) is unused. Off by default: it moves the gripper onto the
+    # stem, and the Piper has no force sensor for contact_threshold_n.
+    approach_enabled: false
     approach_target_distance: 0.25
     approach_step: 0.05
     approach_max_steps: 8
@@ -94,6 +104,9 @@ stem_grasp_pipeline:
     approach_mask_wait_sec: 2.0
     approach_min_leaf_pixels: 60
     approach_goal_orientation_tolerance: 0.05
+    approach_speed_mps: 0.02
+    approach_align_tolerance_px: 8.0
+    approach_timeout_sec: 60.0
 
     # --- Skeleton stability ---
     skeleton_min_stem_points: 6

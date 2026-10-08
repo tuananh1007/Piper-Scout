@@ -7,6 +7,10 @@
     ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc
     ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15     # stem x y in odom
 
+With ``-p approach_enabled:=true`` on the pipeline it also checks the final
+approach (P0.4.13): REACHING -> APPROACHING -> AT_GRASP, the TCP at the grasp
+point and the arm holding there.
+
 Publishes a synthetic stem (a 4 mm vertical cylinder, z 0.25-0.60 m in odom):
 its robot-facing half as a point cloud on /stem_grasp/filtered_cloud, and, as
 a synthetic eye-in-hand camera, its mask on /stem_grasp/mask rendered from
@@ -15,7 +19,8 @@ the live TF pose of camera_color_optical_frame plus /camera/color/camera_info
 stem_grasp to go REACHING -> SERVOING, then lets the image-based servo run
 for --servo-seconds. Checks: the TCP from TF was at the pre-grasp position
 the pipeline sent the MPC, the MPC is idle and sends no more joint commands,
-the base stopped, the servo's image error ended small, the gripper approach
+the base stopped, the servo's image error ended small (or, with the approach,
+the TCP reached the grasp point and the arm holds there), the gripper approach
 axis passes through the grasp point, and servo never halted (singularity,
 collision or joint limit). Runs only
 against the fake drivers, an MPC with execute:=true and a pipeline with
@@ -164,6 +169,15 @@ def main() -> int:
         print("REFUSED: /stem_grasp_pipeline is not running with reach_executor:=whole_body_mpc", flush=True)
         return 2
     offset = param("/whole_body_mpc", "tcp_offset_m").double_value
+    approach = param("/stem_grasp_pipeline", "approach_enabled")
+    approach = approach is not None and approach.bool_value
+    servo_state = "APPROACHING" if approach else "SERVOING"
+
+    def link6():
+        try:
+            return tf_buffer.lookup_transform("odom", "piper_link6", rclpy.time.Time())
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+            return None
 
     n.create_timer(0.2, publish_cloud)
     n.create_timer(1.0 / 15.0, publish_camera)
@@ -172,16 +186,21 @@ def main() -> int:
     t0 = time.time()
     while time.time() - t0 < a.timeout:
         spin(0.2)
-        if states and states[-1][1] in ("SERVOING", "ABORTED"):
+        if states and states[-1][1] in (servo_state, "ABORTED"):
             break
     t_handoff = time.time()
-    pre_grasp_tcp = None
     spin(0.5)
-    try:
-        pre_grasp_tcp = tf_buffer.lookup_transform("odom", "piper_link6", rclpy.time.Time())
-    except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
-        pass
-    spin(a.servo_seconds)
+    pre_grasp_tcp = link6()
+    at_grasp = held = None
+    if approach:
+        t0 = time.time()
+        while time.time() - t0 < a.timeout and states[-1][1] not in ("AT_GRASP", "ABORTED"):
+            spin(0.2)
+        at_grasp = link6()
+        spin(1.0)
+        held = link6()
+    else:
+        spin(a.servo_seconds)
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
 
     seq = [s for _, s in states]
@@ -192,9 +211,14 @@ def main() -> int:
         print(("PASS " if cond else "FAIL ") + f"{name}: {detail}", flush=True)
 
     t_reach = next((t for t, s in states if s == "REACHING"), None)
-    t_servo = next((t for t, s in states if s == "SERVOING"), None)
-    check("stem_grasp went REACHING -> SERVOING", seq[-2:] == ["REACHING", "SERVOING"],
-          " -> ".join(seq) + (f" (reach {t_servo - t_reach:.1f} s)" if t_reach and t_servo else ""))
+    t_servo = next((t for t, s in states if s == servo_state), None)
+    t_done = next((t for t, s in states if s == "AT_GRASP"), None)
+    expect = ["REACHING", servo_state] + (["AT_GRASP"] if approach else [])
+    timing = f" (reach {t_servo - t_reach:.1f} s" if t_reach and t_servo else ""
+    if timing and t_done:
+        timing += f", approach {t_done - t_servo:.1f} s"
+    check("stem_grasp went " + " -> ".join(expect), seq[-len(expect):] == expect,
+          " -> ".join(seq) + (timing + ")" if timing else ""))
     def tcp_pose(tr):
         r = tr.transform.rotation
         R = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
@@ -217,7 +241,19 @@ def main() -> int:
     else:
         check("TCP at the pre-grasp position at the handoff (TF)", False, "no goal sent or no handoff")
     served = [s for t, s in ibvs if t > t_handoff]
-    if served and grasp_point is not None:
+    if approach and grasp_point is not None and at_grasp is not None and held is not None:
+        tcp, z = tcp_pose(at_grasp)
+        along = float((grasp_point - tcp) @ z)
+        miss = float(np.linalg.norm(np.cross(grasp_point - tcp, z)))
+        steps = max([s.get("step", 0) for s in served] or [0])
+        check("TCP at the grasp point (TF)", abs(along) < 0.015 and miss < 0.01,
+              f"{100 * along:.2f} cm short along the gripper axis, {100 * miss:.2f} cm off it, "
+              f"after {steps} steps (stem grasp point {np.round(grasp_point, 3)})")
+        moved = float(np.linalg.norm(tcp_pose(held)[0] - tcp))
+        check("arm holds at the grasp point", moved < 0.002, f"moved {1000 * moved:.1f} mm in 1 s")
+    elif approach:
+        check("TCP at the grasp point (TF)", False, "no AT_GRASP: " + " -> ".join(seq))
+    elif served and grasp_point is not None:
         first, last = served[0]["error_px"], float(np.median([s["error_px"] for s in served[-10:]]))
         check("servo image error ends small", last < 8.0,
               f"{first:.1f} px -> {last:.1f} px at depth {served[-1]['depth_m']:.3f} m "

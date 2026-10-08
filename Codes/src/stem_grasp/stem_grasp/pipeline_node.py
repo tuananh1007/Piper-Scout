@@ -12,8 +12,10 @@ end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
     MoveIt (moveit_planner) stays unwired: moveit_py has no Humble binary.
   * _inner_loop — image-based servo of the stem onto the gripper approach
     axis, one step per new mask (P0.4.12, see servo_geometry.py).
-  * Iterative approach state machine (TODO P0.4.13) and multi-view ring
-    (deferred to Phase 4).
+  * Iterative approach (P0.4.13, approach.py): with ``approach_enabled``
+    the handoff goes to APPROACHING, which servoes and advances along the
+    gripper axis in steps until AT_GRASP (or ABORTED).
+  * Multi-view ring (deferred to Phase 4).
 
 References between ports and ROS 1 source (file line numbers):
   - core.py classes:                  same module
@@ -54,6 +56,7 @@ from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from stem_grasp import core
+from stem_grasp.approach import ApproachConfig, IterativeApproach
 from stem_grasp.moveit_planner import MoveItPlanner
 from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
@@ -70,6 +73,8 @@ class PipelineState(Enum):
     SCANNING = auto()
     REACHING = auto()
     SERVOING = auto()
+    APPROACHING = auto()   # servo + stepwise advance along the gripper axis (P0.4.13)
+    AT_GRASP = auto()      # grasp point between the fingers; no more commands
     ABORTED = auto()
 
 
@@ -128,6 +133,17 @@ class PipelineParams:
     target_point_max_age_sec: float = 0.5  # live /stem_grasp/target_point preferred when fresher
     servo_mask_max_age_sec: float = 0.3   # no servo command on an older mask (servo then halts)
 
+    # Iterative final approach (P0.4.13, approach.py): after the handoff, servo
+    # and advance along the gripper axis in approach_step steps until the grasp
+    # point is within approach_distance_tolerance. A new design: the ROS 1
+    # source is not in the repository, so the approach_* names above keep their
+    # ROS 1 names with the meanings given in approach.py
+    # (approach_goal_orientation_tolerance, a MoveIt goal tolerance, is unused).
+    approach_enabled: bool = False        # false: servo only, no motion toward the stem
+    approach_speed_mps: float = 0.02      # advance speed along the gripper axis
+    approach_align_tolerance_px: float = 8.0  # image error that allows the next step
+    approach_timeout_sec: float = 60.0
+
     # Reach to the pre-grasp pose (P0.4.11): "none" only publishes the target
     # pose; "whole_body_mpc" hands it to scout_piper_whole_body_mpc
     reach_executor: str = "none"
@@ -165,6 +181,8 @@ class StemGraspPipeline(Node):
         self.last_mask_stamp: Optional[float] = None
         self._servo_mask_stamp: Optional[float] = None   # mask the servo last stepped on
         self._servo_cam_prev = None    # (time, world <- camera) at the previous servo step
+        self.approach: Optional[IterativeApproach] = None
+        self._inner_lock = threading.Lock()
         self.grasp_target_world: Optional[np.ndarray] = None   # in mpc_world_frame
         self.last_target_point: Optional[np.ndarray] = None  # in planning_frame
         self.last_target_stamp: Optional[float] = None
@@ -383,6 +401,19 @@ class StemGraspPipeline(Node):
             rho=float(self.params.servo_rho),
         )
 
+    def _approach_config(self) -> ApproachConfig:
+        p = self.params
+        return ApproachConfig(
+            step_m=float(p.approach_step), max_steps=int(p.approach_max_steps),
+            settle_s=float(p.approach_settle_sec),
+            distance_tolerance_m=float(p.approach_distance_tolerance),
+            max_start_distance_m=float(p.approach_target_distance),
+            mask_wait_s=float(p.approach_mask_wait_sec),
+            min_mask_pixels=int(p.approach_min_leaf_pixels),
+            align_tolerance_px=float(p.approach_align_tolerance_px),
+            speed_mps=float(p.approach_speed_mps), timeout_s=float(p.approach_timeout_sec),
+            contact_force_n=float(p.contact_threshold_n))
+
     def _on_mpc_status(self, msg: String) -> None:
         try:
             self.mpc_mode = json.loads(msg.data).get("mode")
@@ -503,7 +534,10 @@ class StemGraspPipeline(Node):
             return
         self.pub_mpc_cancel.publish(Empty())       # MPC stops and releases servo
         self.reach_monitor = None
-        if decision == "handoff":
+        if decision == "handoff" and self.params.approach_enabled:
+            self.get_logger().info("pre-grasp reached; servo and stepwise approach take over")
+            self._set_state(PipelineState.APPROACHING)
+        elif decision == "handoff":
             self.get_logger().info("pre-grasp reached; image-based servo takes over")
             self._set_state(PipelineState.SERVOING)
         else:
@@ -511,7 +545,16 @@ class StemGraspPipeline(Node):
             self._set_state(PipelineState.SCANNING)
 
     def _inner_loop(self) -> None:
-        if self.state != PipelineState.SERVOING:
+        # the timer is in a reentrant group: never step the servo twice at once
+        if not self._inner_lock.acquire(blocking=False):
+            return
+        try:
+            self._servo_step()
+        finally:
+            self._inner_lock.release()
+
+    def _servo_step(self) -> None:
+        if self.state not in (PipelineState.SERVOING, PipelineState.APPROACHING):
             return
         if self.current_force > self.params.max_force_n:
             self.get_logger().warn(
@@ -520,6 +563,10 @@ class StemGraspPipeline(Node):
             self._set_state(PipelineState.SCANNING)
             return
         if self.servo is None or self.last_mask is None:
+            return
+        if (self.state == PipelineState.APPROACHING
+                and self._age(self.last_mask_stamp) > self.params.approach_mask_wait_sec):
+            self._end_approach("abort", f"no stem mask for {self.params.approach_mask_wait_sec} s")
             return
         # one control step per new mask: repeated measurements would read as
         # a stopped stem. A stale mask gets no command, so servo halts.
@@ -548,7 +595,12 @@ class StemGraspPipeline(Node):
         if desired is None:
             desired = np.array([self.params.cx, self.params.cy])
         raw = stem_feature_uv(self.last_mask, target_uv[1], int(self.params.servo_row_band_px))
+        # grasp point minus TCP along the gripper axis, and its distance from the axis
+        distance = float((target_cam - tcp_cam) @ approach_cam)
+        miss = float(np.linalg.norm(np.cross(target_cam - tcp_cam, approach_cam)))
         if raw is None:
+            if self.approach is not None:
+                self._approach_speed(float("inf"), distance, 0)   # holds; aborts if it persists
             return
         vel, diag = self.servo.step(
             raw_uv=raw,
@@ -559,6 +611,14 @@ class StemGraspPipeline(Node):
             dt=dt,
             camera_vel=camera_vel,
         )
+        status = {}
+        if self.approach is not None:
+            speed = self._approach_speed(diag["error_norm"], distance,
+                                         int(np.count_nonzero(self.last_mask)))
+            if speed is None:                      # approach ended; servo halts
+                return
+            vel = vel + speed * approach_cam       # advance along the gripper axis
+            status = {"approach": self.approach.phase, "step": self.approach.steps}
         # the IBVS velocity is a camera translation in the camera optical frame
         self._publish_twist(vel, self.params.camera_optical_frame)
         now = self._now()
@@ -568,7 +628,26 @@ class StemGraspPipeline(Node):
                 "error_px": diag["error_norm"], "depth_m": depth_z,
                 "raw_uv": [float(v) for v in raw], "desired_uv": [float(v) for v in desired],
                 "vel_cam": [float(v) for v in vel], "lambda": diag["lambda"],
-                "sway_px_s": diag["sway_px_s"]})))
+                "sway_px_s": diag["sway_px_s"], "distance_m": distance, "axis_miss_m": miss,
+                **status})))
+
+    def _approach_speed(self, error_px: float, distance_m: float, pixels: int) -> Optional[float]:
+        """Advance speed for this servo step, or None once the approach ended."""
+        st = self.approach.update(self._now(), error_px, distance_m, pixels, self.current_force)
+        if st.phase in ("done", "abort"):
+            self._end_approach(st.phase, st.reason)
+            return None
+        return st.speed
+
+    def _end_approach(self, phase: str, reason: str) -> None:
+        self._publish_twist(np.zeros(3), self.params.camera_optical_frame)
+        steps = self.approach.steps if self.approach is not None else 0
+        if phase == "done":
+            self.get_logger().info(f"approach done after {steps} steps: {reason}")
+            self._set_state(PipelineState.AT_GRASP)
+        else:
+            self.get_logger().warn(f"approach aborted after {steps} steps: {reason}")
+            self._set_state(PipelineState.ABORTED)
 
     def _camera_velocity(self) -> Optional[np.ndarray]:
         """Measured camera translation velocity (camera optical frame) since the
@@ -676,11 +755,15 @@ class StemGraspPipeline(Node):
             if new_state == self.state:
                 return
             self.get_logger().info(f"{self.state.name} -> {new_state.name}")
-            if new_state == PipelineState.SERVOING and self.servo is not None:
+            servoing = (PipelineState.SERVOING, PipelineState.APPROACHING)
+            if new_state in servoing and self.servo is not None:
                 # fresh observer and last command for every servo phase
                 self.servo = self._make_servo()
                 self._servo_mask_stamp = None
                 self._servo_cam_prev = None
+            self.approach = None
+            if new_state == PipelineState.APPROACHING:
+                self.approach = IterativeApproach(self._approach_config(), start_t=self._now())
             self.state = new_state
 
     def _publish_state(self) -> None:

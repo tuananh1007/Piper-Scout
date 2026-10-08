@@ -15,6 +15,8 @@ stem_grasp_pipeline:
     move_group: "arm"
     max_force_n: 2.0
     contact_threshold_n: 0.15
+    # Iterative final approach (P0.4.13): see system.yaml and stem_grasp/approach.py
+    approach_enabled: false
     approach_target_distance: 0.25
     approach_step: 0.05
     approach_max_steps: 8
@@ -23,6 +25,9 @@ stem_grasp_pipeline:
     approach_mask_wait_sec: 2.0
     approach_min_leaf_pixels: 60
     approach_goal_orientation_tolerance: 0.05
+    approach_speed_mps: 0.02
+    approach_align_tolerance_px: 8.0
+    approach_timeout_sec: 60.0
     skeleton_min_stem_points: 6
     skeleton_max_endpoint_jump_m: 0.05
     skeleton_cache_max_age_sec: 2.0
