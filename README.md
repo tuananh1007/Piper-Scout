@@ -66,7 +66,7 @@ git lfs version || ./scripts/install_git_lfs_and_pull.sh   # once: Git LFS for t
 ls -l ~/.Xauthority || xauth extract ~/.Xauthority "$DISPLAY"   # must be a file before the first run
 docker compose -f docker/compose.dev.yml run --rm dev
 # inside the container, in /workspace:
-colcon build --symlink-install && source install/setup.bash
+./scripts/colcon_build_safe.sh --symlink-install && source install/setup.bash   # never plain colcon build on 16 GB
 ros2 launch scout_piper_description view_robot.launch.py      # URDF check, no hardware
 ```
 

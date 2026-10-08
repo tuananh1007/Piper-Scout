@@ -5,7 +5,7 @@
 #   docker compose -f docker/compose.dev.yml run --rm dev
 #
 # Inside the container:
-#   colcon build --symlink-install
+#   ./scripts/colcon_build_safe.sh --symlink-install
 #   ros2 launch scout_piper_description view_robot.launch.py
 
 services:
@@ -20,6 +20,12 @@ services:
     container_name: piper-scout-dev
     network_mode: host
     ipc: host
+    # Cap the container's memory so a runaway build or node is killed inside
+    # it instead of swapping the whole host into a freeze. 12g suits a 16 GB
+    # workstation; raise it on bigger machines (DEV_MEM_LIMIT=24g ...).
+    # memswap_limit = mem_limit: the container gets no swap.
+    mem_limit: ${DEV_MEM_LIMIT:-12g}
+    memswap_limit: ${DEV_MEM_LIMIT:-12g}
     privileged: true
     runtime: nvidia                # requires nvidia-container-toolkit on host
     environment:

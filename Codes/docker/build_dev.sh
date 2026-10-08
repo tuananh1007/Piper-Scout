@@ -22,4 +22,4 @@ echo "  cd ${WS_DIR}"
 echo "  docker compose -f docker/compose.dev.yml run --rm dev"
 echo
 echo "Inside, the workspace is at /workspace. Build with:"
-echo "  colcon build --symlink-install"
+echo "  ./scripts/colcon_build_safe.sh --symlink-install"

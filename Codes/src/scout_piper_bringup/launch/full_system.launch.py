@@ -109,6 +109,12 @@ def _declare_args():
                         "default until nvblox is installed.",
         ),
         DeclareLaunchArgument(
+            "scene_classes",
+            default_value="stem,branch,leaf,target",
+            description="Classes the semantic stack maps, one nvblox process each "
+                        "(e.g. stem,target on a 16 GB / 12 GB-GPU workstation).",
+        ),
+        DeclareLaunchArgument(
             "bringup_rviz",
             default_value="true",
             description="Open RViz with the integrated config.",
@@ -342,6 +348,7 @@ def _launch_setup(context, *args, **kwargs):
         name="stem_grasp_pipeline",
         output="screen",
         parameters=[system_params, {"use_sim_time": use_sim}],
+        additional_env={"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},   # small numpy ops
         condition=IfCondition(LaunchConfiguration("bringup_pipeline")),
     )
 
@@ -373,6 +380,7 @@ def _launch_setup(context, *args, **kwargs):
                  "launch", "nvblox_semantic.launch.py"]
             )
         ),
+        launch_arguments={"classes": LaunchConfiguration("scene_classes")}.items(),
         condition=IfCondition(LaunchConfiguration("bringup_scene_repr")),
     )
 

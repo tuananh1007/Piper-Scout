@@ -59,6 +59,6 @@ find /usr/lib -name 'vpiConfig.cmake' 2>/dev/null | head -3
 
 echo
 echo "Done. Next:"
-echo "  colcon build --symlink-install --packages-up-to isaac_ros_nvblox"
+echo "  ./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox"
 echo "If find_package(vpi) still fails, set:"
 echo "  export CMAKE_PREFIX_PATH=\$(find /opt/nvidia -name 'vpiConfig.cmake' -printf '%h\\n' | head -1):\$CMAKE_PREFIX_PATH"

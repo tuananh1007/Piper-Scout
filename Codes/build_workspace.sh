@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Convenience build script for the Piper+Scout ROS 2 workspace.
-# Run from anywhere; resolves paths relative to this script.
+# Run from anywhere; resolves paths relative to this script. Extra arguments
+# go to colcon build (e.g. --packages-select stem_grasp). The build runs
+# through scripts/colcon_build_safe.sh, which limits parallel compiles to the
+# free memory (a plain colcon build can freeze a 16 GB machine).
+#
+#   SKIP_ROSDEP=1 ./build_workspace.sh ...   skip the rosdep install step
 
 set -euo pipefail
 
@@ -14,18 +19,20 @@ if [[ ! -f "/opt/ros/${ROS_DISTRO}/setup.bash" ]]; then
 fi
 
 # shellcheck disable=SC1090
-source "/opt/ros/${ROS_DISTRO}/setup.bash"
+set +u; source "/opt/ros/${ROS_DISTRO}/setup.bash"; set -u
 
 if [[ ! -d "src/piper_ros" ]]; then
   echo "Upstream packages not imported yet. Running vcs import..."
   vcs import src < repos.yaml
 fi
 
-echo "Installing rosdep dependencies..."
-rosdep install --from-paths src --ignore-src -r -y || true
+if [[ -z "${SKIP_ROSDEP:-}" ]]; then
+  echo "Installing rosdep dependencies..."
+  rosdep install --from-paths src --ignore-src -r -y || true
+fi
 
 echo "Building workspace..."
-colcon build --symlink-install "$@"
+"${SCRIPT_DIR}/scripts/colcon_build_safe.sh" --symlink-install "$@"
 
 echo
 echo "Done. Next:"

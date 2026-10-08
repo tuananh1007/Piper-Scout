@@ -25,8 +25,8 @@ cd Codes                     # from the repository root
 docker compose -f docker/compose.dev.yml run --rm dev
 # you are now inside the container, in /workspace
 
-# First time: build the workspace
-colcon build --symlink-install
+# First time: build the workspace (memory-limited, INSTALL.md Step 6)
+./scripts/colcon_build_safe.sh --symlink-install
 source install/setup.bash
 
 # Then run the bringup or just visualize the URDF:

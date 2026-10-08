@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-08 (P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-08 (P0.1 memory-safe build and runtime for the 16 GB workstation; P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -36,6 +36,7 @@
 | P0.1.9 | Docker + nvidia-container-toolkit install script | ☑ | 2026-05-17 — `Codes/scripts/install_docker_nvidia.sh` |
 | P0.1.10 | Phase 0 dev Dockerfile + compose + build script | ☑ | 2026-05-17 — `Codes/docker/{Dockerfile.dev,compose.dev.yml,build_dev.sh,README.md}` |
 | P0.1.11 | Fix upstream package-name references after vcs import | ☑ | 2026-05-17 — `piper_humble`, `piper_with_gripper_moveit`, `scout_nav2/nav2.launch.py` |
+| P0.1.12 | Memory-safe build and runtime for the 16 GB lab workstation (Ryzen 7 3700X, RTX 3060 12 GB) | ☑ | 2026-10-08 — the PC froze on early steps; a plain `colcon build` on 16 threads starts far more compilers than 16 GB holds. Measured peak per compiler: rclcpp nodes 0.83 GB, the MoveIt plugin 0.92 GB, nvblox CUDA 0.98–1.24 GB (pinned `nvblox_core`, 37 CUDA files, 641 s on one core for sm_86; the five default Isaac architectures take 2.3–3.3× longer with the same memory). `scripts/colcon_build_safe.sh` (also used by `build_workspace.sh`) caps compilers at (free − 3 GB) / 1.5 GB, reads the container's cgroup limit, and builds CUDA only for the local GPU. The dev container is capped at 12 GB with no swap (`DEV_MEM_LIMIT`). INSTALL.md: earlyoom, OOM diagnosis, measured runtime (Phase 0 stack 1.0 GB, ~3 cores). `nvblox_semantic.launch.py classes:=` / `scene_classes:=` to run fewer nvblox processes; one BLAS thread for the MPC and pipeline. The build limits are not yet run on the workstation itself |
 
 ### P0.2 — Unified URDF (scout_piper_description)
 

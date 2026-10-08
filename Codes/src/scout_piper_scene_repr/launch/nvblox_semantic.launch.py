@@ -13,9 +13,14 @@ Assumes the RealSense driver publishes /camera/color/* and aligned depth, and
 the segmentation node publishes a label image (merged) or the legacy masks
 (separate).
 
+Each nvblox_node is a separate process with its own CUDA context, so every
+class costs GPU and host memory; ``classes:=stem,target`` starts only those
+mappers (the demux still publishes every class's depth).
+
 Usage:
     ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py
     ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
+    ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py classes:=stem,target
 """
 
 import os
@@ -36,6 +41,16 @@ PARAM_MAP = {
     "max_integration_distance_m": "static_mapper.projective_integrator_max_integration_distance_m",
     "weighting": "static_mapper.projective_integrator_weighting_mode",
 }
+
+
+def selected_classes(spec: str) -> list:
+    """Comma-separated subset of CLASS_NAMES, in CLASS_NAMES order (unknown names are an error)."""
+    names = [c.strip() for c in spec.split(",") if c.strip()]
+    unknown = sorted(set(names) - set(CLASS_NAMES))
+    if unknown or not names:
+        raise ValueError(f"classes:={spec!r}: choose from {CLASS_NAMES}"
+                         + (f"; unknown {unknown}" if unknown else ""))
+    return [c for c in CLASS_NAMES if c in names]
 
 
 def per_class_parameters(table: dict, class_name: str, global_frame: str) -> dict:
@@ -102,9 +117,10 @@ def _launch_setup(context, *args, **kwargs):
             ],
         }],
     )
+    classes = selected_classes(LaunchConfiguration("classes").perform(context))
     nvblox_nodes = [
         _make_nvblox_node(c, per_class_parameters(table, c, global_frame), base_params, camera_params)
-        for c in CLASS_NAMES
+        for c in classes
     ]
     return [demux] + nvblox_nodes
 
@@ -128,6 +144,12 @@ def generate_launch_description():
             "global_frame",
             default_value="odom",
             description="World-fixed frame the per-class maps live in (must exist in TF).",
+        ),
+        DeclareLaunchArgument(
+            "classes",
+            default_value=",".join(CLASS_NAMES),
+            description="Comma-separated classes to map; one nvblox process (and CUDA "
+                        "context) each, so fewer saves GPU and host memory.",
         ),
         OpaqueFunction(function=_launch_setup),
     ])

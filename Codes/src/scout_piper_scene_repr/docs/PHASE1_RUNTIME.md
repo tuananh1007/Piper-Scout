@@ -34,7 +34,7 @@ docker compose -f docker/compose.dev.yml run --rm dev
 
 # Inside the container:
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select scout_piper_scene_repr
+./scripts/colcon_build_safe.sh --symlink-install --packages-select scout_piper_scene_repr
 source install/setup.bash
 ros2 launch scout_piper_scene_repr test_class_demux.launch.py
 ```
@@ -82,7 +82,7 @@ docker compose -f docker/compose.dev.yml run --rm dev
 # Inside:
 source /opt/ros/humble/setup.bash
 nvcc --version                # verify CUDA dev toolchain
-colcon build --symlink-install --packages-up-to isaac_ros_nvblox
+./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox   # memory-limited, INSTALL.md Step 6
 ```
 
 The build of nvblox (CUDA kernels) takes 15-30 min on a workstation. Plan
@@ -177,7 +177,7 @@ the field frame (`odom`) in TF.
 Build and test the package (C++ plugin, message, Python field export):
 
 ```bash
-colcon build --packages-select scout_piper_scene_repr
+./scripts/colcon_build_safe.sh --packages-select scout_piper_scene_repr
 colcon test --packages-select scout_piper_scene_repr && colcon test-result --verbose
 ```
 

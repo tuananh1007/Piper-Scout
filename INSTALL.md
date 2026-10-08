@@ -108,7 +108,23 @@ already installed. The dev container requests the `nvidia` runtime and will
 not start without it; the nvblox build needs CUDA. Path D needs no GPU.
 
 - **Driver:** R560 or newer. The GXF prebuilts that `patch_upstream.sh` pulls are built for CUDA 12.6 (`gxf_x86_64_cuda_12_6`) and the Isaac ROS 3.2 images are CUDA 12.6, whose release driver branch is R560. Older CUDA 12-capable drivers rely on CUDA minor-version compatibility and are untested here. Check with `nvidia-smi` (driver version and "CUDA Version: 12.6" or higher).
-- **TODO(maintainer):** record the GPU of the lab workstation where nvblox was validated (P1.1.2) as the known-good model.
+- **Lab workstation (2026-10-08):** Ryzen 7 3700X (8 cores / 16 threads), RTX 3060 12 GB (compute capability 8.6), about 16 GB of RAM. Whether nvblox was validated on this machine (P1.1.2) is not recorded.
+- **16 GB of RAM is tight.** It is enough only with the memory precautions below and the limited build in Step 6. A plain `colcon build` on 16 threads starts far more compilers than 16 GB can hold, and the machine swaps until the desktop freezes.
+
+**Memory precautions on a 16 GB machine** (host, once, before Step 3):
+
+```bash
+free -h; swapon --show        # what is free now, and the swap size
+sudo apt-get install -y earlyoom
+systemctl is-active earlyoom  # expect: active
+```
+
+`earlyoom` kills the largest process when RAM and swap are almost full, before
+the desktop locks up; a build then fails with a `Killed` message instead of
+freezing the PC. Keep Ubuntu's default small swap file: a large swap delays
+that kill and turns the spike into minutes of thrashing. To confirm that a past
+freeze was memory, look for the kernel's OOM messages from the previous boot:
+`journalctl -k -b -1 | grep -iE 'out of memory|oom-kill|killed process'`.
 
 **Operating system:** path B Ubuntu 22.04 (jammy); path C Ubuntu 20.04
 (focal), which `install_docker_nvidia.sh` is written for; path D any OS with
@@ -131,7 +147,8 @@ sudo apt-get install -y git python3-pip python3-venv
 | CUDA 12.4 toolkit layer | ~1.5 GB; rebuilding the image takes ~10 min |
 | GXF prebuilt libraries (Git LFS, `isaac_ros_nitros`) | ~50–100 MB |
 | `nvblox_core` submodule | ~50 MB |
-| nvblox CUDA build | 15–30 min on a workstation |
+| nvblox CUDA build | 15–30 min on a workstation (earlier estimate, five architectures) |
+| `nvblox_core` library, RTX 3060 only (`colcon_build_safe.sh`, Step 6) | 37 CUDA files, 641 s of compile time on one core (measured 2026-10-08), so about 5–6 min at two compilers; up to 1.24 GB per compiler |
 | Optional: torch (path D, Linux, default CUDA build) | ~4–5 GB; the CPU build is much smaller |
 | Optional: Grounded-SAM | torch plus a ~2 GB checkpoint set |
 
@@ -373,10 +390,43 @@ first as shown here.
 ## Step 6 — Install ROS dependencies and build
 
 The first full build includes the Isaac ROS CUDA packages (15–30 min or
-more). `colcon build` writes `build/`, `install/` and `log/` into `Codes/`;
+more). The build writes `build/`, `install/` and `log/` into `Codes/`;
 all three are gitignored. A full-workspace build is the goal but has not
 been recorded as passing yet (P0.1.7): if it fails, check
 [Troubleshooting](#troubleshooting) before assuming you made a mistake.
+
+**Build with `./scripts/colcon_build_safe.sh`, never a plain `colcon build`.**
+Plain colcon builds one package per CPU thread and runs `make -j<threads>`
+inside each, so on the 16-thread workstation it can start well over a hundred
+compilers at once. Measured peak memory per compiler (2026-10-08, Release
+builds; the robot machine cannot be measured from here):
+
+| What is compiled | Peak per compiler |
+|---|---|
+| Generated message code | ~0.1 GB |
+| `ugv_sdk` | 0.25 GB |
+| ROS 2 nodes (`scout_base`, rclcpp) | 0.83 GB |
+| `scout_piper_scene_repr` (MoveIt plugin) | 0.92 GB |
+| nvblox CUDA files (pinned `nvblox_core`) | 0.98–1.24 GB; 37 files, 641 s of compile time on one core for one architecture |
+
+Sixteen packages × `make -j16` at up to 1 GB each is far beyond 16 GB.
+`colcon_build_safe.sh` passes its arguments to `colcon build` and:
+
+- sizes the parallelism from the memory free when it starts: (free − 3 GB) /
+  1.5 GB compilers, two per package. On the workstation with the desktop open
+  (~12 GB free) that is 6 compilers;
+- compiles CUDA code only for the GPU in the machine (`nvidia-smi` reports
+  8.6 → `-DCMAKE_CUDA_ARCHITECTURES=86` for the RTX 3060). Isaac ROS otherwise
+  builds CUDA code for five architectures (`89;86;80;75;70`): the same memory
+  per file, but 2.3–3.3× the compile time on the two nvblox files measured;
+- inside the container, uses the container's memory limit (6C) if that is
+  smaller.
+
+It prints what it chose. Override with `BUILD_JOBS=4` (compilers),
+`BUILD_RESERVE_GB=5` (more headroom for a browser or IDE), or `CUDA_ARCHS=86`
+when `nvidia-smi` is not available where you build. Other packages print
+`Manually-specified variables were not used by the project:
+CMAKE_CUDA_ARCHITECTURES`, which is harmless.
 
 ### 6B — Native Ubuntu 22.04 (path B)
 
@@ -387,23 +437,24 @@ source /opt/ros/humble/setup.bash
 sudo rosdep init          # first time on this machine only; "already initialized" is fine
 rosdep update
 rosdep install --from-paths src --ignore-src -r -y
-colcon build --symlink-install
+./scripts/colcon_build_safe.sh --symlink-install
 ```
 
 **Check:**
 
 - Because of `-r`, rosdep prints `#All required rosdeps installed successfully` even when some keys could not be resolved, so read the output above that line. An `ERROR: the following packages/stacks could not have their rosdep keys resolved` entry is expected for `nvblox_examples_bringup` (Isaac ROS example dependencies that are not built here); any other package in that list is a real missing dependency.
-- `colcon build` ends with `Summary: <N> packages finished` and no `packages failed` line.
+- The build ends with `Summary: <N> packages finished` and no `packages failed` line.
 
 `./build_workspace.sh` (with extra colcon arguments, e.g.
 `./build_workspace.sh --packages-select stem_grasp`) is a shortcut for later
-rebuilds only: it runs `rosdep install ... || true`, which hides failures,
-and skips `rosdep init` / `rosdep update`.
+rebuilds only: it runs `rosdep install ... || true`, which hides failures
+(`SKIP_ROSDEP=1` skips it), skips `rosdep init` / `rosdep update`, and then
+builds through `colcon_build_safe.sh`.
 
 Without CUDA, build only the packages that do not depend on Isaac ROS:
 
 ```bash
-colcon build --symlink-install --packages-up-to scout_piper_bringup plant_twin scout_piper_jepa
+./scripts/colcon_build_safe.sh --symlink-install --packages-up-to scout_piper_bringup plant_twin scout_piper_jepa
 ```
 
 `colcon list --packages-up-to` on the imported workspace resolves this to 19
@@ -436,12 +487,20 @@ You are now in `/workspace` (the bind-mounted `Codes/`) as user `dev`
 # Container, in /workspace:
 printenv ROS_DISTRO                       # expect: humble
 nvcc --version                            # expect: release 12.4
-colcon build --symlink-install --packages-up-to isaac_ros_nvblox   # optional first pass: 15-30 min of CUDA
-colcon build --symlink-install
+./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox   # optional first pass: CUDA
+./scripts/colcon_build_safe.sh --symlink-install
 ```
 
-**Check:** `colcon build` ends with `Summary: <N> packages finished` and no
+**Check:** the build ends with `Summary: <N> packages finished` and no
 `packages failed` line; on the host, `Codes/install/` now exists.
+
+The container is capped at 12 GB of RAM and no swap (`mem_limit` in
+`docker/compose.dev.yml`), so on a 16 GB host a build or node that runs away
+is killed inside the container (exit code 137, or `Killed` in the build log)
+instead of freezing the host. On a bigger machine raise it:
+`DEV_MEM_LIMIT=24g docker compose -f docker/compose.dev.yml run --rm dev`.
+On an Ubuntu 20.04 host without swap accounting Docker warns that the swap
+limit is ignored; the memory limit still applies.
 
 The image pre-installs the dependencies, and the Codes README does not run
 rosdep in the container. If colcon reports a missing package, run
@@ -617,6 +676,25 @@ next numbered bringup, and check with `ros2 node list` that its nodes are
 gone. Use extra terminals only for the check commands, or for items that say
 they need a running bringup. Do not debug the integrated stack while an
 individual driver is broken.
+
+**On the 16 GB workstation.**
+- **Measured (2026-10-08, hardware-free):** the Phase 0 stack (bringup with
+  the fake arm and base, servo, whole-body MPC, stem_grasp pipeline) peaks at
+  1.0 GB of RAM and uses about three CPU cores. moveit_servo takes about one
+  core; the pipeline and the MPC under one each.
+- **Not measured here (no GPU in the test machine):** the GPU processes. Each
+  torch process (segmentation with YOLO or Grounded-SAM, the Piper-JEPA node)
+  and each nvblox process loads the CUDA libraries, which costs a few GB of RAM
+  plus GPU memory, and the semantic scene starts one nvblox process per class.
+  Add them one at a time and watch `free -h` and `nvidia-smi`:
+  - use `scene_classes:=stem,target` (or `classes:=` on
+    `nvblox_semantic.launch.py`) instead of all four classes;
+  - leave Grounded-SAM off and use YOLO;
+  - run RViz with only the displays you need.
+- **Threads:** the MPC and the pipeline run with one BLAS thread
+  (`OPENBLAS_NUM_THREADS=1` in their launch files). More threads did not
+  speed up the MPC (57.6 vs 61.5 ms per solve), and idle OpenBLAS threads
+  spin on every core.
 
 ### 10.1 URDF check (no hardware)
 
@@ -982,7 +1060,7 @@ Details: [`PHASE1_RUNTIME.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_RUNT
    `ros2 topic hz /scene_repr/mask/stem` shows ~10 Hz.
 
 2. **nvblox built?** `ros2 pkg executables nvblox_ros` lists `nvblox_node`; if
-   not, `colcon build --symlink-install --packages-up-to isaac_ros_nvblox`.
+   not, `./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox`.
 
 3. **RealSense → nvblox (validated with a D405).** Do not run it while the
    bringup camera is on (pass `bringup_camera:=false` to reuse an
@@ -1009,7 +1087,10 @@ Details: [`PHASE1_RUNTIME.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_RUNT
    ```
 
    `full_system.launch.py bringup_scene_repr:=true` includes this launch file
-   with its default, `input_mode:=merged`.
+   with its default, `input_mode:=merged`. Each class is a separate
+   `nvblox_node` process with its own CUDA context; on the 16 GB workstation
+   map fewer classes with `classes:=stem,target` (here) or
+   `scene_classes:=stem,target` (`full_system.launch.py`).
 
 5. **CPU semantic map and distance field.** No launch file starts this node.
    It needs `class_demux_node` running (item 1 for a synthetic test, item 4
@@ -1238,6 +1319,8 @@ and no sample episodes are in the repository yet.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| The PC freezes during the build (or a few minutes into it) | Out of memory: plain `colcon build` runs far more compilers than 16 GB holds (Step 6) | Hard reset if needed, install `earlyoom` (Step 1), then build only with `./scripts/colcon_build_safe.sh` |
+| `c++: fatal error: Killed signal terminated program cc1plus`, `nvcc error : 'cicc' died due to signal 9`, or exit code 137 in the container | A compiler was killed for memory (earlyoom, the kernel, or the container limit) | Rerun with fewer compilers, e.g. `BUILD_JOBS=2 ./scripts/colcon_build_safe.sh --symlink-install`; close the browser; it resumes where it stopped |
 | Arm jumps to the zero pose at full speed | A command on the driver's input: with upstream `start_single_piper.launch.py` that is any `/joint_states` publisher (sliders, `view_robot`, MoveIt demo, a stub); with the bringup, anything on `/piper/joint_cmd` | Cut power. Start the arm only through `full_system.launch.py` and check `ros2 topic info /piper/joint_cmd` ([warning](#before-you-start-what-works-today)) |
 | `arm_command_topic:=... would make the Piper driver execute joint states as commands` | A joint-state topic was given as the command topic | Use a dedicated topic (default `/piper/joint_cmd`) |
 | RViz arm does not follow the real arm | Relay not receiving `/joint_states_single` | `ros2 topic hz /joint_states_single`; the relay logs a warning if `joint1..joint6` are missing |
@@ -1251,7 +1334,7 @@ and no sample episodes are in the repository yet.
 | RViz cannot open a display in the container; `~/.Xauthority` is a directory | The file did not exist at the first `run` | `sudo rmdir ~/.Xauthority`, `xauth extract ~/.Xauthority "$DISPLAY"`, run again (6C) |
 | Packages installed in the container are gone | `run --rm` discards the container | Add them to `docker/Dockerfile.dev` and run `./docker/build_dev.sh` |
 | `vcs: command not found` on the 20.04 host | pip `--user` scripts not on `PATH` | Prefix `PATH=$HOME/.local/bin:$PATH` |
-| `ld: libgxf_core.so: file format not recognized; treating as linker script` | GXF LFS pointer files (`git-lfs` missing) | `./scripts/install_git_lfs_and_pull.sh`, `./scripts/patch_upstream.sh`, then `colcon build --symlink-install --packages-up-to isaac_ros_nvblox` |
+| `ld: libgxf_core.so: file format not recognized; treating as linker script` | GXF LFS pointer files (`git-lfs` missing) | `./scripts/install_git_lfs_and_pull.sh`, `./scripts/patch_upstream.sh`, then `./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox` |
 | `patch_upstream.sh` stops in the NITROS patches | Upstream sources changed; the script exits before the LFS pull and submodule init | Check `repos.yaml` still pins `release-3.2`, then run `./scripts/install_git_lfs_and_pull.sh` and `git -C src/isaac_ros_nvblox submodule update --init --recursive` by hand |
 | `scout_base` / `ugv_sdk` build errors | Patches not applied | `./scripts/patch_upstream.sh` |
 | Missing dependencies after `./build_workspace.sh` | It skips `rosdep init` / `update` and hides `rosdep install` failures | Run the explicit commands in 6B |

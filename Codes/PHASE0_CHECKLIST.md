@@ -67,7 +67,7 @@ sudo apt install -y \
 
 ```bash
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+./scripts/colcon_build_safe.sh --symlink-install   # memory-limited colcon build (INSTALL.md Step 6)
 ```
 
 Expected failures and fixes:
