@@ -18,6 +18,7 @@ is a kinematic stand-in, not a model of skid-steer slip.
 """
 
 import math
+import signal
 from typing import Tuple
 
 
@@ -40,11 +41,16 @@ def track(current: float, command: float, dt: float, tau: float, limit: float) -
     return current + (command - current) * (1.0 - math.exp(-dt / tau))
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     import rclpy  # noqa: PLC0415
     from geometry_msgs.msg import TransformStamped, Twist  # noqa: PLC0415
     from nav_msgs.msg import Odometry  # noqa: PLC0415
     from rclpy.executors import ExternalShutdownException  # noqa: PLC0415
+    from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from tf2_ros import TransformBroadcaster  # noqa: PLC0415
 
@@ -98,10 +104,16 @@ def main() -> None:
             odom.twist.twist.linear.x, odom.twist.twist.angular.z = self.v, self.w
             self.pub.publish(odom)
 
-    rclpy.init()
+    # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler
+    # can invalidate the context while spin builds its wait set (RCLError).
+    # spin_once with a timeout lets the handler run when no message arrives.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = FakeBase()
     try:
-        rclpy.spin(node)
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

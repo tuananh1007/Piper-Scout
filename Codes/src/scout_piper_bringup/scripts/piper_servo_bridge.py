@@ -29,6 +29,7 @@ Disabling sends one command holding the measured position.
     srv  ~/enable                       std_srvs/SetBool
 """
 
+import signal
 from typing import Dict, List, Optional, Sequence, Tuple
 
 DRIVER_JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
@@ -83,9 +84,14 @@ def check_command_topic(topic: str) -> str:
     return t
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     import rclpy  # noqa: PLC0415 — keep the conversion importable without ROS
     from rclpy.executors import ExternalShutdownException  # noqa: PLC0415
+    from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from sensor_msgs.msg import JointState  # noqa: PLC0415
     from std_srvs.srv import SetBool  # noqa: PLC0415
@@ -158,10 +164,16 @@ def main() -> None:
             self.get_logger().warn(f"servo bridge {res.message}")
             return res
 
-    rclpy.init()
+    # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler
+    # can invalidate the context while spin builds its wait set (RCLError).
+    # spin_once with a timeout lets the handler run when no message arrives.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = Bridge()
     try:
-        rclpy.spin(node)
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / SIGTERM from ros2 launch
         pass
     finally:

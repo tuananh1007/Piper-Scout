@@ -18,6 +18,7 @@ state back as a command.
     out  /joint_states          sensor_msgs/JointState  piper_joint1..piper_joint8
 """
 
+import signal
 from typing import List, Optional, Sequence, Tuple
 
 ARM_JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
@@ -59,9 +60,14 @@ def _same_topic(a: str, b: str) -> bool:
     return a.strip().lstrip("/") == b.strip().lstrip("/")
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main() -> None:
     import rclpy  # noqa: PLC0415 — keep the conversion importable without ROS
     from rclpy.executors import ExternalShutdownException  # noqa: PLC0415
+    from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from sensor_msgs.msg import JointState  # noqa: PLC0415
 
@@ -96,10 +102,16 @@ def main() -> None:
             out.name, out.position, out.velocity = r
             self.pub.publish(out)
 
-    rclpy.init()
+    # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler
+    # can invalidate the context while spin builds its wait set (RCLError).
+    # spin_once with a timeout lets the handler run when no message arrives.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = Relay()
     try:
-        rclpy.spin(node)
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / SIGTERM from ros2 launch
         pass
     finally:
