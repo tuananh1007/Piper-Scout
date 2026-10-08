@@ -35,7 +35,7 @@ you power anything on.
 | RealSense → nvblox reconstruction | Validated in the dev container with a D405 (P1.1.2) |
 | Per-class semantic nvblox (`nvblox_semantic.launch.py`) | Never run (P1.2.1) |
 | CPU semantic map, distance field, MoveIt semantic collision plugin | Unit-tested; not run in `move_group` on the robot |
-| `plant_twin`, `scout_piper_jepa`, `scout_piper_whole_body_mpc` | Tested offline on synthetic data only; the MPC is dry-run by default; V-JEPA inference has never run |
+| `plant_twin`, `scout_piper_jepa`, `scout_piper_whole_body_mpc` | Tested offline on synthetic data only; V-JEPA inference has never run. The MPC is dry-run by default; its execute mode runs end to end on the fake arm and base (10.13), not yet on hardware |
 | Jetson Orin AGX deployment | Not documented (path A) |
 
 > **Safety: how the Piper driver takes commands.** The driver executes every
@@ -998,10 +998,12 @@ and checkpoint on first use, and has never been run on this robot.
 
 - **TODO(maintainer):** there is no grounding tool yet (the operator GUI is Phase 5); any mono8 mask the size of the colour image works. Decide what publishes it for experiments.
 
-### 10.13 Whole-body MPC (dry run)
+### 10.13 Whole-body MPC
+
+**Dry run** (the default, `execute: false`):
 
 ```bash
-ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py   # execute: false by default
+ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py
 ```
 
 The node stays silent until it has `/odom`, `/joint_states` containing every
@@ -1027,11 +1029,35 @@ ros2 topic echo /whole_body_mpc/status
 `safety` value of `watchdog` means an input is older than `max_state_age_s`
 (0.2 s).
 
-> **Safety.** Set `execute: true` only after the Phase 0 stop validation and
-> after servo has been checked on the robot (10.4). With `execute: true` the
-> base commands go straight to `/cmd_vel`, and the arm's `JointJog` goes to
-> `/servo_node/delta_joint_cmds`, which moves the arm only while servo is
-> started and the bridge enabled.
+**Execute mode, hardware-free** (do this before the robot). `fake_base:=true`
+replaces the Scout driver with `fake_scout_base.py`, which, like the real
+driver, keeps the last `/cmd_vel` until a new one arrives:
+
+```bash
+ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true fake_arm:=true \
+  bringup_base:=true fake_base:=true bringup_servo:=true bringup_pipeline:=false    # terminal 1
+ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py execute:=true       # terminal 2
+ros2 run scout_piper_bringup mpc_chain_check.py 1.0 0.2 0.45                        # terminal 3: goal x y z
+```
+
+**Pass:** five `PASS` lines and `MPC CHAIN OK`: the MPC reports `reached`,
+the TCP measured from TF is within 2 cm of the goal, the base has stopped,
+the last `/cmd_vel` is zero and servo never halted. The check starts servo,
+enables the bridge for the run and disables it at the end; it refuses to run
+unless both fake drivers answer and the MPC runs with `execute:=true`.
+
+When the MPC node stops (Ctrl-C, or `ros2 launch` shutting it down) it
+publishes zero base and joint velocities first, because nothing else stops
+the Scout when `/cmd_vel` stops arriving (10.5). A process that is killed
+outright (`kill -9`, a crash) cannot do that: keep the physical stops in reach.
+
+> **Safety.** On the robot, set `execute:=true` only after the Phase 0 stop
+> validation, after servo has been checked on the robot (10.4) and after the
+> Scout timeout test (10.5). The base commands go straight to `/cmd_vel`; the
+> arm's `JointJog` goes to `/servo_node/delta_joint_cmds`, which moves the arm
+> only while servo is started and the bridge enabled. Start with a goal the
+> arm reaches without base motion, the wheels off the ground for the first
+> base motion.
 
 ## Research quick start without ROS (path D)
 
@@ -1075,7 +1101,7 @@ Results at the time of writing (4-core x86_64, Python 3.13, numpy 1.26.4, scipy 
 
 | Package | Result | Time |
 |---|---|---|
-| `scout_piper_bringup` | 9 passed, 9 skipped without `launch_ros` (18 passed with ROS) | <1 s |
+| `scout_piper_bringup` | 11 passed, 10 skipped without `launch_ros` (21 passed with ROS) | <1 s |
 | `scout_piper_scene_repr` | 19 passed | ~20 s |
 | `plant_twin` | 21 passed, 1 failed (20 passed, 2 failed on a busy machine) | ~10–20 s |
 | `scout_piper_jepa` | 15 passed, 2 skipped without torch; 17 passed with torch | ~5 s (~15–50 s with torch) |

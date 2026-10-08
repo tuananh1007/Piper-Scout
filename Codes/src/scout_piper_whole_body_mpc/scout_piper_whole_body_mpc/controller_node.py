@@ -18,11 +18,17 @@ Outputs
 
 Executing on hardware requires the Phase 0 exit criteria (E-stop and
 stop-and-zero validated) — keep execute false until then.
+
+On exit (Ctrl-C, SIGTERM from ros2 launch, or an exception) the node publishes
+zero base and joint velocities before shutting down: neither scout_ros2 nor
+ugv_sdk stops the Scout when /cmd_vel stops arriving, so without this the base
+would keep its last command (INSTALL.md 10.5).
 """
 
 from __future__ import annotations
 
 import json
+import signal
 import time
 from typing import Optional
 
@@ -32,6 +38,7 @@ from control_msgs.msg import JointJog
 from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
+from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
@@ -152,6 +159,12 @@ class WholeBodyMpcNode(Node):
         jog.velocities = [float(v) for v in u[2:]]
         self.pub_jog.publish(jog)
 
+    def stop_motion(self, repeats: int = 3) -> None:
+        """Command zero base and arm velocity (repeated, in case one is dropped)."""
+        for _ in range(repeats):
+            self._send(np.zeros(8))
+            time.sleep(0.02)
+
     def _tick(self) -> None:
         now = self._now()
         if self.base is None or self.q is None or self.goal is None:
@@ -204,13 +217,23 @@ class WholeBodyMpcNode(Node):
         self.pub_plan.publish(path)
 
 
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
 def main(args=None) -> None:
-    rclpy.init(args=args)
+    # Handle SIGINT/SIGTERM here instead of in rclpy, so the context is still up
+    # when the node commands its final stop.
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
     node = WholeBodyMpcNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop_motion()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

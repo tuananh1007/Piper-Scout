@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-07 (INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-08 (P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -289,6 +289,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU (≈85 ms with an obstacle field) |
 | P3A.9 | W1 sequential baseline (IK base pose → base phase → arm-only MPPI) | ☑ | 2026-10-07 — R3: W1 3/3 in 150 steps, 0.85 m base travel vs W3 3/3 in 59–92 steps, 0.65 m (offline, synthetic) |
 | P3A.10 | W2 holistic / reactive QP baseline | ☐ | |
+| P3A.11 | Execute mode end to end through servo, hardware-free | ☑ | 2026-10-07 — `fake_scout_base.py` + `fake_base:=true`, `execute:=` launch argument, `mpc_chain_check.py`: 10 runs on 4 goals reached in 3.6–14 s, 0.87–0.99 cm TCP error from TF, base stopped, no servo halt. Found and fixed: stopping the node mid-motion left the base driving (no Scout command timeout) — the node now sends zero commands on exit |
 
 ### P3.1 — cuRobo extension
 | ID | Task | Status | Notes |

@@ -202,3 +202,35 @@ def test_fake_arm_replaces_the_real_driver():
     assert _nodes(actions, "piper") == []
     execs = [n.node_executable for n in _nodes(actions, "scout_piper_bringup")]
     assert "fake_piper_driver.py" in execs and "piper_joint_state_relay.py" in execs
+
+
+# ------------------------------------------------------------------ fake base
+base = _load(os.path.join(PKG, "scripts", "fake_scout_base.py"), "fake_scout_base")
+
+
+def test_fake_base_integrates_a_unicycle():
+    import math  # noqa: PLC0415
+    x, y, yaw = base.unicycle_step(0.0, 0.0, 0.0, 1.0, 0.0, 2.0)
+    assert (x, y, yaw) == pytest.approx((2.0, 0.0, 0.0))
+    x, y, yaw = 0.0, 0.0, 0.0                    # quarter circle of radius 1
+    for _ in range(100):
+        x, y, yaw = base.unicycle_step(x, y, yaw, math.pi / 2, math.pi / 2, 0.01)
+    assert (x, y, yaw) == pytest.approx((1.0, 1.0, math.pi / 2), abs=1e-6)
+
+
+def test_fake_base_tracks_and_clamps_commands():
+    assert base.track(0.0, 5.0, 0.02, 0.0, 1.5) == 1.5      # clamp, no lag
+    v = 0.0
+    for _ in range(50):                                     # 1 s at tau 0.15 s
+        v = base.track(v, 1.0, 0.02, 0.15, 1.5)
+    assert 0.99 < v <= 1.0
+
+
+def test_fake_base_replaces_the_real_driver():
+    _, ctx, actions = _setup(bringup_base="true", fake_base="true")
+    execs = [n.node_executable for n in _nodes(actions, "scout_piper_bringup")]
+    assert "fake_scout_base.py" in execs
+    from launch.actions import IncludeLaunchDescription  # noqa: PLC0415
+    _, _, real = _setup(bringup_base="true")
+    assert "fake_scout_base.py" not in [n.node_executable for n in _nodes(real, "scout_piper_bringup")]
+    assert any(isinstance(a, IncludeLaunchDescription) for a in real)

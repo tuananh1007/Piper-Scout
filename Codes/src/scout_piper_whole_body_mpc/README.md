@@ -34,10 +34,30 @@ out  /whole_body_mpc/status         std_msgs/String JSON (mode, error, safety, t
 out  /whole_body_mpc/plan           nav_msgs/Path of the predicted TCP
 ```
 
-Set `execute: true` only after the Phase 0 E-stop / stop-and-zero validation.
-Arm velocities go to `moveit_servo` as `JointJog`, so servo must accept joint
-commands. Check `joint_names` against what the Piper driver actually
-publishes (the URDF prefixes `piper_`).
+Set `execute: true` (`ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py
+execute:=true`) only after the Phase 0 E-stop / stop-and-zero validation. Arm
+velocities go to `moveit_servo` as `JointJog` and reach the Piper through
+`piper_servo_bridge` (scout_piper_bringup, `bringup_servo:=true`); the joint
+states come from the bringup's relay as `piper_joint1..6`.
+
+**Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an
+exception) it publishes zero base and joint velocities before shutting down.
+Neither `scout_ros2` nor `ugv_sdk` stops the Scout when `/cmd_vel` stops
+arriving: without this, stopping the node mid-motion left the (fake) base
+driving at 0.2 m/s. A stale input (`max_state_age_s`) makes the safety filter
+send zeros while the node runs; a crash that kills the process outright still
+cannot stop the base.
+
+**Hardware-free execute mode (2026-10-07).** With `fake_arm:=true
+fake_base:=true bringup_servo:=true` in `full_system.launch.py`,
+`scout_piper_bringup`'s `mpc_chain_check.py` runs the whole chain (MPC →
+`/cmd_vel` + servo → bridge → fake arm/base → relay/odom → MPC). On a 4-core x86
+CPU, ten runs on four goals 0.55–1.0 m out (base motion up to 0.33 m) all
+reached the MPC tolerance in 3.6–14 s, with 0.87–0.99 cm TCP error measured
+independently from TF, the base at rest and no servo halt; MPPI solve 49–64 ms
+median, ≤ 185 ms worst case. The fake drivers are kinematic stand-ins (no slip,
+no arm dynamics), so this checks plumbing, frames, timing and stopping, not
+tracking on the robot.
 
 ## Measured (offline, synthetic, 4-core x86 dev CPU)
 

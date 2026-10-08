@@ -25,8 +25,9 @@ piper_servo_bridge.py, which writes arm_command_topic and starts disabled:
     /servo_node/delta_{twist,joint}_cmds -> servo_node -> /piper/servo/joint_trajectory
         -> piper_servo_bridge (~/enable) -> /piper/joint_cmd -> Piper driver
 
-fake_arm:=true replaces the driver with fake_piper_driver.py (no hardware) to
-test that chain.
+fake_arm:=true replaces the driver with fake_piper_driver.py and fake_base:=true
+the Scout driver with fake_scout_base.py (no hardware), e.g. to run the
+whole-body MPC in execute mode end to end.
 """
 
 from launch import LaunchDescription
@@ -123,6 +124,12 @@ def _declare_args():
             default_value="false",
             description="With bringup_arm:=true, start fake_piper_driver.py instead of the "
                         "real driver (no CAN, no hardware).",
+        ),
+        DeclareLaunchArgument(
+            "fake_base",
+            default_value="false",
+            description="With bringup_base:=true, start fake_scout_base.py instead of the "
+                        "real Scout driver (no CAN, no hardware).",
         ),
         DeclareLaunchArgument(
             "bringup_servo",
@@ -269,18 +276,28 @@ def _launch_setup(context, *args, **kwargs):
     # ----------------------------------------------------------------------
     # 3. Scout base driver
     # ----------------------------------------------------------------------
-    base_driver = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [FindPackageShare("scout_base"), "launch", "scout_base.launch.py"]
-            )
-        ),
-        condition=IfCondition(LaunchConfiguration("bringup_base")),
-        launch_arguments={
-            "port_name": "can1",
-            "use_sim_time": use_sim,
-        }.items(),
-    )
+    if _is_true(context, "fake_base"):
+        base_driver = Node(
+            package="scout_piper_bringup",
+            executable="fake_scout_base.py",
+            name="scout_base_node",
+            output="screen",
+            parameters=[{"use_sim_time": use_sim}],
+            condition=IfCondition(LaunchConfiguration("bringup_base")),
+        )
+    else:
+        base_driver = IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution(
+                    [FindPackageShare("scout_base"), "launch", "scout_base.launch.py"]
+                )
+            ),
+            condition=IfCondition(LaunchConfiguration("bringup_base")),
+            launch_arguments={
+                "port_name": "can1",
+                "use_sim_time": use_sim,
+            }.items(),
+        )
 
     # ----------------------------------------------------------------------
     # 4. RealSense camera
