@@ -74,3 +74,15 @@ def test_skeleton_on_small_synthetic_cloud():
     assert sk.shape[1] == 3
     stem = extract_main_stem(G, sk)
     assert stem.shape[1] == 3
+
+
+def test_segmentation_keeps_masks_flowing_while_servoing():
+    """The motion gate pauses segmentation while the robot moves (clean scans),
+    but not while the servo or the final approach needs a mask every step."""
+    seg = importlib.import_module("stem_grasp.segmentation_node")
+    off = ["SERVOING", "APPROACHING"]
+    assert seg.motion_gate_applies(True, "SCANNING", off)
+    assert seg.motion_gate_applies(True, "REACHING", off)
+    assert not seg.motion_gate_applies(True, "SERVOING", off)
+    assert not seg.motion_gate_applies(True, "APPROACHING", off)
+    assert not seg.motion_gate_applies(False, "SCANNING", off)

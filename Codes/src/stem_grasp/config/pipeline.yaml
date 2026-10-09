@@ -107,6 +107,8 @@ stem_grasp_segmentation:
     yolo_mask_threshold: 0.25
     grounded_sam_every_n_frames: 5
     segment_only_when_stationary: true
+    # no motion gate while the servo / final approach need a mask every step
+    motion_gate_off_states: ["SERVOING", "APPROACHING"]
 
 stem_grasp_pointcloud:
   ros__parameters:

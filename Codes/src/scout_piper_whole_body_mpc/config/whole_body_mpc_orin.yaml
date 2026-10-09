@@ -3,7 +3,7 @@
 # 62 ms per 10 Hz step on a 2.1 GHz x86 core (2026-10-09), and the Orin's ARM
 # cores are slower; 128 samples took 32 ms there and still reached the
 # hardware-free goals (INSTALL.md Path A). Check solve_ms in
-# /whole_body_mpc/status on the Orin: the node warns above 90 % of the period.
+# /whole_body_mpc/status on the Orin: the node warns when 5 of 20 solves exceed 90 % of the period.
 whole_body_mpc:
   ros__parameters:
     samples: 128

@@ -1,10 +1,12 @@
 # Installation and setup
 
-This guide takes you from a clean machine to a built workspace, then runs
+This guide goes from a clean machine to a built workspace, then runs
 the system one subsystem at a time ([README](README.md) has the short version). Each step says which path it applies to,
 where to run it, whether it needs `sudo`, and how to check that it worked.
 Lines marked **TODO(maintainer)** are details the repository does not record
-yet; do not guess them on the robot.
+yet; do not guess them on the robot. [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md)
+lists the tests to run on the workstation, the Jetson and the robot, in
+order, with pass criteria and a results log.
 
 **Contents:** [what works today](#before-you-start-what-works-today) ·
 [choose your path](#choose-your-path) · [1 prerequisites](#step-1--prerequisites) ·
@@ -18,7 +20,7 @@ yet; do not guess them on the robot.
 ## Before you start: what works today
 
 The system is mid-migration and is not a finished product. Read this before
-you power anything on.
+powering anything on.
 
 | Area | State |
 |---|---|
@@ -165,14 +167,16 @@ clone on the Orin:
   librealsense with the RSUSB backend (`-DFORCE_RSUSB_BACKEND=ON`).
 - udev rules and the rest of Step 9 as on the workstation.
 
-**A.6 Run.** Step 10 on the Orin, with:
+**A.6 Run.** First `./scripts/hardware_free_checks.sh --profile orin` (10.2;
+all seven checks must pass), then Step 10 on the Orin, in the order of
+[`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) parts J and R, with:
 - **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
   whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
   numpy on the CPU. 256 samples took 62 ms of the 100 ms step on a 2.1 GHz x86
   core, and the Orin's ARM cores are slower. `profile:=orin`
   (`config/whole_body_mpc_orin.yaml`) uses 128 samples: 32 ms there, and the
-  hardware-free MPC and grasp chains passed with it. The node warns when a solve
-  takes over 90 % of the period; watch `solve_ms` in `/whole_body_mpc/status`;
+  hardware-free MPC and grasp chains passed with it. The node warns when 5 of the last
+  20 solves take over 90 % of the period; watch `solve_ms` in `/whole_body_mpc/status`;
 - **`bringup_rviz:=false`,** and RViz on the workstation (A.7);
 - **`tegrastats`** to watch memory, GPU load and temperatures.
 
@@ -202,7 +206,8 @@ path; it has not been set up for this workspace.
 
 **Checked off the robot (2026-10-09):**
 - the MPC and grasp chains with `profile:=orin` (MPC chain reached in 6.8 s,
-  MPPI median 44 ms; grasp with release at two stem positions);
+  MPPI median 44 ms; grasp with release at two stem positions), now all in
+  `hardware_free_checks.sh --profile orin`;
 - `patch_upstream.sh` switching between VPI 4 and VPI 3 on a copy of the
   imported sources;
 - `check_jetson.sh` on x86.
@@ -389,15 +394,15 @@ CUDA 12.4 / VPI 4 / `magic_enum` build dependencies. The host needs Docker,
 the NVIDIA Container Toolkit and the tools for Steps 4 and 5.
 
 **3C.1 Docker and the NVIDIA Container Toolkit.** **Where:** host. **sudo:**
-used internally; run it as your normal user (it exits if run as root).
+used internally; run it as the normal user (it exits if run as root).
 
 ```bash
 cd Codes
 ./scripts/install_docker_nvidia.sh
 ```
 
-It installs Docker CE with the compose and buildx plugins, adds you to the
-`docker` group, installs `nvidia-container-toolkit`, registers the NVIDIA
+It installs Docker CE with the compose and buildx plugins, adds the current
+user to the `docker` group, installs `nvidia-container-toolkit`, registers the NVIDIA
 runtime and restarts Docker. Log out and back in (or `newgrp docker`) so the
 group change takes effect.
 
@@ -422,7 +427,7 @@ sudo apt-get install -y can-utils ethtool   # robot only: the Piper CAN script n
 ./docker/build_dev.sh
 ```
 
-This builds `piper-scout-dev:humble` with your host UID/GID (expect a ~3 GB
+This builds `piper-scout-dev:humble` with the host user's UID/GID (expect a ~3 GB
 base download plus the CUDA and VPI layers).
 
 **Check:** the script prints `Done. Drop into the dev container with:`
@@ -492,7 +497,7 @@ warns and carries on.
 **Check:**
 
 ```bash
-# the script ends with: "Patches applied. You can now run colcon build."
+# the script prints "Patching for <arch>, VPI <n>" first and ends with "Patches applied. Next: ..."
 grep build_type src/ugv_sdk/package.xml       # expect: <build_type>cmake</build_type>
 file src/isaac_ros_nitros/isaac_ros_gxf/gxf/core/lib/gxf_x86_64_cuda_12_6/core/libgxf_core.so
                                               # expect: ELF 64-bit ... shared object (not ASCII text)
@@ -509,7 +514,7 @@ The first full build includes the Isaac ROS CUDA packages (15–30 min or
 more). The build writes `build/`, `install/` and `log/` into `Codes/`;
 all three are gitignored. A full-workspace build is the goal but has not
 been recorded as passing yet (P0.1.7): if it fails, check
-[Troubleshooting](#troubleshooting) before assuming you made a mistake.
+[Troubleshooting](#troubleshooting) before assuming a mistake in the steps above.
 
 **Build with `./scripts/colcon_build_safe.sh`, never a plain `colcon build`.**
 Plain colcon builds one package per CPU thread and runs `make -j<threads>`
@@ -540,7 +545,7 @@ Sixteen packages × `make -j16` at up to 1 GB each is far beyond 16 GB.
 
 It prints what it chose. Override with `BUILD_JOBS=4` (compilers),
 `BUILD_RESERVE_GB=5` (more headroom for a browser or IDE), or `CUDA_ARCHS=86`
-when `nvidia-smi` is not available where you build. Other packages print
+when `nvidia-smi` is not available where the build runs. Other packages print
 `Manually-specified variables were not used by the project:
 CMAKE_CUDA_ARCHITECTURES`, which is harmless.
 
@@ -596,7 +601,7 @@ ls -l ~/.Xauthority || xauth extract ~/.Xauthority "$DISPLAY"   # must be a regu
 docker compose -f docker/compose.dev.yml run --rm dev
 ```
 
-You are now in `/workspace` (the bind-mounted `Codes/`) as user `dev`
+The shell is now in `/workspace` (the bind-mounted `Codes/`) as user `dev`
 (passwordless `sudo`), with ROS sourced.
 
 ```bash
@@ -630,7 +635,7 @@ Notes on the container:
 - It runs privileged with host networking, host IPC, the NVIDIA runtime, X11, USB (`/dev/bus/usb`) and `/sys/class/net`, so it sees the host's CAN interfaces and the camera.
 - `ROS_DOMAIN_ID` defaults to `42`; machines outside the container must use the same value to see its topics.
 - A second shell in the **same** container: `docker exec -it $(docker ps -q --filter ancestor=piper-scout-dev:humble | head -n 1) bash` (standard Docker; `docker compose run` containers have generated names, so filter by image). Each new shell sources ROS from `~/.bashrc`.
-- X11: the container runs as your UID with host networking and mounts `~/.Xauthority` and `/tmp/.X11-unix`, so RViz authenticates with your own X cookie and `xhost` is not needed as long as `~/.Xauthority` holds the cookie for `$DISPLAY` (the check above). If RViz still reports `Authorization required`, allow your local user only: `xhost +SI:localuser:$(id -un)` (never `xhost +`).
+- X11: the container runs as the host user's UID with host networking and mounts `~/.Xauthority` and `/tmp/.X11-unix`, so RViz authenticates with the host user's X cookie and `xhost` is not needed as long as `~/.Xauthority` holds the cookie for `$DISPLAY` (the check above). If RViz still reports `Authorization required`, allow the local user only: `xhost +SI:localuser:$(id -un)` (never `xhost +`).
 
 ## Step 7 — Source the environment
 
@@ -645,7 +650,7 @@ source install/setup.bash
 `source setup_env.sh` (from `Codes/`, sourced, not executed) does the same
 and exports `PIPER_SCOUT_WS`. In the container, `~/.bashrc` sources
 `/workspace/install/setup.bash` in shells started after the first build; in
-the shell where you just built, source it by hand.
+the shell that ran the first build, source it by hand.
 
 **Check:**
 
@@ -654,7 +659,7 @@ ros2 pkg prefix scout_piper_bringup     # expect: .../Codes/install/scout_piper_
 ros2 pkg list | grep -E 'scout_piper|stem_grasp|plant_twin'
 ```
 
-- RMW: nothing in the repository sets `RMW_IMPLEMENTATION`, so everything so far, including the nvblox validation (P1.1.2), ran on Humble's default, Fast DDS (`rmw_fastrtps_cpp`). Keep the default. `rmw_cyclonedds_cpp` is installed as an alternative; if you switch, export the same `RMW_IMPLEMENTATION` on every machine and container, since mixed RMWs do not reliably talk to each other.
+- RMW: nothing in the repository sets `RMW_IMPLEMENTATION`, so everything so far, including the nvblox validation (P1.1.2), ran on Humble's default, Fast DDS (`rmw_fastrtps_cpp`). Keep the default. `rmw_cyclonedds_cpp` is installed as an alternative; after a switch, export the same `RMW_IMPLEMENTATION` on every machine and container, since mixed RMWs do not reliably talk to each other.
 
 ## Step 8 — Verify the build
 
@@ -703,20 +708,24 @@ interfaces are brought up on the host; the dev container shares the host
 network namespace). **sudo:** yes.
 
 > **Safety.** Nothing in this step moves the robot, but Step 10 does. Before
-> Step 10.3, make sure you know how to cut power to the Piper and the Scout.
+> Step 10.3, find out how to cut power to the Piper and the Scout.
 > Read the [`/joint_states` warning](#before-you-start-what-works-today) above.
 > Software stops, none of them a substitute for cutting power:
 >
 > - servo-driven arm motion: `ros2 service call /piper_servo_bridge/enable std_srvs/srv/SetBool "{data: false}"` or `x` in `hotkey_stop_and_zero`; the arm holds its measured pose (10.4);
 > - Scout: `ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"`; nothing stops the base when commands stop arriving (10.5);
-> - Piper motors: `ros2 service call /enable_srv piper_msgs/srv/Enable "enable_request: false"` (driver `DisableArm`). Upstream does not say whether the arm holds or drops when disabled, so support the arm the first time you try it.
+> - Piper motors: `ros2 service call /enable_srv piper_msgs/srv/Enable "enable_request: false"` (driver `DisableArm`). Upstream does not say whether the arm holds or drops when disabled, so support the arm the first time it is disabled.
 >
 > - **TODO(maintainer):** record the physical stop procedure of this robot (how the Scout and the Piper are stopped or their power cut) and the result of the first disable test.
 
-**9.1 CAN interfaces.** The bringup hardcodes the interface names in
-`full_system.launch.py`: `can_port: can0` for the Piper, `port_name: can1`
-for the Scout (the `piper_driver` / `scout_driver` entries in `system.yaml`
-are not passed to the drivers). Keep the two robots on separate buses. The
+**9.1 CAN interfaces.** `full_system.launch.py` passes the interface names
+to the drivers from two launch arguments, `piper_can_port` (default `can0`)
+and `scout_can_port` (default `can1`); the `piper_driver` / `scout_driver`
+entries in `system.yaml` are not passed to the drivers. With other names (on
+a Jetson the onboard CAN may already be `can0` / `can1`, Path A), bring the
+adapters up under those names below and add
+`piper_can_port:=<name> scout_can_port:=<name>` to every bringup command.
+Keep the two robots on separate buses. The
 CAN scripts come with `piper_ros` (Step 4) and need `can-utils` and `ethtool`
 (3B.2 / 3C.2). With two adapters plugged in, `can_activate.sh` needs each
 adapter's USB bus-info, which `find_all_can_port.sh` prints:
@@ -787,7 +796,8 @@ machine ([checklist Step 5](Codes/PHASE0_CHECKLIST.md)).
 **Paths:** B, C. **Where:** host (B) or container (C), with Step 7 sourced in
 every terminal. **sudo:** no.
 
-Run **one** `full_system.launch.py` at a time: stop it with Ctrl-C before the
+For a test session, follow [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md): it
+orders these items and says what to record. Run **one** `full_system.launch.py` at a time: stop it with Ctrl-C before the
 next numbered bringup, and check with `ros2 node list` that its nodes are
 gone. Use extra terminals only for the check commands, or for items that say
 they need a running bringup. Do not debug the integrated stack while an
@@ -806,7 +816,7 @@ individual driver is broken.
   - use `scene_classes:=stem,target` (or `classes:=` on
     `nvblox_semantic.launch.py`) instead of all four classes;
   - leave Grounded-SAM off and use YOLO;
-  - run RViz with only the displays you need.
+  - run RViz with only the displays in use.
 - **Threads:** the MPC and the pipeline run with one BLAS thread
   (`OPENBLAS_NUM_THREADS=1` in their launch files). More threads did not
   speed up the MPC (57.6 vs 61.5 ms per solve), and idle OpenBLAS threads
@@ -839,6 +849,23 @@ nodes, RViz and the joint sliders.
 `/robot_state_publisher`. Segmentation runs with its code defaults here, so
 it publishes empty masks (see 10.9). `use_sim:=true` only sets
 `use_sim_time`; it starts no simulator.
+
+**All hardware-free chain checks in one run.** With no bringup running:
+
+```bash
+./scripts/hardware_free_checks.sh                  # 7 checks, ~10 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
+```
+
+It runs the checks of 10.4 (servo), 10.13 (whole-body MPC, two goals) and
+10.9 (stem grasp: reach and servo; reach, servo and approach; full grasp
+and release at two stem positions) one after another, each with its own
+bringup on the fake arm and base, with `ROS_LOCALHOST_ONLY=1` in a separate
+ROS domain (`HWF_DOMAIN`, default 77), so it cannot reach a real robot. It
+prints a PASS / FAIL summary, the MPC solve times and any
+`MPPI solves overrun` warning, keeps the logs in
+`test_logs/hwfree_<date>_<time>/`, and exits with 0 only when every check
+passes.
 
 > **Safety (10.3 onward).** These steps command real hardware, and none of
 > them is validated on hardware yet. `bringup_arm:=true` enables the Piper
@@ -1014,8 +1041,9 @@ ros2 launch scout_piper_bringup full_system.launch.py \
 **Pass:** `/joint_states` (from the relay), the camera topics and the base
 topics all publish, and `ros2 run tf2_tools view_frames` shows
 `odom → base_link → piper_mount_link → piper_base_link → … → camera_link`.
-**Fail:** CAN contention — check that the Piper is on `can0` and the Scout on
-`can1`.
+**Fail:** CAN contention — check that the Piper and the Scout are on separate
+adapters, on the interfaces `piper_can_port` / `scout_can_port` name
+(`can0` / `can1` by default, 9.1).
 
 ### 10.8 Nav2 (optional, not validated)
 
@@ -1032,7 +1060,7 @@ parameters read `/ouster/points` and `/ouster/scan` and odometry on
 `simulation:=false`, and `full_system.launch.py` does not pass that argument;
 the real-robot branch expects `maps/airlab/map_lidar3d_v3.yaml`, which the
 repository does not contain. Running Nav2 here needs a laser-scan source on
-the base (the eye-in-hand camera is unsuitable), a map of your site, and
+the base (the eye-in-hand camera is unsuitable), a map of the site, and
 parameters for both.
 
 To try the plumbing anyway, add the "2D Goal Pose" tool in RViz
@@ -1101,7 +1129,12 @@ from the gripper axis, and the approach phase and step. The servo stops commandi
 the mask is older than `servo_mask_max_age_sec` (0.3 s), and servo then halts
 on its command timeout. Gains are `servo_lambda_0` / `servo_lambda_inf`
 (0.8 / 0.5; ROS 1 used 0.07 at large errors, about 4x slower) and are not yet
-tuned on the robot.
+tuned on the robot. The segmentation node pauses while the joints move
+(`segment_only_when_stationary`, ROS 1 behaviour) except in the pipeline
+states listed in `motion_gate_off_states` (SERVOING, APPROACHING), where the
+servo needs a mask at every step; without that exception the servo would
+stop on the robot after its first step (the fake bringup's checks bypass
+segmentation and did not show it).
 
 Hardware-free check, with a synthetic stem published by the check itself (a
 point cloud, and a mask rendered from the live camera pose):
@@ -1451,20 +1484,20 @@ cd Codes/src
 ( cd scout_piper_whole_body_mpc && PYTHONPATH=../scout_piper_scene_repr/python python -m pytest test -q )
 ```
 
-Results at the time of writing (4-core x86_64, Python 3.13, numpy 1.26.4, scipy 1.17.1):
+Results on 2026-10-09 (4-core x86_64, Python 3.11 with ROS Humble, numpy 1.26.4, scipy 1.17.1):
 
 | Package | Result | Time |
 |---|---|---|
-| `scout_piper_bringup` | 11 passed, 10 skipped without `launch_ros` (21 passed with ROS) | <1 s |
-| `scout_piper_scene_repr` | 19 passed | ~20 s |
-| `plant_twin` | 21 passed, 1 failed (20 passed, 2 failed on a busy machine) | ~10–20 s |
+| `scout_piper_bringup` | 24 passed (the launch tests skip without `launch_ros`) | <1 s |
+| `scout_piper_scene_repr` | 23 passed | ~20 s |
+| `plant_twin` | 22 passed | ~5–20 s |
 | `scout_piper_jepa` | 15 passed, 2 skipped without torch; 17 passed with torch | ~5 s (~15–50 s with torch) |
-| `scout_piper_whole_body_mpc` | 18 passed | ~50 s |
+| `scout_piper_whole_body_mpc` | 23 passed | ~55 s |
+| `stem_grasp` (needs ROS) | 40 passed | ~1 s |
 
-The `plant_twin` failures are known: `test_solver.py::test_linear_problem_solves_in_one_step`
-reports `stalled` instead of `converged` with numpy 1.26.4 / scipy 1.17.1 (it
-passes with numpy 2.x), and `test_jacobian.py::test_analytic_fit_matches_numeric_and_is_faster`
-asserts a wall-clock speed-up, which fails when the machine is busy.
+`plant_twin`'s `test_jacobian.py::test_analytic_fit_matches_numeric_and_is_faster`
+asserts a wall-clock speed-up and can fail when the machine is busy; rerun it
+on an idle machine.
 
 Synthetic benchmarks (offline; not robot evidence), still in `Codes/src`:
 
@@ -1503,7 +1536,7 @@ and no sample episodes are in the repository yet.
 | `can_activate.sh`: `ethtool not detected` / `can-utils not detected` | Missing apt packages | `sudo apt-get install -y can-utils ethtool` |
 | `can_activate.sh` asks for the USB hardware address | More than one CAN adapter plugged in | Pass the bus-info from `find_all_can_port.sh` as the third argument (9.1) |
 | CAN bus contention | Both robots on one bus | Piper on `can0`, Scout on `can1` (set in `full_system.launch.py`) |
-| `install_docker_nvidia.sh` prints `Do not run this as root` | It calls `sudo` itself | Run it as your normal user |
+| `install_docker_nvidia.sh` prints `Do not run this as root` | It calls `sudo` itself | Run it as the normal user |
 | `permission denied` on the Docker socket | `docker` group not active yet | Log out and back in, or `newgrp docker` |
 | Unknown runtime `nvidia` | NVIDIA Container Toolkit missing | `./scripts/install_docker_nvidia.sh`, then the `nvidia-smi` check |
 | RViz cannot open a display in the container; `~/.Xauthority` is a directory | The file did not exist at the first `run` | `sudo rmdir ~/.Xauthority`, `xauth extract ~/.Xauthority "$DISPLAY"`, run again (6C) |
@@ -1540,6 +1573,7 @@ and no sample episodes are in the repository yet.
 
 ## Where to go next
 
+- [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md): the test sequence for the workstation, the Jetson AGX Orin and the robot, with a results log.
 - [`Codes/README.md`](Codes/README.md): workspace layout, upstream packages, decisions locked for Phase 0.
 - [`Codes/PHASE0_CHECKLIST.md`](Codes/PHASE0_CHECKLIST.md): the full Phase 0 bring-up and porting checklist (calibration, servo wiring, ROS 1 regression, Nav2, sign-off).
 - [`Codes/docker/README.md`](Codes/docker/README.md): dev container details.

@@ -228,4 +228,4 @@ else
 fi
 
 echo
-echo "Patches applied. You can now build: ./scripts/colcon_build_safe.sh --symlink-install"
+echo "Patches applied. Next: ./scripts/colcon_build_safe.sh --symlink-install"

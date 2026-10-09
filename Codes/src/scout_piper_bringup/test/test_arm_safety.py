@@ -254,3 +254,19 @@ def test_fake_base_replaces_the_real_driver():
     _, _, real = _setup(bringup_base="true")
     assert "fake_scout_base.py" not in [n.node_executable for n in _nodes(real, "scout_piper_bringup")]
     assert any(isinstance(a, IncludeLaunchDescription) for a in real)
+
+
+# ---------------------------------------------------------------- print_tcp
+def test_print_tcp_puts_the_tcp_on_the_flange_z_axis():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("scipy")
+    tcp = _load(os.path.join(PKG, "scripts", "print_tcp.py"), "print_tcp")
+    # flange at (0.5, 0, 0.3), rotated 90 deg about y: its z axis points along +x
+    s = np.sqrt(0.5)
+    p, z = tcp.tcp_and_axis([0.5, 0.0, 0.3], [0.0, s, 0.0, s], 0.14)
+    assert np.allclose(z, [1.0, 0.0, 0.0])
+    assert np.allclose(p, [0.64, 0.0, 0.3])
+    # base yawed 90 deg and pitched a little: the heading stays horizontal, along +y
+    from scipy.spatial.transform import Rotation
+    q = Rotation.from_euler("zy", [90, 10], degrees=True).as_quat()
+    assert np.allclose(tcp.heading(q), [0.0, 1.0, 0.0], atol=1e-9)

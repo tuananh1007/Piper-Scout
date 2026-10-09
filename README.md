@@ -19,6 +19,7 @@ visual servo for the final approach.
 | [`ROADMAP.md`](ROADMAP.md) | 18-month research & development plan (Phases 0–5) |
 | [`PROGRESS.md`](PROGRESS.md) | Living per-phase task tracker — update as work ships |
 | [`INSTALL.md`](INSTALL.md) | Step-by-step installation, setup and run guide |
+| [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) | Test sequence for the workstation, the Jetson AGX Orin and the robot, with pass criteria and a results log |
 | [`Codes/`](Codes/) | ROS 2 Humble colcon workspace (Phase 0 baseline + Phase 1, 2A, 3A and 3B packages) |
 | [`research/`](research/) | Research tracks (semantic scene, plant twin, Piper-JEPA, whole-body MPC, active perception), shared platform facts and ID registry |
 
@@ -68,7 +69,11 @@ docker compose -f docker/compose.dev.yml run --rm dev
 # inside the container, in /workspace:
 ./scripts/colcon_build_safe.sh --symlink-install && source install/setup.bash   # never plain colcon build on 16 GB
 ros2 launch scout_piper_description view_robot.launch.py      # URDF check, no hardware
+./scripts/hardware_free_checks.sh                             # servo, MPC and grasp chains on the fake robot
 ```
+
+To test a machine or the robot, follow [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md)
+(workstation, then Jetson, then robot; stop at the first failure).
 
 Algorithms only (path D), from the repository root:
 

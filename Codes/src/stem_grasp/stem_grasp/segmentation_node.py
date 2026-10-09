@@ -42,7 +42,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import CameraInfo, Image, JointState
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, String
 from tf2_ros import Buffer, TransformListener
 
 try:
@@ -58,6 +58,18 @@ try:
 except Exception:
     _frangi = None  # type: ignore[assignment]
     _FRANGI_OK = False
+
+
+def motion_gate_applies(enabled: bool, pipeline_state: str, off_states) -> bool:
+    """Whether segmentation pauses while the robot moves.
+
+    The gate (``segment_only_when_stationary``) keeps scans free of motion
+    blur and of clouds smeared across a moving camera. The image-based servo
+    and the final approach move the arm continuously and step once per mask,
+    so in those pipeline states (``motion_gate_off_states``) the gate is off;
+    with it on, each servo step would stop the arm until it settled again.
+    """
+    return bool(enabled) and pipeline_state not in set(off_states or [])
 
 
 class _Throttle:
@@ -134,6 +146,9 @@ class StemSegmentationNode(Node):
             sam_checkpoint="",
             grasp_uv_timeout_sec=2.0,
             segment_only_when_stationary=True,
+            # the motion gate keeps scans clean, but the image-based servo
+            # needs masks while the arm moves: no gate in these pipeline states
+            motion_gate_off_states=["SERVOING", "APPROACHING"],
             stationary_joint_vel_threshold=0.02,
             joint_states_timeout_sec=0.75,
             stationary_settle_sec=0.12,
@@ -243,6 +258,12 @@ class StemSegmentationNode(Node):
         )
         self.create_subscription(
             JointState, self.p["joint_states_topic"], self.joint_state_cb, qos_rel,
+            callback_group=self.cb_group,
+        )
+        self._pipeline_state = ""
+        self.create_subscription(
+            String, "/stem_grasp/pipeline_state",
+            lambda m: setattr(self, "_pipeline_state", m.data), qos_rel,
             callback_group=self.cb_group,
         )
 
@@ -817,7 +838,8 @@ class StemSegmentationNode(Node):
             self.last_motion_time = now
 
     def _robot_is_moving(self) -> bool:
-        if not bool(self.p["segment_only_when_stationary"]):
+        if not motion_gate_applies(bool(self.p["segment_only_when_stationary"]),
+                                   self._pipeline_state, self.p["motion_gate_off_states"]):
             return False
         now = self.get_clock().now()
         if self.latest_joint_state_stamp is None:

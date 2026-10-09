@@ -32,6 +32,7 @@ would keep its last command (INSTALL.md 10.5).
 
 from __future__ import annotations
 
+import collections
 import json
 import signal
 import time
@@ -129,6 +130,7 @@ class WholeBodyMpcNode(Node):
         self.t_base = self.t_q = -np.inf
         self.goal: Optional[Goal] = None
         self.u_prev = np.zeros(8)
+        self._overruns = collections.deque(maxlen=20)   # solve > 90 % of the period
 
         self.create_subscription(Odometry, "/odom", self._odom, 10)
         self.create_subscription(JointState, "/joint_states", self._js, 20)
@@ -239,9 +241,13 @@ class WholeBodyMpcNode(Node):
             u_mpc = self.mppi.solve(x, cost, self.u_prev)
             mode = "handoff_ready" if err < self.handoff else "whole_body"
         solve_ms = 1e3 * (time.perf_counter() - t0)
-        if solve_ms > 900.0 * self.model.dt:
+        # sustained overruns only (5 of the last 20 steps above 90 % of the
+        # period): a single slow step (e.g. the first after a new goal) is normal
+        self._overruns.append(solve_ms > 900.0 * self.model.dt)
+        if sum(self._overruns) >= 5:
             self.get_logger().warn(
-                f"MPPI solve took {solve_ms:.0f} ms of the {1e3 * self.model.dt:.0f} ms period; "
+                f"MPPI solves overrun: {sum(self._overruns)} of the last {len(self._overruns)} took "
+                f"over 90 % of the {1e3 * self.model.dt:.0f} ms period (last {solve_ms:.0f} ms); "
                 "lower samples (profile:=orin) or refine_iters", throttle_duration_sec=5.0)
         rep = safety.project(x, u_mpc, self.u_prev, state_age_s=state_age, geometry_age_s=geom_age)
         self._send(rep.u)

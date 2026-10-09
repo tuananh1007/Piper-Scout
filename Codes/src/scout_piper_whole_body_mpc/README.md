@@ -81,7 +81,7 @@ step 27 ms. `whole_body_mpc.launch.py profile:=orin` loads
 `config/whole_body_mpc_orin.yaml` (128 samples) after the main config. The
 hardware-free MPC chain reached its goal in 6.8 s with it (median solve 44 ms
 in the full ROS stack), and the stem grasp passed at two positions. The node
-warns when a solve takes over 90 % of the period. Orin timings are still to be
+warns when 5 of the last 20 solves take over 90 % of the period. Orin timings are still to be
 measured (INSTALL.md Path A).
 
 **Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an

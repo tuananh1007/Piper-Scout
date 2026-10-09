@@ -48,6 +48,11 @@ the camera's TF motion. Hardware-free (`grasp_chain_check.py`, INSTALL.md 10.9)
 the error falls from 33–65 px to 0.8–5 px in 15 s at four stem positions. The
 gains are not tuned on the robot.
 
+The segmentation node skips frames while the joints move
+(`segment_only_when_stationary`), except in the pipeline states in
+`motion_gate_off_states` (default SERVOING and APPROACHING): the servo and
+the final approach move the arm and need a fresh mask at every step.
+
 ## Final approach (P0.4.13)
 
 `approach.py` is a new design, because the ROS 1 state machine is not in this
