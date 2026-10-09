@@ -28,7 +28,7 @@ you power anything on.
 | Piper driver ↔ unified URDF | The driver publishes `joint1`…`joint6` + `gripper` on `/joint_states_single`; the bringup's `piper_joint_state_relay.py` republishes them as `piper_joint1`…`piper_joint8` on `/joint_states` (tested offline, not on hardware) |
 | MoveIt 2 demo for the Piper | Upstream demo, separate from the bringup; not validated (P0.3.9) |
 | `moveit_servo` | Wired (`bringup_servo:=true`, P0.5.1): reaches the arm only through `piper_servo_bridge`, which starts disabled. Verified end to end on the fake arm (`servo_chain_check.py`); **not yet run on hardware**, speeds not tuned on the robot (P0.5.2, P0.5.3) |
-| `stem_grasp` reach → servo, iterative approach | Reach to the pre-grasp pose through the whole-body MPC (`reach_executor: whole_body_mpc`, P0.4.11), the image-based servo (P0.4.12) and the stepwise approach to the stem (`approach_enabled`, P0.4.13) run end to end on the fake drivers (10.9), not on hardware; the default `none` only publishes `/stem_grasp/target_pose`. Nothing closes the gripper yet |
+| `stem_grasp` reach → servo, iterative approach, grasp | Reach to the pre-grasp pose through the whole-body MPC (`reach_executor: whole_body_mpc`, P0.4.11), the image-based servo (P0.4.12), the stepwise approach to the stem (`approach_enabled`, P0.4.13) and closing the gripper on it (`grasp_close_gripper`) run end to end on the fake drivers (10.9), not on hardware; the default `none` only publishes `/stem_grasp/target_pose` |
 | Software stop (`hotkey_stop_and_zero`) | `x` sends zero twists and disables `piper_servo_bridge`, so servo-driven arm motion stops and the arm holds its measured pose. It does not stop the base and is no substitute for the physical stops |
 | Hand-eye calibration | Tools are on the lab machine, not in this repository; camera and mount offsets in the URDF are placeholders |
 | Nav2 | **Not usable on this robot as configured** (P0.6.2): `scout_nav2` expects an Ouster 3D lidar and a site map, and the bringup starts its simulation configuration (10.8) |
@@ -960,13 +960,17 @@ pose and markers and stays in SCANNING.
 **Reach and handoff (`reach_executor: whole_body_mpc`, P0.4.11).** The
 pipeline sends the best candidate's pre-grasp pose (12 cm in front of the stem
 on the arm's side, gripper z axis toward the stem) to the whole-body MPC on
-`/whole_body_mpc/goal_pose`, goes to REACHING, and once the MPC has reported
-`reached` for `reach_settle_sec` (1 s) cancels it on `/whole_body_mpc/cancel`
-and switches to SERVOING, where its image-based servo sends twists to
-`moveit_servo` (10.4). A timeout (`reach_timeout_sec`, 60 s) or a silent MPC
-cancels and returns to SCANNING. "Reached" means TCP within 1 cm and approach
-axis within 15° (`approach_tolerance_deg`); in practice the axis ends close to
-that bound. The MPC keeps the arm bent at the goal (`w_reach`, 10.13), so the
+`/whole_body_mpc/goal_pose`, goes to REACHING, and once the arm has been close
+enough for `reach_settle_sec` (1 s) cancels it on `/whole_body_mpc/cancel` and
+switches to SERVOING, where its image-based servo sends twists to
+`moveit_servo` (10.4). Close enough is the MPC's own `reached` (TCP within 1 cm,
+approach axis within 15°, `approach_tolerance_deg`), or the TCP error and axis
+error in its status within `reach_handoff_tolerance_m` (2 cm) and
+`reach_handoff_angle_deg` (15°). The servo and the final approach correct the
+last centimetre, and the MPC sometimes crept at 1.1–1.3 cm for many seconds
+(reach up to 48 s before this change). A timeout (`reach_timeout_sec`, 60 s) or
+a silent MPC cancels and returns to SCANNING. In practice the axis ends close
+to the 15° bound. The MPC keeps the arm bent at the goal (`w_reach`, 10.13), so the
 servo and the final approach have room to move the gripper forward.
 
 **Image-based servo (P0.4.12).** In SERVOING the pipeline steps its servo once
@@ -1023,19 +1027,49 @@ stops) on any of these:
 
 A force above `contact_threshold_n` also ends the approach, but the Piper has no
 force sensor (`/ft_sensor/raw`), so on the robot only the geometry stops it.
-Nothing closes the gripper yet. To check, run terminal 3 with
-`-p approach_enabled:=true`:
+
+**Grasp (`grasp_close_gripper: true`, off by default).** With the approach on,
+the pipeline opens the gripper to `grasp_open_width_m` (6 cm) before it
+advances. At AT_GRASP it closes the gripper (target `grasp_closed_width_m`, 0)
+and goes to GRASPING. It reports GRASPED when the measured opening (relay
+`piper_joint7 − piper_joint8`) has held still for `grasp_settle_sec` above
+`grasp_min_object_m` (2 mm); it goes to ABORTED if the gripper closed on nothing
+or did not settle within `grasp_timeout_sec`. Gripper commands go to
+`piper_servo_bridge` on `/piper_servo_bridge/gripper_cmd` (std_msgs/Float64,
+metres). The bridge acts on them only while enabled, sends them at once with
+the arm held, keeps the target in every later command (so the grasp holds
+through disabling), and sets the grip force `effort[6]` to `gripper_effort`
+(0.5, the driver's minimum). Nothing releases the stem afterwards yet.
+
+**Wrist.** The final approach translates the gripper with its orientation
+fixed, which straightens the Piper's wrist (q5 → 0 is its singularity). One
+hardware-free run reached a Jacobian condition number of 59, and moveit_servo
+slowed (status 1). The MPC therefore keeps the wrist under
+`reach_max_advanced_m` (0.40 m) for the pose *after* `pose_goal_advance_m`
+(0.12 m, = `target_position_offset_m`) as well (10.13).
+
+To check, run terminal 3 with the approach (and the grasp) on:
 
 ```bash
-ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc -p approach_enabled:=true
+ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc \
+  -p approach_enabled:=true -p grasp_close_gripper:=true
 ```
 
-**Pass:** eight `PASS` lines and `GRASP CHAIN OK`, as above, but with
-REACHING → APPROACHING → AT_GRASP, the TCP at the grasp point (within 1.5 cm
-along and 1 cm off the gripper axis) and the arm holding there for 1 s. These
-replace the image-error and axis checks. Measured hardware-free in seven runs
-at four stem positions: AT_GRASP after 3 steps and 17–24 s, the TCP 0.85–0.97
-cm short of the grasp point along the axis and 0.06–0.84 cm off it.
+**Pass:** `GRASP CHAIN OK`. The check passes on:
+- REACHING → APPROACHING → AT_GRASP (→ GRASPING → GRASPED with the grasp);
+- the TCP at the grasp point, with the gripper axis within the 4 mm stem radius
+  of the stem centreline;
+- the arm holding for 1 s;
+- with the grasp, the gripper opened for the approach and closed on the stem.
+  The check puts an 8 mm object between the fake fingers (the fake driver's
+  `object_width_m`);
+- the MPC, base and servo checks as above.
+
+The grasp point itself comes from the skeleton of the stem's robot-facing half,
+a few mm in front of the centreline, so the TCP stops about 1 cm before it.
+Measured hardware-free (2026-10-09, grasp on, four stem positions): GRASPED
+after 3 steps, reach 6.2–8.4 s, the gripper axis 0.00–0.06 cm from the stem
+centreline, the gripper settled at 8.0 mm, no servo slowdown or halt.
 
 On the robot, the same chain starts from real segmentation and point clouds;
 run it only after 10.4 and 10.13, and the approach only with someone at the
@@ -1217,7 +1251,10 @@ ros2 run scout_piper_bringup mpc_chain_check.py 1.0 0.2 0.45                    
 With a far goal the MPC moves the base rather than stretch the arm: the
 `w_reach` term keeps the shoulder-to-wrist distance under `reach_max_m`
 (0.36 m of at most 0.54 m), which leaves the gripper room to advance from the
-pre-grasp pose.
+pre-grasp pose. For pose goals the MPC also keeps that distance under
+`reach_max_advanced_m` (0.40 m) for the pose `pose_goal_advance_m` (0.12 m)
+further along the gripper axis, where stem_grasp's final approach ends; that
+keeps the wrist away from its singularity (10.9).
 
 **Pass:** five `PASS` lines and `MPC CHAIN OK`: the MPC reports `reached`,
 the TCP measured from TF is within 2 cm of the goal, the base has stopped,

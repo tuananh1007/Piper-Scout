@@ -13,10 +13,15 @@ ROS 1 source. The grasp sequence runs hardware-free, not yet on the robot:
 - image-based servo (P0.4.12);
 - stepwise final approach (P0.4.13, `approach_enabled`).
 
+- closing the gripper on the stem (`grasp_close_gripper`, GRASPING →
+  GRASPED).
+
 Open:
 - The MoveIt path is unwired: `moveit_py` has no Humble binary, and
   `moveit_planner.py` returns no plan when it is absent.
-- Nothing closes the gripper at the end.
+- Nothing releases the stem after GRASPED.
+- The grasp point comes from the skeleton of the stem's camera-facing half, a
+  few mm in front of the centreline; the approach stops about 1 cm before it.
 
 ## Image-based servo (P0.4.12)
 
@@ -54,6 +59,12 @@ repository; it keeps the ROS 1 `approach_*` parameter names. With
 Hardware-free: AT_GRASP after 3 steps in 17–24 s, with the TCP within 1 cm of
 the grasp point (INSTALL.md 10.9). Off by default. It drives the gripper onto
 the stem, and the Piper has no force sensor for the contact stop.
+
+With `grasp_close_gripper` the pipeline opens the gripper before the approach
+and closes it at AT_GRASP through `piper_servo_bridge` (`~/gripper_cmd`).
+`GripperCloseMonitor` (approach.py) reports GRASPED once the measured opening
+holds still above `grasp_min_object_m`, and ABORTED if the gripper closed on
+nothing or did not settle.
 
 ## Nodes
 

@@ -14,7 +14,9 @@ end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
     axis, one step per new mask (P0.4.12, see servo_geometry.py).
   * Iterative approach (P0.4.13, approach.py): with ``approach_enabled``
     the handoff goes to APPROACHING, which servoes and advances along the
-    gripper axis in steps until AT_GRASP (or ABORTED).
+    gripper axis in steps until AT_GRASP (or ABORTED); with
+    ``grasp_close_gripper`` it then closes the gripper (GRASPING) until the
+    opening settles on the stem (GRASPED).
   * Multi-view ring (deferred to Phase 4).
 
 References between ports and ROS 1 source (file line numbers):
@@ -51,12 +53,12 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
-from std_msgs.msg import Empty, Float32, String
+from std_msgs.msg import Empty, Float32, Float64, String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from stem_grasp import core
-from stem_grasp.approach import ApproachConfig, IterativeApproach
+from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach
 from stem_grasp.moveit_planner import MoveItPlanner
 from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
@@ -75,6 +77,8 @@ class PipelineState(Enum):
     SERVOING = auto()
     APPROACHING = auto()   # servo + stepwise advance along the gripper axis (P0.4.13)
     AT_GRASP = auto()      # grasp point between the fingers; no more commands
+    GRASPING = auto()      # gripper closing (grasp_close_gripper)
+    GRASPED = auto()       # gripper settled on the stem; holding
     ABORTED = auto()
 
 
@@ -144,6 +148,18 @@ class PipelineParams:
     approach_align_tolerance_px: float = 8.0  # image error that allows the next step
     approach_timeout_sec: float = 60.0
 
+    # Grasp (after AT_GRASP): open the gripper before the approach, close it on
+    # arrival through piper_servo_bridge (~/gripper_cmd, enabled bridge only)
+    # and wait for the measured opening to settle. Off by default.
+    grasp_close_gripper: bool = False
+    grasp_gripper_topic: str = "/piper_servo_bridge/gripper_cmd"
+    grasp_open_width_m: float = 0.06
+    grasp_closed_width_m: float = 0.0     # target; the stem stops the fingers
+    grasp_settle_sec: float = 0.5
+    grasp_timeout_sec: float = 5.0
+    grasp_min_object_m: float = 0.002     # settled below this: closed on nothing
+    gripper_finger_joints: str = "piper_joint7,piper_joint8"   # opening = first - second
+
     # Reach to the pre-grasp pose (P0.4.11): "none" only publishes the target
     # pose; "whole_body_mpc" hands it to scout_piper_whole_body_mpc
     reach_executor: str = "none"
@@ -153,6 +169,8 @@ class PipelineParams:
     mpc_cancel_topic: str = "/whole_body_mpc/cancel"
     reach_timeout_sec: float = 60.0
     reach_settle_sec: float = 1.0
+    reach_handoff_tolerance_m: float = 0.02   # TCP error accepted for the handoff (MPC "reached": 1 cm)
+    reach_handoff_angle_deg: float = 15.0     # approach-axis error accepted for the handoff
 
     # Camera intrinsics — populated at runtime from CameraInfo
     fx: float = 600.0
@@ -182,6 +200,9 @@ class StemGraspPipeline(Node):
         self._servo_mask_stamp: Optional[float] = None   # mask the servo last stepped on
         self._servo_cam_prev = None    # (time, world <- camera) at the previous servo step
         self.approach: Optional[IterativeApproach] = None
+        self.grip_monitor: Optional[GripperCloseMonitor] = None
+        self.gripper_width: Optional[float] = None
+        self.gripper_width_t: Optional[float] = None
         self._inner_lock = threading.Lock()
         self.grasp_target_world: Optional[np.ndarray] = None   # in mpc_world_frame
         self.last_target_point: Optional[np.ndarray] = None  # in planning_frame
@@ -193,6 +214,8 @@ class StemGraspPipeline(Node):
         # Reach handoff (REACHING state)
         self.mpc_mode: Optional[str] = None
         self.mpc_status_t: Optional[float] = None
+        self.mpc_tcp_error: Optional[float] = None
+        self.mpc_angle: Optional[float] = None
         self.reach_monitor: Optional[ReachMonitor] = None
         self.reach_goal: Optional[PoseStamped] = None
 
@@ -282,6 +305,7 @@ class StemGraspPipeline(Node):
         self.pub_servo_status = self.create_publisher(
             String, "/stem_grasp/servo_status", 10
         )
+        self.pub_gripper = self.create_publisher(Float64, self.params.grasp_gripper_topic, 5)
         self._servo_status_t = 0.0
 
         # ---------- timers ----------
@@ -416,20 +440,29 @@ class StemGraspPipeline(Node):
 
     def _on_mpc_status(self, msg: String) -> None:
         try:
-            self.mpc_mode = json.loads(msg.data).get("mode")
+            status = json.loads(msg.data)
+            self.mpc_mode = status.get("mode")
         except (ValueError, AttributeError):
             return
+        self.mpc_tcp_error = status.get("tcp_error_m")
+        self.mpc_angle = status.get("approach_error_deg")
         self.mpc_status_t = self._now()
 
     def _on_joint_state(self, msg: JointState) -> None:
-        # TODO(P0.4.13): use joint vel for the stationary-gate of segmentation
-        # and as an IK seed for moveit_py replan calls.
-        pass
+        # gripper opening from the relay's finger joints (each half the opening)
+        names = [n.strip() for n in self.params.gripper_finger_joints.split(",")]
+        pos = dict(zip(msg.name, msg.position))
+        if len(names) == 2 and all(n in pos for n in names):
+            self.gripper_width = float(pos[names[0]] - pos[names[1]])
+            self.gripper_width_t = self._now()
 
     # ------------------------------------------------------------------ loops
     def _outer_loop(self) -> None:
         if self.state == PipelineState.REACHING:
             self._reach_tick()
+            return
+        if self.state == PipelineState.GRASPING:
+            self._grasp_tick()
             return
         if self.state != PipelineState.SCANNING:
             return
@@ -515,7 +548,9 @@ class StemGraspPipeline(Node):
         self.reach_goal = goal
         self.reach_monitor = ReachMonitor(start_t=self._now(),
                                           timeout_s=self.params.reach_timeout_sec,
-                                          settle_s=self.params.reach_settle_sec)
+                                          settle_s=self.params.reach_settle_sec,
+                                          tcp_tolerance_m=self.params.reach_handoff_tolerance_m,
+                                          angle_tolerance_deg=self.params.reach_handoff_angle_deg)
         self._set_state(PipelineState.REACHING)
         self.get_logger().info(f"reaching pre-grasp {np.round(p, 3)} in {world} via the whole-body MPC")
         self._reach_tick()
@@ -524,7 +559,8 @@ class StemGraspPipeline(Node):
         if self.reach_monitor is None or self.reach_goal is None:
             self._set_state(PipelineState.SCANNING)
             return
-        decision = self.reach_monitor.update(self.mpc_mode, self.mpc_status_t, self._now())
+        decision = self.reach_monitor.update(self.mpc_mode, self.mpc_status_t, self._now(),
+                                             self.mpc_tcp_error, self.mpc_angle)
         if decision == "wait":
             # republished every outer cycle: the goal topic is best effort and the
             # MPC keeps its warm start for a repeated goal. Never after the
@@ -536,6 +572,8 @@ class StemGraspPipeline(Node):
         self.reach_monitor = None
         if decision == "handoff" and self.params.approach_enabled:
             self.get_logger().info("pre-grasp reached; servo and stepwise approach take over")
+            if self.params.grasp_close_gripper:          # fingers open before moving onto the stem
+                self._command_gripper(self.params.grasp_open_width_m)
             self._set_state(PipelineState.APPROACHING)
         elif decision == "handoff":
             self.get_logger().info("pre-grasp reached; image-based servo takes over")
@@ -645,8 +683,39 @@ class StemGraspPipeline(Node):
         if phase == "done":
             self.get_logger().info(f"approach done after {steps} steps: {reason}")
             self._set_state(PipelineState.AT_GRASP)
+            if self.params.grasp_close_gripper:
+                self._command_gripper(self.params.grasp_closed_width_m)
+                self.grip_monitor = GripperCloseMonitor(
+                    start_t=self._now(), settle_s=float(self.params.grasp_settle_sec),
+                    timeout_s=float(self.params.grasp_timeout_sec),
+                    min_object_m=float(self.params.grasp_min_object_m))
+                self._set_state(PipelineState.GRASPING)
         else:
             self.get_logger().warn(f"approach aborted after {steps} steps: {reason}")
+            self._set_state(PipelineState.ABORTED)
+
+    def _command_gripper(self, width: float) -> None:
+        self.pub_gripper.publish(Float64(data=float(width)))
+        self.get_logger().info(f"gripper -> {1000 * width:.1f} mm")
+
+    def _grasp_tick(self) -> None:
+        if self.grip_monitor is None:
+            self._set_state(PipelineState.ABORTED)
+            return
+        width = self.gripper_width if self._age(self.gripper_width_t) < 0.5 else None
+        decision = self.grip_monitor.update(self._now(), width)
+        if decision == "wait":
+            return
+        w = self.grip_monitor.width
+        self.grip_monitor = None
+        if decision == "grasped":
+            self.get_logger().info(f"grasped: gripper settled at {1000 * w:.1f} mm")
+            self._set_state(PipelineState.GRASPED)
+        elif decision == "empty":
+            self.get_logger().warn(f"gripper closed to {1000 * w:.1f} mm: nothing between the fingers")
+            self._set_state(PipelineState.ABORTED)
+        else:
+            self.get_logger().warn("gripper did not settle (no finger joint states?)")
             self._set_state(PipelineState.ABORTED)
 
     def _camera_velocity(self) -> Optional[np.ndarray]:
@@ -765,6 +834,7 @@ class StemGraspPipeline(Node):
             if new_state == PipelineState.APPROACHING:
                 self.approach = IterativeApproach(self._approach_config(), start_t=self._now())
             self.state = new_state
+        self._publish_state()        # every transition, not only on the 2 Hz timer
 
     def _publish_state(self) -> None:
         msg = String()

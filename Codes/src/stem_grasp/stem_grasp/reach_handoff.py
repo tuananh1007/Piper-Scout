@@ -5,7 +5,7 @@ ROS 2 Humble ``moveit_py`` has no binary, so ``pipeline_node`` can hand the
 pre-grasp pose to ``scout_piper_whole_body_mpc`` instead
 (``reach_executor: whole_body_mpc``):
 
-    SCANNING --best candidate--> REACHING --MPC "reached" for settle_s--> SERVOING
+    SCANNING --best candidate--> REACHING --close enough for settle_s--> SERVOING
                                      |--timeout / MPC lost--> SCANNING (goal cancelled)
 
 The MPC drives base and arm to the pre-grasp position with the candidate's
@@ -39,9 +39,14 @@ def candidate_goal_in_world(pre_pos: np.ndarray, quat_xyzw: np.ndarray,
 class ReachMonitor:
     """Decides when the MPC has delivered the arm to the pre-grasp pose.
 
-    ``update`` takes the latest MPC status (mode string and its receive time)
-    and returns "wait", "handoff" (mode "reached" held for ``settle_s``) or
-    "timeout": no handoff within ``timeout_s``, no MPC status at all within
+    ``update`` takes the latest MPC status (mode string, TCP error and
+    approach-axis error, and its receive time) and returns "wait", "handoff"
+    or "timeout". Handoff: close enough held for ``settle_s``, where close
+    enough is the MPC's own "reached" (1 cm, 15 deg) or a TCP error within
+    ``tcp_tolerance_m`` and an axis error within ``angle_tolerance_deg``: the
+    image-based servo and the final approach correct the last centimetre, and
+    the MPC can creep just outside its 1 cm for many seconds. Timeout: no
+    handoff within ``timeout_s``, no MPC status at all within
     ``first_status_timeout_s`` (MPC not running or not subscribed), or the
     status stopped for ``status_timeout_s``.
     """
@@ -51,9 +56,12 @@ class ReachMonitor:
     settle_s: float = 1.0
     first_status_timeout_s: float = 10.0
     status_timeout_s: float = 2.0
+    tcp_tolerance_m: float = 0.02
+    angle_tolerance_deg: float = 15.0
     reached_since: Optional[float] = None
 
-    def update(self, mode: Optional[str], status_t: Optional[float], now: float) -> str:
+    def update(self, mode: Optional[str], status_t: Optional[float], now: float,
+               tcp_error_m: Optional[float] = None, angle_deg: Optional[float] = None) -> str:
         elapsed = now - self.start_t
         if elapsed > self.timeout_s:
             return "timeout"
@@ -61,7 +69,11 @@ class ReachMonitor:
             return "timeout" if elapsed > self.first_status_timeout_s else "wait"
         if now - status_t > self.status_timeout_s:
             return "timeout"
-        if mode != "reached":
+        close = mode == "reached" or (
+            mode in ("whole_body", "handoff_ready") and tcp_error_m is not None
+            and tcp_error_m <= self.tcp_tolerance_m
+            and (angle_deg is None or angle_deg <= self.angle_tolerance_deg))
+        if not close:
             self.reached_since = None
             return "wait"
         if self.reached_since is None:

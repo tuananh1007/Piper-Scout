@@ -28,6 +28,17 @@ stem_grasp_pipeline:
     approach_speed_mps: 0.02
     approach_align_tolerance_px: 8.0
     approach_timeout_sec: 60.0
+    # Grasp after AT_GRASP (needs approach_enabled): open the gripper before
+    # the approach, close it on arrival through piper_servo_bridge
+    # (~/gripper_cmd, enabled bridge only), GRASPED once the opening settles.
+    grasp_close_gripper: false
+    grasp_gripper_topic: "/piper_servo_bridge/gripper_cmd"
+    grasp_open_width_m: 0.06
+    grasp_closed_width_m: 0.0
+    grasp_settle_sec: 0.5
+    grasp_timeout_sec: 5.0
+    grasp_min_object_m: 0.002
+    gripper_finger_joints: "piper_joint7,piper_joint8"
     skeleton_min_stem_points: 6
     skeleton_max_endpoint_jump_m: 0.05
     skeleton_cache_max_age_sec: 2.0
@@ -64,6 +75,11 @@ stem_grasp_pipeline:
     mpc_cancel_topic: "/whole_body_mpc/cancel"
     reach_timeout_sec: 60.0
     reach_settle_sec: 1.0
+    # hand off once the MPC reports the TCP within 2 cm and the approach axis
+    # within 15 deg for reach_settle_sec (its own "reached" is 1 cm; the servo
+    # and the final approach correct the rest)
+    reach_handoff_tolerance_m: 0.02
+    reach_handoff_angle_deg: 15.0
 
 stem_grasp_segmentation:
   ros__parameters:

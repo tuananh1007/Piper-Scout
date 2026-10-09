@@ -9,7 +9,10 @@
 
 With ``-p approach_enabled:=true`` on the pipeline it also checks the final
 approach (P0.4.13): REACHING -> APPROACHING -> AT_GRASP, the TCP at the grasp
-point and the arm holding there.
+point and the arm holding there. Adding ``-p grasp_close_gripper:=true`` puts
+an object as wide as the stem between the fake fingers (the fake driver's
+``object_width_m``) and checks AT_GRASP -> GRASPING -> GRASPED with the
+gripper opened for the approach and closed on the stem.
 
 Publishes a synthetic stem (a 4 mm vertical cylinder, z 0.25-0.60 m in odom):
 its robot-facing half as a point cloud on /stem_grasp/filtered_cloud, and, as
@@ -69,7 +72,9 @@ def main() -> int:
     from control_msgs.msg import JointJog  # noqa: PLC0415
     from geometry_msgs.msg import PoseStamped  # noqa: PLC0415
     from nav_msgs.msg import Odometry  # noqa: PLC0415
-    from rcl_interfaces.srv import GetParameters  # noqa: PLC0415
+    from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue  # noqa: PLC0415
+    from rcl_interfaces.srv import GetParameters, SetParameters  # noqa: PLC0415
+    from sensor_msgs.msg import JointState  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from scipy.spatial.transform import Rotation  # noqa: PLC0415
     from sensor_msgs.msg import CameraInfo, Image, PointCloud2  # noqa: PLC0415
@@ -172,6 +177,21 @@ def main() -> int:
     approach = param("/stem_grasp_pipeline", "approach_enabled")
     approach = approach is not None and approach.bool_value
     servo_state = "APPROACHING" if approach else "SERVOING"
+    grasp = param("/stem_grasp_pipeline", "grasp_close_gripper")
+    grasp = approach and grasp is not None and grasp.bool_value
+    final = "GRASPED" if grasp else "AT_GRASP"
+    stem_width = 0.008                                   # the synthetic stem: 4 mm radius
+    widths = []
+    n.create_subscription(JointState, "/joint_states_single", lambda m: widths.append(
+        (time.time(), dict(zip(m.name, m.position)).get("gripper"))), 50)
+
+    def set_object_width(w):
+        v = ParameterValue(type=ParameterType.PARAMETER_DOUBLE, double_value=float(w))
+        call(SetParameters, "/piper_ctrl_single_node/set_parameters",
+             SetParameters.Request(parameters=[Parameter(name="object_width_m", value=v)]))
+
+    if grasp:
+        set_object_width(stem_width)
 
     def link6():
         try:
@@ -192,16 +212,20 @@ def main() -> int:
     spin(0.5)
     pre_grasp_tcp = link6()
     at_grasp = held = None
+    grip_final = 0.0
     if approach:
         t0 = time.time()
-        while time.time() - t0 < a.timeout and states[-1][1] not in ("AT_GRASP", "ABORTED"):
+        while time.time() - t0 < a.timeout and states[-1][1] not in (final, "ABORTED"):
             spin(0.2)
         at_grasp = link6()
+        grip_final = next((w for _, w in reversed(widths) if w is not None), 0.0)
         spin(1.0)
         held = link6()
     else:
         spin(a.servo_seconds)
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
+    if grasp:
+        set_object_width(0.0)
 
     seq = [s for _, s in states]
     results = []
@@ -213,7 +237,8 @@ def main() -> int:
     t_reach = next((t for t, s in states if s == "REACHING"), None)
     t_servo = next((t for t, s in states if s == servo_state), None)
     t_done = next((t for t, s in states if s == "AT_GRASP"), None)
-    expect = ["REACHING", servo_state] + (["AT_GRASP"] if approach else [])
+    expect = ["REACHING", servo_state] + (["AT_GRASP"] if approach else []) + \
+        (["GRASPING", "GRASPED"] if grasp else [])
     timing = f" (reach {t_servo - t_reach:.1f} s" if t_reach and t_servo else ""
     if timing and t_done:
         timing += f", approach {t_done - t_servo:.1f} s"
@@ -246,13 +271,30 @@ def main() -> int:
         along = float((grasp_point - tcp) @ z)
         miss = float(np.linalg.norm(np.cross(grasp_point - tcp, z)))
         steps = max([s.get("step", 0) for s in served] or [0])
-        check("TCP at the grasp point (TF)", abs(along) < 0.015 and miss < 0.01,
-              f"{100 * along:.2f} cm short along the gripper axis, {100 * miss:.2f} cm off it, "
-              f"after {steps} steps (stem grasp point {np.round(grasp_point, 3)})")
+        # where the gripper axis passes the (vertical) stem centreline
+        c_xy = np.array(a.stem) - tcp[:2]
+        s_ax = float(c_xy @ z[:2] / max(z[:2] @ z[:2], 1e-9))
+        p_ax = tcp + s_ax * z
+        to_stem = float(np.linalg.norm(p_ax[:2] - np.array(a.stem)))
+        # Pass on the stem itself: the grasp point comes from the skeleton of the
+        # robot-facing half of the stem, a few mm in front of the centreline.
+        check("TCP at the grasp point, gripper axis through the stem (TF)",
+              abs(along) < 0.015 and to_stem < 0.004,
+              f"axis {100 * to_stem:.2f} cm from the stem centreline at z {p_ax[2]:.3f}; "
+              f"{100 * along:.2f} cm short of and {100 * miss:.2f} cm beside the grasp point "
+              f"{np.round(grasp_point, 3)} along the gripper axis, after {steps} steps")
         moved = float(np.linalg.norm(tcp_pose(held)[0] - tcp))
         check("arm holds at the grasp point", moved < 0.002, f"moved {1000 * moved:.1f} mm in 1 s")
+        if grasp:
+            during = [w for t, w in widths if w is not None and t_servo is not None and t > t_servo]
+            opened = max(during or [0.0])
+            check("gripper opened for the approach and closed on the stem",
+                  opened > 0.05 and abs(grip_final - stem_width) < 0.001,
+                  f"opened to {1000 * opened:.1f} mm, closed to {1000 * grip_final:.1f} mm "
+                  f"on a {1000 * stem_width:.0f} mm stem")
     elif approach:
-        check("TCP at the grasp point (TF)", False, "no AT_GRASP: " + " -> ".join(seq))
+        check("TCP at the grasp point, gripper axis through the stem (TF)", False,
+              "no AT_GRASP: " + " -> ".join(seq))
     elif served and grasp_point is not None:
         first, last = served[0]["error_px"], float(np.median([s["error_px"] for s in served[-10:]]))
         check("servo image error ends small", last < 8.0,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from stem_grasp.approach import ApproachConfig, IterativeApproach
+from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach
 
 DT = 0.1
 
@@ -71,3 +71,28 @@ def test_a_brief_mask_dropout_only_pauses():
 def test_contact_ends_the_approach():
     st, d, _ = run(IterativeApproach(ApproachConfig(), start_t=0.0), force=0.2)
     assert st.phase == "done" and "contact" in st.reason and d == pytest.approx(0.12)
+
+
+def close(widths, dt=0.1, **kw):
+    """Feed a measured opening sequence; return (decision, time, width)."""
+    mon = GripperCloseMonitor(start_t=0.0, **kw)
+    for k, w in enumerate(widths):
+        d = mon.update(k * dt, w)
+        if d != "wait":
+            return d, k * dt, mon.width
+    return "wait", None, mon.width
+
+
+def test_gripper_settling_on_the_stem_is_a_grasp():
+    closing = [0.03 - 0.005 * k for k in range(5)] + [0.008] * 10     # stops at an 8 mm stem
+    decision, t, w = close(closing)
+    assert decision == "grasped" and w == pytest.approx(0.008) and t >= 0.5
+
+
+@pytest.mark.parametrize("widths, kw, expected", [
+    ([0.03 - 0.005 * k for k in range(6)] + [0.0005] * 10, {}, "empty"),   # closed on nothing
+    ([None] * 60, {}, "timeout"),                                            # no finger joint states
+    ([0.03 - 0.0004 * k for k in range(80)], {"timeout_s": 3.0}, "timeout"),  # never stops moving
+])
+def test_gripper_close_failures(widths, kw, expected):
+    assert close(widths, **kw)[0] == expected

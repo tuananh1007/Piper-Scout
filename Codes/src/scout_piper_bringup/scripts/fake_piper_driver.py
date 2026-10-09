@@ -16,7 +16,9 @@ would do:
 
 The simulated arm moves each joint toward its target at ``speed % x
 max_joint_speed`` and publishes ``joint_states_single`` (joint1..6, gripper).
-It is a kinematic stand-in, not a model of the Piper's dynamics.
+It is a kinematic stand-in, not a model of the Piper's dynamics. An object
+between the fingers can be simulated with the ``object_width_m`` parameter
+(settable at run time): a closing gripper stops at that width.
 """
 
 import signal
@@ -42,6 +44,14 @@ def step_toward(current: Sequence[float], target: Sequence[float], max_delta: fl
     return [c + min(max(t - c, -max_delta), max_delta) for c, t in zip(current, target)]
 
 
+def gripper_step(width: float, target: float, max_delta: float, object_width: float = 0.0) -> float:
+    """Next gripper opening; a closing gripper stops at an object of ``object_width``."""
+    new = step_toward([width], [target], max_delta)[0]
+    if object_width > 0.0 and width >= object_width > new:
+        return object_width
+    return new
+
+
 def _interrupt(signum, frame) -> None:
     raise KeyboardInterrupt
 
@@ -63,6 +73,7 @@ def main() -> None:
             self.vmax = float(p("max_joint_speed", 3.0).value)        # rad/s at 100 %
             self.gripper_vmax = float(p("max_gripper_speed", 0.05).value)  # m/s at 100 %
             self.dt = 1.0 / float(p("rate_hz", 100.0).value)
+            p("object_width_m", 0.0)                 # read every tick: settable at run time
             self.target, self.gripper_target, self.speed = list(self.q), self.gripper, 100.0
             self.pub = self.create_publisher(JointState, "joint_states_single", 10)
             self.create_subscription(JointState, "joint_ctrl_single", self._cmd, 10)
@@ -77,8 +88,9 @@ def main() -> None:
             f = self.speed / 100.0
             q_old = self.q
             self.q = step_toward(self.q, self.target, f * self.vmax * self.dt)
-            self.gripper = step_toward([self.gripper], [self.gripper_target],
-                                       f * self.gripper_vmax * self.dt)[0]
+            self.gripper = gripper_step(self.gripper, self.gripper_target,
+                                        f * self.gripper_vmax * self.dt,
+                                        float(self.get_parameter("object_width_m").value))
             out = JointState()
             out.header.stamp = self.get_clock().now().to_msg()
             out.name = list(JOINTS) + ["gripper"]

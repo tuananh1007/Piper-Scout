@@ -17,8 +17,9 @@ axis, and adds motion along that axis in steps:
            approach_timeout_sec overall
 
 The caller feeds one update per servo step (new mask) and adds
-``speed * approach_axis`` to the servo's camera velocity. This module holds
-no ROS.
+``speed * approach_axis`` to the servo's camera velocity. At AT_GRASP the
+pipeline may close the gripper; ``GripperCloseMonitor`` decides when the
+measured opening has settled on the stem. This module holds no ROS.
 """
 
 from __future__ import annotations
@@ -111,3 +112,32 @@ class IterativeApproach:
             self._step_goal_d = distance_m - c.step_m
         self.phase = "advance"
         return ApproachStatus("advance", c.speed_mps)
+
+
+@dataclass
+class GripperCloseMonitor:
+    """Decides when a closing gripper has settled (P0.4.13 grasp).
+
+    ``update`` takes the measured opening and returns "wait", "grasped" (the
+    opening stopped changing above ``min_object_m``: something is between the
+    fingers), "empty" (it closed below ``min_object_m``) or "timeout".
+    """
+
+    start_t: float
+    settle_s: float = 0.5
+    timeout_s: float = 5.0
+    min_object_m: float = 0.002
+    still_m: float = 0.0005            # change below this counts as settled
+    _ref: Optional[float] = None
+    _ref_t: Optional[float] = None
+    width: Optional[float] = None
+
+    def update(self, now: float, width: Optional[float]) -> str:
+        if width is None:
+            return "timeout" if now - self.start_t > self.timeout_s else "wait"
+        self.width = width
+        if self._ref is None or abs(width - self._ref) > self.still_m:
+            self._ref, self._ref_t = width, now
+        if now - self._ref_t >= self.settle_s and now - self.start_t >= self.settle_s:
+            return "grasped" if width > self.min_object_m else "empty"
+        return "timeout" if now - self.start_t > self.timeout_s else "wait"

@@ -182,6 +182,26 @@ def test_fake_driver_reproduces_the_real_driver_hazards():
     assert fake.step_toward([0.0, 1.0], [1.0, 0.0], 0.1) == pytest.approx([0.1, 0.9])
 
 
+def test_bridge_gripper_commands_are_clamped_and_reach_the_driver():
+    assert bridge.gripper_target(0.02, 0.07) == 0.02
+    assert bridge.gripper_target(-0.01, 0.07) == 0.0
+    assert bridge.gripper_target(0.5, 0.07) == 0.07
+    assert bridge.gripper_target(float("nan"), 0.07) is None
+    hold = bridge.hold_command(MEASURED, bridge.gripper_target(0.0, 0.07))
+    joints, gripper, speed = fake.interpret_command(*hold)
+    assert joints == pytest.approx(list(MEASURED.values())) and gripper == 0.0 and speed == 30.0
+
+
+def test_fake_gripper_stops_at_an_object_between_the_fingers():
+    w = 0.03
+    for _ in range(100):
+        w = fake.gripper_step(w, 0.0, 0.001, object_width=0.008)
+    assert w == pytest.approx(0.008)
+    assert fake.gripper_step(0.008, 0.03, 0.001, object_width=0.008) == pytest.approx(0.009)  # opens
+    assert fake.gripper_step(0.005, 0.0, 0.001, object_width=0.008) == pytest.approx(0.004)  # no object inside
+    assert fake.gripper_step(0.03, 0.0, 0.001) == pytest.approx(0.029)
+
+
 def test_servo_and_bridge_start_together_on_the_command_topic():
     _, ctx, actions = _setup(bringup_servo="true", arm_command_topic="/piper/cmd_test")
     (servo,) = _nodes(actions, "moveit_servo")

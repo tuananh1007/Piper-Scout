@@ -54,6 +54,19 @@ def _stem_surface(x, y, z0, z1, r=0.004, n=3000, seed=0):
             + rng.normal(0, 0.0005, (n, 3))).astype(np.float32)
 
 
+def test_handoff_within_the_pipeline_tolerance_without_mpc_reached():
+    """The MPC can creep at 1.1-1.3 cm from its goal for seconds; 2 cm and 15 deg
+    are enough for the servo and the final approach."""
+    mon = ReachMonitor(start_t=0.0, settle_s=1.0)
+    assert mon.update("handoff_ready", 1.0, 1.0, tcp_error_m=0.012, angle_deg=13.0) == "wait"
+    assert mon.update("handoff_ready", 2.1, 2.1, tcp_error_m=0.011, angle_deg=12.0) == "handoff"
+    mon = ReachMonitor(start_t=0.0, settle_s=1.0)
+    for t in (1.0, 2.5, 4.0):        # too far, or the approach axis still off
+        assert mon.update("handoff_ready", t, t, tcp_error_m=0.03, angle_deg=5.0) == "wait"
+        assert mon.update("handoff_ready", t, t, tcp_error_m=0.005, angle_deg=20.0) == "wait"
+    assert mon.update("idle", 5.0, 5.0, tcp_error_m=0.0, angle_deg=0.0) == "wait"   # cancelled
+
+
 def test_main_stem_in_a_z_up_frame_needs_vertical_axis_2():
     from stem_grasp.core import extract_main_stem, skeletonize_plant_points
     G, sk = skeletonize_plant_points(_stem_surface(0.8, 0.15, 0.07, 0.42), voxel_size=0.003)

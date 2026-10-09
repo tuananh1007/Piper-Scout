@@ -23,12 +23,22 @@ opening, sets the speed percent explicitly, and only forwards while:
 
 Disabling sends one command holding the measured position.
 
+The gripper follows its measured opening (it never moves on its own) until a
+target arrives on ``~/gripper_cmd`` (opening in metres, clamped to
+[0, ``gripper_max_m``]). That target is sent at once, with the arm held at its
+measured pose, and then kept in every later command, holding included, so a
+grasp stays closed. It is honoured only while the bridge is enabled. The grip
+force is ``effort[6]`` = ``gripper_effort`` (the driver clips it to 0.5-3; it
+uses 1.0 without one).
+
     in   /piper/servo/joint_trajectory  trajectory_msgs/JointTrajectory  (servo)
     in   /joint_states_single           sensor_msgs/JointState           (driver feedback)
+    in   ~/gripper_cmd                  std_msgs/Float64                 (gripper opening, m)
     out  /piper/joint_cmd               sensor_msgs/JointState           (driver command input)
     srv  ~/enable                       std_srvs/SetBool
 """
 
+import math
 import signal
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -77,6 +87,13 @@ def hold_command(measured: Dict[str, float], gripper_opening: float, speed_perce
             + [float(gripper_opening)], [0.0] * 6 + [speed])
 
 
+def gripper_target(opening: float, max_opening: float) -> Optional[float]:
+    """A commanded gripper opening clamped to [0, max_opening]; None if not finite."""
+    if not math.isfinite(opening):
+        return None
+    return min(max(float(opening), 0.0), float(max_opening))
+
+
 def check_command_topic(topic: str) -> str:
     t = "/" + topic.strip().lstrip("/")
     if t in JOINT_STATE_TOPICS:
@@ -94,6 +111,7 @@ def main() -> None:
     from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from sensor_msgs.msg import JointState  # noqa: PLC0415
+    from std_msgs.msg import Float64  # noqa: PLC0415
     from std_srvs.srv import SetBool  # noqa: PLC0415
     from trajectory_msgs.msg import JointTrajectory  # noqa: PLC0415
 
@@ -111,12 +129,16 @@ def main() -> None:
             self.lower = list(p("joint_lower", list(URDF_LOWER)).value)
             self.upper = list(p("joint_upper", list(URDF_UPPER)).value)
             self.prefix = p("prefix", "piper_").value
+            self.gripper_max = float(p("gripper_max_m", 0.07).value)
+            self.gripper_effort = float(p("gripper_effort", 0.5).value)
             self.measured: Dict[str, float] = {}
             self.gripper = 0.0
+            self.gripper_cmd: Optional[float] = None    # None: follow the measured opening
             self.fb_time = None
             self.pub = self.create_publisher(JointState, cmd_topic, 10)
             self.create_subscription(JointState, fb_topic, self._feedback, 10)
             self.create_subscription(JointTrajectory, traj_topic, self._target, 10)
+            self.create_subscription(Float64, "~/gripper_cmd", self._gripper, 10)
             self.create_service(SetBool, "~/enable", self._enable)
             self.get_logger().info(f"{traj_topic} -> {cmd_topic}; "
                                    f"{'ENABLED' if self.enabled else 'disabled (call ~/enable)'}; "
@@ -131,11 +153,27 @@ def main() -> None:
             self.gripper = float(pos.get(GRIPPER, self.gripper))
             self.fb_time = self.get_clock().now()
 
+        def _gripper_out(self) -> float:
+            return self.gripper if self.gripper_cmd is None else self.gripper_cmd
+
         def _send(self, cmd) -> None:
             out = JointState()
             out.header.stamp = self.get_clock().now().to_msg()
             out.name, out.position, out.velocity = cmd
+            out.effort = [0.0] * 6 + [self.gripper_effort]
             self.pub.publish(out)
+
+        def _gripper(self, msg) -> None:
+            target = gripper_target(msg.data, self.gripper_max)
+            if target is None or not self.enabled or self._age(self.fb_time) > self.max_fb_age:
+                self.get_logger().warn("gripper command ignored (bridge disabled, stale feedback "
+                                       "or not a number)", throttle_duration_sec=2.0)
+                return
+            hold = hold_command(self.measured, target, self.speed)
+            if hold is not None:
+                self.gripper_cmd = target
+                self._send(hold)
+                self.get_logger().info(f"gripper -> {1000 * target:.1f} mm")
 
         def _target(self, msg: JointTrajectory) -> None:
             if not self.enabled or not msg.points:
@@ -145,7 +183,7 @@ def main() -> None:
                                        throttle_duration_sec=2.0)
                 return
             cmd = driver_command(msg.joint_names, msg.points[0].positions, self.measured,
-                                 self.gripper, self.lower, self.upper, self.max_step,
+                                 self._gripper_out(), self.lower, self.upper, self.max_step,
                                  self.speed, self.prefix)
             if cmd is None:
                 self.get_logger().warn(f"unexpected servo joints {list(msg.joint_names)}",
@@ -156,7 +194,7 @@ def main() -> None:
         def _enable(self, req, res):
             self.enabled = bool(req.data)
             if not self.enabled and self._age(self.fb_time) <= self.max_fb_age:
-                hold = hold_command(self.measured, self.gripper, self.speed)
+                hold = hold_command(self.measured, self._gripper_out(), self.speed)
                 if hold is not None:
                     self._send(hold)
             res.success = True
