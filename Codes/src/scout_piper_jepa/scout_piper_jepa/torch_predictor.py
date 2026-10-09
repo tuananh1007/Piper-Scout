@@ -57,6 +57,8 @@ class ACPredictorConfig:
     seed: int = 0
     action_scale: List[float] = field(default_factory=lambda: [1.0] * 9)
     device: str = "cpu"                   # "cuda" for GPU training / inference
+    step_s: float = 0.0                   # time between the training frames (0 = unknown); the
+                                          # MPC must step the predictor at the same interval
 
     @classmethod
     def p0(cls, **kw) -> "ACPredictorConfig":
@@ -152,7 +154,9 @@ class TorchACPredictor:
         (e.g. a GPU-trained model on a CPU-only machine)."""
         torch = _torch()
         ck = torch.load(path, map_location="cpu", weights_only=False)
-        cfg = ACPredictorConfig(**{k: tuple(v) if k == "grid_hw" else v for k, v in ck["config"].items()})
+        known = set(ACPredictorConfig.__dataclass_fields__)
+        cfg = ACPredictorConfig(**{k: tuple(v) if k == "grid_hw" else v for k, v in ck["config"].items()
+                                   if k in known})
         if device is not None:
             cfg.device = device
         elif cfg.device.startswith("cuda") and not torch.cuda.is_available():
@@ -160,6 +164,20 @@ class TorchACPredictor:
         net = _build_net(cfg)
         net.load_state_dict(ck["state_dict"])
         return cls(cfg, net)
+
+
+def predictor_stride(step_s: float, dt: float, default: int = 2):
+    """Controller steps per predictor step for a model trained at ``step_s``:
+    (stride, warning or None). Unknown ``step_s`` (0, checkpoints from before it
+    was recorded) gives ``default``: 2, the step of the synthetic training."""
+    if step_s <= 0:
+        return default, None
+    stride = max(1, int(round(step_s / dt)))
+    if abs(stride * dt - step_s) > 0.25 * step_s:
+        return stride, (f"the predictor was trained on frames {step_s:.3f} s apart, the controller steps "
+                        f"{dt:.3f} s: no stride matches (export the episodes with a frame interval that is "
+                        f"a multiple of {dt:.3f} s)")
+    return stride, None
 
 
 # ---------------------------------------------------------------- training

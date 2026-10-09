@@ -111,8 +111,11 @@ the PC and a green object in view (a stand-in stem).
 **Pass:** the label image is `mono8`; `bridge_status` shows `"ok"` for each
 running class and `known_voxels` > 0; RViz (`semantic_scene.rviz`) shows the
 stem mesh where the green object is; the PC keeps at least 2 GB of RAM free.
-**Record:** the bridge status (merge ms), GPU memory with three class mappers,
-free RAM. `target_goal` publishes only with a target mask (`grounded_sam`
+**Record:** the bridge status (`merge_ms`, `request_s`, the answer sizes in
+`answers`), GPU memory with three class mappers, free RAM. With the default
+0.6 m box the 3 mm stem and target answers are about 8 M voxels (32 MB) each
+per request; `request_s` well below 1 s keeps the field within the MPC's
+`field_max_age_s` (2.5 s). `target_goal` publishes only with a target mask (`grounded_sam`
 mode or a multi-class YOLO model): note whether it was tested.
 **If it fails:** `nvblox_msgs not found` → nvblox is not built (INSTALL.md
 10.10 item 2). `"no service"` for every class → the mappers did not start
@@ -134,7 +137,9 @@ ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py profile:=gpu \
 Send a goal (`ros2 run scout_piper_bringup print_tcp.py --forward 0.1`, run the
 printed line) and save `ros2 topic echo --field data /whole_body_mpc/status std_msgs/msg/String | tee $LOG/A5_status.txt`.
 **Pass:** status messages carry a numeric `geometry_age_s` (the field is used)
-and `min_clearance_m` once spheres are near mapped geometry; no `watchdog`.
+and `min_clearance_m` once spheres are near mapped geometry; no `watchdog`
+after the first field (the MPC stops until one arrives, and when the newest
+is older than `field_max_age_s`, 2.5 s).
 
 ### A6 — Encoders: V-JEPA 2, V-JEPA 2.1, DINOv2 (P2A.1 check)
 
@@ -180,7 +185,10 @@ python3 -m scout_piper_jepa.latency --device cuda --fp16 --samples 64,256 | tee 
 ```
 
 **Expect:** the largest sample count whose `cost` p95 stays under ~40 ms
-(two MPPI iterations per 100 ms step). CPU reference: 64 samples took 250 ms.
+(two MPPI iterations per 100 ms step). The rollouts cover the 20-step MPC
+horizon at a predictor step of 2 MPC steps (10 predictor steps; with
+`--model`, the stride comes from its training frame interval). CPU reference:
+64 samples × 4 predictor steps took 250 ms.
 **Record:** the table; the chosen `samples` for the predictive MPC.
 
 ### A9 — Closed loop C2 vs C3 on the synthetic world (P3B.7 rerun)
@@ -389,9 +397,13 @@ Export each with `jepa_episode export` and annotate (A10 steps 2–4).
 
 Arm-only, base-only and combined motions with the target in view and behind
 leaves: `./scripts/record_bag.sh e3 <name>`, driving the robot with the MPC or
-servo. Export with `jepa_episode export` (states and camera poses come from
-`/odom`, `/joint_states` and TF), annotate the target (and `--key plant_masks`
-if plant masks are wanted for P3).
+servo. Export with `jepa_episode export ... --stride 6` (states and camera
+poses come from `/odom`, `/joint_states` and TF), annotate the target (and
+`--key plant_masks` if plant masks are wanted for P3). The stride sets the
+predictor step: with the colour stream at 30 fps (`ros2 topic hz
+/camera/color/image_raw`), stride 6 gives frames 0.2 s apart, two periods of
+the 10 Hz MPC; the predictive MPC reads this interval from the checkpoint
+(`jepa_stride` 2).
 
 ### C8 — C3 on the robot (P3B.11)
 
@@ -436,7 +448,8 @@ python3 -m scout_piper_jepa.train e3_episodes/*.npz --encoder vjepa --hub-entry 
 ```
 
 Features are cached next to each episode (first run is the slow one).
-**Record:** the E3 table (persistence / P0 / P2 / P3), training time; keep
+**Record:** the E3 table (persistence / P0 / P2 / P3), training time, and
+`setup.step_s` from `results.json` (0.2 s with the C7 export stride); keep
 `P3.pt` for C8 and B4.
 
 ### D4 — Update PROGRESS.md

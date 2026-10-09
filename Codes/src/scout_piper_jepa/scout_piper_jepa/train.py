@@ -15,6 +15,13 @@ grid. Episodes are split (not windows) into training and test sets
 (``--test-frac``). Each method is saved as ``<out-dir>/<method>.pt``
 (``TorchACPredictor.load``) and scored against persistence with the E3
 metrics; ``results.json`` holds everything.
+
+The checkpoint records the time between training frames (``step_s``, the
+median of the episode stamps; synthetic: stride × the MPC step). A predictor
+step of the MPC must span the same time: the predictive MPC node derives
+``jepa_stride`` from it (``jepa_stride / rate_hz`` = ``step_s``), so export
+the episodes with ``--stride`` giving a multiple of the MPC period (camera
+at 30 fps, MPC at 10 Hz: ``--stride 6`` → 0.2 s, ``jepa_stride`` 2).
 """
 
 from __future__ import annotations
@@ -156,23 +163,26 @@ def synthetic_split(n_train: int, n_test: int, frames: int = 14, stride: int = 2
     for e in eps:
         e["image_hw"] = world.camera.image_hw
     r = world.features[world.labels == TARGET][0]
-    return eps[:n_train], eps[n_train:], r
+    return eps[:n_train], eps[n_train:], r, stride * m.dt
 
 
 def recorded_split(paths: Sequence[str], encoder, tag: str, test_frac: float, min_len: int, seed: int):
     fk = _fk()
-    eps_per_file = []
+    eps_per_file, dts = [], []
     for p in paths:
         ep = dict(np.load(p))
         if "states" not in ep:
             raise SystemExit(f"{p}: no states (export the bag with the robot running; E3 needs them)")
+        if "stamps" in ep and len(ep["stamps"]) > 1:
+            dts.append(np.diff(np.asarray(ep["stamps"], float)))
         Z = episode_features(p, encoder, tag)
         eps_per_file.append(training_episodes(ep, Z, fk, min_len))
     order = np.random.default_rng(seed).permutation(len(paths))
     n_test = max(1, int(round(test_frac * len(paths)))) if len(paths) > 1 else 0
     test = [e for i in order[:n_test] for e in eps_per_file[i]]
     train = [e for i in order[n_test:] for e in eps_per_file[i]]
-    return train, test or train, None
+    step_s = float(np.median(np.concatenate(dts))) if dts else 0.0
+    return train, test or train, None, step_s
 
 
 def main(argv=None) -> None:
@@ -197,7 +207,7 @@ def main(argv=None) -> None:
     os.makedirs(a.out_dir, exist_ok=True)
     t0 = time.perf_counter()
     if a.synthetic:
-        train, test, r = synthetic_split(a.synthetic, max(a.synthetic // 5, 10), seed=a.seed)
+        train, test, r, step_s = synthetic_split(a.synthetic, max(a.synthetic // 5, 10), seed=a.seed)
     else:
         if not a.episodes:
             ap.error("give episode files or --synthetic N")
@@ -207,13 +217,15 @@ def main(argv=None) -> None:
                   **({"image_size": a.image_size} if a.image_size else {})}
         enc = make_encoder(a.encoder, **kw)
         tag = a.encoder + (f"_{a.hub_entry}" if a.hub_entry else "")
-        train, test, r = recorded_split(a.episodes, enc, tag, a.test_frac, a.history + a.horizon + 1, a.seed)
+        train, test, r, step_s = recorded_split(a.episodes, enc, tag, a.test_frac, a.history + a.horizon + 1,
+                                                a.seed)
     if not train:
         raise SystemExit("no usable training episodes")
     grid, C = train[0]["Z"].shape[1:3], train[0]["Z"].shape[-1]
     res = {"setup": {"train_episodes": len(train), "test_episodes": len(test), "grid_hw": list(grid),
                      "feat_dim": int(C), "encoder": "synthetic" if a.synthetic else a.encoder,
                      "hub_entry": a.hub_entry, "steps": a.steps, "device": a.device,
+                     "step_s": round(step_s, 4),
                      "data_s": round(time.perf_counter() - t0, 1)}}
     K, H = a.history, a.horizon
     res["persistence"] = evaluate(PersistencePredictor(), test, K, H, r_fixed=r)
@@ -221,7 +233,7 @@ def main(argv=None) -> None:
     makers = {"P0": ACPredictorConfig.p0, "P2": ACPredictorConfig.p2, "P3": ACPredictorConfig.p3}
     for name in a.methods.split(","):
         cfg = makers[name](grid_hw=tuple(grid), feat_dim=int(C), history=K, steps=a.steps, seed=a.seed,
-                           device=a.device)
+                           device=a.device, step_s=step_s)
         t = time.perf_counter()
         model = train_predictor(train, cfg)
         model.save(os.path.join(a.out_dir, f"{name}.pt"))

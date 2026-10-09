@@ -100,7 +100,11 @@ stem_grasp_segmentation:
     target_min_pixels: 30
     segmentation_min_depth_m: 0.05
     segmentation_max_depth_m: 1.20
+    min_valid_depth_pixels: 50
+    # stock Ultralytics yolo26n-seg weights are trained on COCO, where class 58
+    # is "potted plant"; with a custom stem model, set its stem class id
     yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
+    yolo_stem_class_id: 58
     yolo_conf: 0.15
     yolo_iou: 0.45
     yolo_imgsz: 960
@@ -109,13 +113,14 @@ stem_grasp_segmentation:
     segment_only_when_stationary: true
     # no motion gate while the servo / final approach need a mask every step
     motion_gate_off_states: ["SERVOING", "APPROACHING"]
-    # merged label image for the semantic scene (class_demux input_mode: merged):
-    # YOLO class id -> label id (stem 1, branch 2, leaf 3, target 4); other
-    # modes publish the stem mask as 1 and the target mask as 4
+    # merged label image for the semantic scene (class_demux input_mode: merged).
+    # yolo_seg labels the yolo_stem_class_id instances as stem (1); a plant model
+    # with more classes maps "YOLO class id:label id" (stem 1, branch 2, leaf 3,
+    # target 4), e.g. yolo_class_labels: ["0:1", "1:2", "2:3", "3:4"] (not an
+    # empty list: ROS 2 leaves a parameter set to [] uninitialised). Other modes
+    # publish the stem mask as 1 and the target mask as 4
     publish_semantic_label: true
-    yolo_class_labels: ["0:1"]
 
 stem_grasp_pointcloud:
   ros__parameters:
     depth_topic: "/camera/aligned_depth_to_color/image_raw"
-    min_valid_depth_pixels: 50

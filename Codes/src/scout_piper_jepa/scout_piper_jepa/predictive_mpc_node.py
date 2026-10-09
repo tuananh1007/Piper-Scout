@@ -8,7 +8,10 @@ Phase 2A rule):
   * the Stage A target memory on the colour stream (re-grounded by a mask on
     /piper_jepa/init_mask, as target_state_node);
   * the Stage B predictor (``jepa_model``: a ``TorchACPredictor`` checkpoint
-    from ``scout_piper_jepa.train``; empty = persistence, i.e. no prediction);
+    from ``scout_piper_jepa.train``; empty = persistence, i.e. no prediction),
+    stepped every ``jepa_stride`` MPC steps; ``jepa_stride`` 0 (default) takes
+    it from the checkpoint's training frame interval (``step_s`` × ``rate_hz``),
+    else 2;
   * the Stage C ``JepaVisibilityCost`` in the MPC cost, anchored on the
     target's metric position when depth gives one; the camera pose of each
     planned state is link6 (FK) times the link6 → camera transform read once
@@ -73,7 +76,7 @@ class PredictiveMpcNode(WholeBodyMpcNode):
     def __init__(self) -> None:
         super().__init__()
         self.declare_parameters("", [
-            ("jepa_model", ""), ("jepa_device", "cuda"), ("jepa_stride", 4),
+            ("jepa_model", ""), ("jepa_device", "cuda"), ("jepa_stride", 0),   # 0 = from the checkpoint
             ("w_vis", 1.0), ("w_id", 1.0),
             ("encoder", "color_patch"), ("hub_entry", ""), ("image_size", 384), ("encoder_device", "cuda"),
             ("rgb_topic", "/camera/color/image_raw"),
@@ -91,14 +94,24 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.encoder = make_encoder(p("encoder"), **kw)
         stride = int(p("jepa_stride"))
         if p("jepa_model"):
-            from .torch_predictor import TorchACPredictor  # noqa: PLC0415 — needs torch
+            from .torch_predictor import TorchACPredictor, predictor_stride  # noqa: PLC0415 — needs torch
             net = TorchACPredictor.load(p("jepa_model"), device=p("jepa_device"))
+            fit, warning = predictor_stride(net.cfg.step_s, self.model.dt)
+            if warning:
+                self.get_logger().warn(warning)
+            if stride <= 0:
+                stride = fit
+            elif net.cfg.step_s > 0 and stride != fit:
+                self.get_logger().warn(f"jepa_stride {stride} x {self.model.dt:.3f} s does not match the "
+                                       f"training frame interval {net.cfg.step_s:.3f} s (jepa_stride {fit})")
+            self.get_logger().info(f"predictor step: {stride} MPC steps ({stride * self.model.dt:.2f} s)")
             self.history = net.history
             self.grid_hw = tuple(net.cfg.grid_hw)
             predictor = StateConditionedPredictor(net, self.model.kin.tcp, stride)
         else:
             self.get_logger().warn("jepa_model empty: persistence predictor (the cost sees no prediction)")
             self.history, self.grid_hw = 1, None
+            stride = stride if stride > 0 else 2
             predictor = _PersistenceStates(stride)
         self.memory = TargetMemory(TargetMemoryConfig())
         self.vis: Optional[JepaVisibilityCost] = None

@@ -101,3 +101,4 @@ def test_semantic_label_image_paints_classes_in_order():
     assert lab[2, 2] == 4 and lab[0, 0] == 0
     assert seg.compose_label({1: np.zeros((2, 2))}, shape).max() == 0     # wrong shape is ignored
     assert seg.parse_class_labels(["0:1", "2:3"]) == {0: 1, 2: 3}
+    assert seg.parse_class_labels([""]) == {}                # unset: the stem class only

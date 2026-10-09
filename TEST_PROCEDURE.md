@@ -129,10 +129,10 @@ If `python3 -m pytest` is missing in the container, install it first with
 `sudo apt-get install -y python3-pytest` (lost when the container exits).
 
 **Pass** (counts on 2026-10-09; more tests may have been added since):
-`stem_grasp` 40, `scout_piper_bringup` 24, `scout_piper_scene_repr` 23,
-`plant_twin` 22, `scout_piper_jepa` 15 (+2 skipped without torch, 17 with
-torch), `scout_piper_whole_body_mpc` 23 passed; no failures in
-`colcon test-result`.
+`stem_grasp` 41, `scout_piper_bringup` 24, `scout_piper_scene_repr` 31,
+`plant_twin` 22, `scout_piper_jepa` 20 (+2 skipped without torch, 22 with
+torch), `scout_piper_whole_body_mpc` 28 (+7 skipped without torch, 35 with
+torch) passed; no failures in `colcon test-result`.
 **Record:** the last line of each file.
 **If it fails:** `plant_twin` `test_jacobian.py` asserts a wall-clock
 speed-up and can fail on a busy machine; rerun it once on an idle machine.
@@ -295,7 +295,8 @@ wrong: rerun `VPI_MAJOR=3 ./scripts/patch_upstream.sh` and build again.
 
 **Steps:** as W3, with `source install/setup.bash` in `Codes/`, saving to
 `$LOG/J5_<package>.txt`.
-**Pass:** the same counts as W3; `scout_piper_jepa` 17 passed with torch.
+**Pass:** the same counts as W3; with torch, `scout_piper_jepa` 22 and
+`scout_piper_whole_body_mpc` 35 passed.
 **Record:** the last line of each file and the MPC suite's run time (it is
 CPU-bound and shows how much slower the Orin is).
 

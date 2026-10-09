@@ -91,6 +91,7 @@ class WholeBodyMpcNode(Node):
             ("pose_goal_advance_m", 0.0),
             ("field_topic", ""),              # e.g. /scene_repr/distance_field ("" = off)
             ("field_max_voxel_age_s", 30.0),  # voxels older than this count as unknown
+            ("field_max_age_s", 2.5),         # stop when the newest field is older (field_topic)
             ("unknown_policy", "no_entry"),   # no_entry | stop (see safety/projection.py)
             ("backend", "numpy"),             # numpy | torch (GPU when torch_device is cuda)
             ("torch_device", "auto"),         # auto (cuda if available) | cuda | cpu
@@ -122,6 +123,7 @@ class WholeBodyMpcNode(Node):
         self.unknown_policy = str(p("unknown_policy"))
         self.field_snap = None
         self.field_max_age = float(p("field_max_voxel_age_s"))
+        self.field_max_stale = float(p("field_max_age_s"))
         self._field_stamp = None
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
         self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
@@ -137,7 +139,8 @@ class WholeBodyMpcNode(Node):
         self.approach_tol = float(p("approach_tolerance_deg"))
         self.pose_advance = float(p("pose_goal_advance_m"))
 
-        if p("field_topic"):
+        self.field_topic = str(p("field_topic"))
+        if self.field_topic:
             from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: PLC0415
             from scout_piper_scene_repr.msg import SemanticDistanceField  # noqa: PLC0415
             from scout_piper_scene_repr_py.field import snapshot_from_msg  # noqa: PLC0415
@@ -253,10 +256,12 @@ class WholeBodyMpcNode(Node):
         state_age = now - min(self.t_base, self.t_q)
         dist_fn = leaf_fn = None
         geom_age = 0.0
+        geom_limit = self.max_geom_age
         if self.field_snap is not None:
             from scout_piper_scene_repr_py.field import snapshot_distance_fn, snapshot_leaf_fn  # noqa: PLC0415
             snap = self.field_snap
             geom_age = now - snap.stamp
+            geom_limit = self.field_max_stale        # a field arrives every 1/rate + query time
             dist_fn = snapshot_distance_fn(snap, now=now, max_voxel_age_s=self.field_max_age)
             leaf_fn = snapshot_leaf_fn(snap) if snap.soft_distance is not None else None
             if self.backend == "torch" and snap.stamp != self._field_stamp:
@@ -264,6 +269,8 @@ class WholeBodyMpcNode(Node):
                 self.mppi.field = TorchGridField.from_snapshot(snap, now=now, max_age_s=self.field_max_age,
                                                                device=self.mppi.device)
                 self._field_stamp = snap.stamp
+        elif self.field_topic:
+            geom_age = np.inf                        # no field yet: stop, never plan blind
         elif self.scene is not None:
             self.scene.integrate_latest()
             geom_age = now - self.scene.map.stamp if np.isfinite(self.scene.map.stamp) else np.inf
@@ -275,7 +282,7 @@ class WholeBodyMpcNode(Node):
         cost = WholeBodyCost(self.model, self.goal, distance_fn=dist_fn,
                              leaf_fn=leaf_fn, w=self.weights, extra=list(self.extra_terms))
         safety = SafetyFilter(self.model, distance_fn=dist_fn, d_safe=self.d_safe,
-                              max_state_age_s=self.max_state_age, max_geometry_age_s=self.max_geom_age,
+                              max_state_age_s=self.max_state_age, max_geometry_age_s=geom_limit,
                               unknown_policy=self.unknown_policy)
         T_tcp = self.model.tcp_world(x)
         err = float(np.linalg.norm(T_tcp[:3, 3] - self.goal.p))

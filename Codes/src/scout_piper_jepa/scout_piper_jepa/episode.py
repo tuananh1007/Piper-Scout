@@ -69,8 +69,13 @@ def _yaw(q) -> float:
 
 
 class EpisodeAssembler:
-    """Builds an episode from time-ordered messages (no ROS needed: tests feed
-    plain objects). ``tf_lookup(target, source, stamp) -> 4x4 | None``."""
+    """Builds an episode from messages in recorded order (no ROS needed: tests
+    feed plain objects). ``tf_lookup(target, source, stamp) -> 4x4 | None``.
+
+    Depth, segmentation and label images are matched to a colour frame by
+    header stamp (closest within ``max_dt``), whether they arrive before or
+    after it: a segmentation mask carries its colour frame's stamp but is
+    recorded one inference later."""
 
     def __init__(self, rgb_topic: str, depth_topic: str = "", info_topic: str = "", odom_topic: str = "/odom",
                  joints_topic: str = "/joint_states", seg_topic: str = "", label_topic: str = "",
@@ -91,10 +96,13 @@ class EpisodeAssembler:
         elif topic == t["depth"]:
             d = image_to_numpy(msg).astype(np.float32)
             self.depth = (_stamp(msg), d / 1000.0 if msg.encoding in ("16UC1", "mono16") else d)
+            self._attach("depth", self.depth)
         elif topic == t["seg"]:
             self.seg = (_stamp(msg), image_to_numpy(msg) > 0)
+            self._attach("seg", self.seg)
         elif topic == t["label"]:
             self.label = (_stamp(msg), image_to_numpy(msg).astype(np.uint8))
+            self._attach("label", self.label)
         elif topic == t["odom"]:
             pz = msg.pose.pose
             self.base = np.array([pz.position.x, pz.position.y, _yaw(pz.orientation)])
@@ -107,8 +115,15 @@ class EpisodeAssembler:
                 self._frame(msg)
             self.k += 1
 
-    def _near(self, item, ts):
-        return item[1] if item is not None and abs(item[0] - ts) <= self.max_dt else None
+    def _attach(self, key: str, item) -> None:
+        """A late image: give it to the frames it is closer to than their current match."""
+        ts = item[0]
+        for r in reversed(self.rows):
+            if r["stamp"] < ts - self.max_dt:
+                break
+            dt = abs(r["stamp"] - ts)
+            if dt <= self.max_dt and dt < r["dt"][key]:
+                r[key], r["dt"][key] = item[1], dt
 
     def _frame(self, msg) -> None:
         img = image_to_numpy(msg)
@@ -118,8 +133,13 @@ class EpisodeAssembler:
         if self.tf_lookup is not None:
             T = self.tf_lookup(self.world, self.cam_frame or msg.header.frame_id, ts)
         state = np.r_[self.base, self.q] if self.base is not None and self.q is not None else np.full(9, np.nan)
-        self.rows.append(dict(frame=np.ascontiguousarray(img), stamp=ts, depth=self._near(self.depth, ts),
-                              seg=self._near(self.seg, ts), label=self._near(self.label, ts), T=T, state=state))
+        row = dict(frame=np.ascontiguousarray(img), stamp=ts, T=T, state=state,
+                   depth=None, seg=None, label=None, dt={"depth": np.inf, "seg": np.inf, "label": np.inf})
+        for key in ("depth", "seg", "label"):                # the latest one received before the frame
+            item = getattr(self, key)
+            if item is not None and abs(item[0] - ts) <= self.max_dt:
+                row[key], row["dt"][key] = item[1], abs(item[0] - ts)
+        self.rows.append(row)
 
     def result(self) -> dict:
         if not self.rows:

@@ -29,6 +29,7 @@ import time
 
 import rclpy
 from geometry_msgs.msg import Point, PoseStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import ColorRGBA, String
@@ -175,11 +176,14 @@ def main(args=None) -> None:
     node = SceneQueryNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):    # Ctrl-C, or SIGINT from ros2 launch
         pass
+    except Exception:
+        if rclpy.ok():                                        # not a callback cut off by the shutdown
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

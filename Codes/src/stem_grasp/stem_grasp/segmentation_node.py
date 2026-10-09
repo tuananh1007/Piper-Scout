@@ -91,6 +91,8 @@ def parse_class_labels(entries) -> Dict[int, int]:
     """["0:1", "2:3"] -> {0: 1, 2: 3} (YOLO class id -> semantic label id)."""
     out = {}
     for e in entries or []:
+        if not str(e).strip():
+            continue
         cid, _, lab = str(e).partition(":")
         out[int(cid)] = int(lab)
     return out
@@ -133,7 +135,7 @@ class StemSegmentationNode(Node):
             enable_context_prompt=False,
             context_prompt_fallback_to_base=True,
             context_prompt_clauses=["hanging fruit", "pot"],
-            grounded_sam_extra_captions=[],
+            grounded_sam_extra_captions=[""],   # [""], not []: [] declares a byte array
             target_caption="",
             target_min_pixels=30,
             enable_depth_prefilter=False,
@@ -176,7 +178,9 @@ class StemSegmentationNode(Node):
             # merged label image for the semantic scene (P1.1.4)
             publish_semantic_label=True,
             semantic_label_topic="/stem_grasp/semantic_label",
-            yolo_class_labels=["0:1"],          # YOLO class id -> label id (stem 1, branch 2, leaf 3, target 4)
+            # "YOLO class id:label id" (stem 1, branch 2, leaf 3, target 4);
+            # unset ([""]) labels the yolo_stem_class_id instances as stem
+            yolo_class_labels=[""],
             label_paint_order=[3, 2, 1, 4],
             stationary_joint_vel_threshold=0.02,
             joint_states_timeout_sec=0.75,
@@ -257,7 +261,8 @@ class StemSegmentationNode(Node):
             PointStamped, "/stem_grasp/mask_centroid", 1
         )
         self.label_pub = self.create_publisher(Image, str(self.p["semantic_label_topic"]), 1)
-        self._class_labels = parse_class_labels(self.p["yolo_class_labels"])
+        self._class_labels = parse_class_labels(self.p["yolo_class_labels"]) or {
+            int(self.p["yolo_stem_class_id"]): 1}
         self._yolo_class_masks: Dict[int, np.ndarray] = {}
         self.target_mask_pub = self.create_publisher(
             Image, "/stem_grasp/target_mask", 1

@@ -175,6 +175,14 @@ record_bag.sh e1|e3  →  jepa_episode export  →  jepa_annotate  →  jepa_e1 
                                                                                              →  predictive_mpc_node (C3)
 ```
 
+**Predictor step.** A checkpoint records the time between its training frames
+(`step_s`); the MPC steps the predictor every `jepa_stride` MPC periods and
+derives `jepa_stride` from `step_s` when it is 0 (the default). Export E3
+episodes with a frame interval that is a multiple of the MPC period: with the
+colour stream at 30 fps and the MPC at 10 Hz, `--stride 6` gives 0.2 s
+(`jepa_stride` 2); the default `--stride 1` (0.033 s) matches no MPC step and
+the node warns.
+
 Checked here without a GPU: the export on a bag recorded from the fake robot
 (37 frames, states for 34, camera poses for 35), annotation and E1 runner on
 synthetic episodes (T0 / T1 / reference memory; V-JEPA and DINOv2 not

@@ -26,12 +26,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from dataclasses import asdict
 from typing import Dict, List, Optional
 
 import numpy as np
 
-from .metrics import TrackingScores, score_sequence
+from .metrics import score_sequence
 
 def default_config() -> str:
     """config/e1_methods.yaml from the installed share directory, else the source tree."""
@@ -167,12 +166,13 @@ def main(argv=None) -> None:
     r.add_argument("--min-gain", type=float, default=0.05)
     r.add_argument("--out", default="")
     a = ap.parse_args(argv)
-    with open(a.config or default_config(), encoding="utf-8") as f:
+    config = a.config or default_config()
+    with open(config, encoding="utf-8") as f:
         methods = yaml.safe_load(f)["methods"]
     res = {}
     for name in a.methods.split(","):
         if name not in methods:
-            raise SystemExit(f"{name} not in {a.config}")
+            raise SystemExit(f"{name} not in {config}")
         res[name] = run_method(methods[name], a.episodes, a.device)
         print(json.dumps({name: res[name]}), flush=True)
     res["h1"] = h1_decision(res, a.min_gain)

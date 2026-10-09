@@ -69,7 +69,7 @@ docker compose -f docker/compose.dev.yml run --rm dev
 ./scripts/colcon_build_safe.sh --symlink-install
 source install/setup.bash
 ros2 launch scout_piper_description view_robot.launch.py     # URDF viz
-ros2 launch scout_piper_bringup full_system.launch.py        # hardware-free defaults; add bringup_arm/base/camera:=true on the rig
+ros2 launch scout_piper_bringup full_system.launch.py        # hardware-free defaults; add bringup_arm:=true bringup_base:=true bringup_camera:=true on the rig
 ```
 
 See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.

@@ -4,15 +4,23 @@
 Every 1 / rate_hz s it asks each class mapper of ``nvblox_semantic.launch.py``
 for its ESDF inside the plant box (``~/get_esdf_and_gradient``,
 nvblox_msgs/srv/EsdfAndGradients; the mappers run with ``esdf_mode: 3d``),
-merges them with the class policies (``nvblox_field.merge_class_grids``) and
-publishes the same ``SemanticDistanceField`` as the CPU ``scene_query_node``.
-The MoveIt semantic collision plugin and the whole-body MPC
+merges them with the class policies (``nvblox_field.merge_class_grids``) as
+soon as every answer is in (or request_timeout_s has passed) and publishes the
+same ``SemanticDistanceField`` as the CPU ``scene_query_node``, stamped with
+the request time. The MoveIt semantic collision plugin and the whole-body MPC
 (``field_topic``) consume it unchanged, now backed by the GPU maps.
+
+Each answer covers the plant box at the mapper's own voxel size, 4 bytes per
+voxel: with the 3 mm stem and target mappers a 0.6 m box (the default,
+grid_half_extent_m 0.3) is 8.0 M voxels, 32 MB per class and request, a 1 m
+box 37 M voxels, 148 MB. bridge_status reports the size of every answer; keep
+the box tight around the plant and rate_hz low.
 
 Outputs
   /scene_repr/distance_field  SemanticDistanceField (reliable, transient local)
   /scene_repr/target_goal     geometry_msgs/PoseStamped pre-grasp pose from the target class
-  /scene_repr/bridge_status   std_msgs/String JSON: per-class result, ms, known voxels
+  /scene_repr/bridge_status   std_msgs/String JSON: per-class result and answer size (M voxels,
+                              MB), request and merge time, known voxels
 
 Needs nvblox_msgs (built with isaac_ros_nvblox). Run either this node or
 scene_query_node on /scene_repr/distance_field, not both.
@@ -27,6 +35,7 @@ import time
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Point, PoseStamped, Vector3
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
@@ -47,9 +56,9 @@ class NvbloxFieldBridge(Node):
             ("service_pattern", "/scene_repr/{c}/nvblox_{c}/get_esdf_and_gradient"),
             ("world_frame", "odom"),
             ("grid_center", [0.6, 0.0, 0.6]),
-            ("grid_half_extent_m", 0.5),
+            ("grid_half_extent_m", 0.3),      # the answers grow with its cube (see above)
             ("voxel_size_m", 0.01),
-            ("rate_hz", 2.0),
+            ("rate_hz", 1.0),
             ("request_timeout_s", 1.0),
             ("update_esdf", True),
             ("conservative_resample", True),
@@ -67,8 +76,8 @@ class NvbloxFieldBridge(Node):
         self.srv_type = EsdfAndGradients
         self.world = str(p("world_frame"))
         self.classes = list(p("classes"))
-        self.clients = {c: self.create_client(EsdfAndGradients, str(p("service_pattern")).format(c=c))
-                        for c in self.classes}
+        self.esdf_clients = {c: self.create_client(EsdfAndGradients, str(p("service_pattern")).format(c=c))
+                             for c in self.classes}
         half = float(p("grid_half_extent_m"))
         self.vs = float(p("voxel_size_m"))
         n = int(np.ceil(2 * half / self.vs))
@@ -88,8 +97,11 @@ class NvbloxFieldBridge(Node):
         self.tf = Buffer()
         self.tfl = TransformListener(self.tf, self)
         self.pending = {}
-        self.t_request = 0.0
-        self.create_timer(1.0 / float(p("rate_hz")), self._tick)
+        self.t_done = {}
+        self.t_request = -np.inf
+        self.stamp_request = 0.0
+        self.period = 1.0 / float(p("rate_hz"))
+        self.create_timer(min(self.period, 0.05), self._tick)    # merge soon after the last answer
         self.get_logger().info(f"bridging {self.classes} → {p('field_topic')} on a {n}³ grid of {self.vs} m")
 
     def _policies(self, path: str):
@@ -119,18 +131,28 @@ class NvbloxFieldBridge(Node):
             done = all(f.done() for f in self.pending.values())
             if not done and now - self.t_request < self.timeout:
                 return
-            self._merge(now)
+            self._merge()
             self.pending = {}
+        if now - self.t_request < self.period:
+            return
         self.t_request = now
-        for c, cl in self.clients.items():
+        self.stamp_request = self.get_clock().now().nanoseconds * 1e-9
+        self.t_done = {}
+        for c, cl in self.esdf_clients.items():
             if cl.service_is_ready():
-                self.pending[c] = cl.call_async(self._request())
+                f = cl.call_async(self._request())
+                f.add_done_callback(lambda _f, c=c, t=now: self._answered(c, t))
+                self.pending[c] = f
         if not self.pending:
             self.get_logger().warn("no nvblox ESDF service ready (is nvblox_semantic.launch.py running?)",
                                    throttle_duration_sec=10.0)
 
-    def _merge(self, now: float) -> None:
-        grids, status = {}, {}
+    def _answered(self, c: str, t_request: float) -> None:
+        if t_request == self.t_request:                          # not a late answer to an older request
+            self.t_done[c] = time.monotonic()
+
+    def _merge(self) -> None:
+        grids, status, size = {}, {}, {}
         for c in self.classes:
             f = self.pending.get(c)
             if f is None:
@@ -144,6 +166,8 @@ class NvbloxFieldBridge(Node):
                 grids[c], status[c] = None, "failed"
                 continue
             dims = [d.size for d in r.esdf_and_gradients.layout.dim]
+            n = len(r.esdf_and_gradients.data)
+            size[c] = {"Mvoxels": round(n / 1e6, 2), "MB": round(4 * n / 1e6, 1)}
             try:
                 grids[c] = grid_from_response(r.esdf_and_gradients.data, dims,
                                               [r.origin_m.x, r.origin_m.y, r.origin_m.z], r.voxel_size_m)
@@ -151,16 +175,16 @@ class NvbloxFieldBridge(Node):
             except ValueError as exc:
                 grids[c], status[c] = None, str(exc)
         t0 = time.perf_counter()
-        stamp = self.get_clock().now().nanoseconds * 1e-9
+        # the answers show the maps at (or after) the request: its time is the conservative stamp
         snap = merge_class_grids({c: g for c, g in grids.items()}, self.policies, self.origin, self.shape,
-                                 self.vs, stamp, conservative=self.conservative)
+                                 self.vs, self.stamp_request, conservative=self.conservative)
         self.pub_field.publish(fill_msg(SemanticDistanceField(), snap, self.world))
         merge_ms = 1e3 * (time.perf_counter() - t0)
         self._publish_goal(grids.get("target"))
         self.pub_status.publish(String(data=json.dumps({
-            "classes": status, "merge_ms": round(merge_ms, 1),
+            "classes": status, "answers": size, "merge_ms": round(merge_ms, 1),
             "known_voxels": int((snap.age_ds != AGE_UNKNOWN).sum()),
-            "request_s": round(now - self.t_request, 3)})))
+            "request_s": round(max(self.t_done.values()) - self.t_request, 3) if self.t_done else None})))
 
     def _publish_goal(self, target_grid) -> None:
         pts = target_points(target_grid)
@@ -189,12 +213,14 @@ def main(args=None) -> None:
     node = NvbloxFieldBridge()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):    # Ctrl-C, or SIGINT from ros2 launch
         pass
+    except Exception:
+        if rclpy.ok():                                        # not a callback cut off by the shutdown
+            raise
     finally:
         node.destroy_node()
-        if rclpy.ok():
-            rclpy.shutdown()
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":

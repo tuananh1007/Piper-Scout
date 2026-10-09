@@ -21,7 +21,9 @@ the last one, Enter accepts the keyframe, ``o`` marks the target hidden
 ``q`` saves and quits. Between two accepted keyframes with the same number of
 vertices the polygon is interpolated vertex by vertex; otherwise the nearer
 keyframe's polygon is copied. A hidden keyframe hides the frames up to the
-next keyframe.
+next keyframe. Saving rewrites only the frames from the first to the last
+accepted keyframe; the others keep their mask, so a later session can
+annotate another part of the episode.
 """
 
 from __future__ import annotations
@@ -84,6 +86,19 @@ def rasterize(poly: Polygon, hw) -> np.ndarray:
         inside ^= cross & (x < xi)
     m[v0:v1 + 1, u0:u1 + 1] = inside
     return m
+
+
+def apply_polygons(masks: Optional[np.ndarray], keyframes: Dict[int, Polygon], n_frames: int, hw) -> np.ndarray:
+    """Masks (T, H, W) with the frames from the first to the last keyframe
+    replaced by the interpolated polygons; the others are kept (zeros if new)."""
+    out = np.zeros((n_frames,) + tuple(hw), bool) if masks is None else np.array(masks, bool)
+    keys = sorted(k for k in keyframes if 0 <= k < n_frames)
+    if not keys:
+        return out
+    per = interpolate_polygons(keyframes, n_frames)
+    for i in range(keys[0], keys[-1] + 1):
+        out[i] = rasterize(per[i], hw)
+    return out
 
 
 def _frame_index(name: str) -> Optional[int]:
@@ -149,8 +164,7 @@ def polygon_tool(ep_path: str, every: int = 5, key: str = "target_masks") -> Non
             pts.pop()
 
     def save():
-        per = interpolate_polygons(polys, T)
-        ep[key] = np.stack([rasterize(p, (H, W)) for p in per])
+        ep[key] = apply_polygons(ep.get(key), polys, T, (H, W))
         np.savez_compressed(ep_path, **ep)
         print(f"saved {len(polys)} keyframes -> {key}")
 

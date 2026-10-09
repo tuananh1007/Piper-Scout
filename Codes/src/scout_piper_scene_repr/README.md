@@ -16,7 +16,7 @@ unvalidated until then.
 |---|---|---|
 | [`docs/PHASE1_DESIGN.md`](docs/PHASE1_DESIGN.md) | done | Design doc — read first |
 | [`python/class_demux_node.py`](python/class_demux_node.py) | working | Fans semantic label image → per-class mask + gated depth; adds `other` (depth outside every mask) and removes the gripper fingers (self-filter) |
-| [`python/nvblox_field_bridge.py`](python/nvblox_field_bridge.py) | untested against nvblox | Per-class nvblox ESDFs (`~/get_esdf_and_gradient`) → `/scene_repr/distance_field` + `/scene_repr/target_goal` (P1.3.1, P3.2.2) |
+| [`python/nvblox_field_bridge.py`](python/nvblox_field_bridge.py) | run against fake class services with the `nvblox_msgs` interface; untested against nvblox | Per-class nvblox ESDFs (`~/get_esdf_and_gradient`) → `/scene_repr/distance_field` + `/scene_repr/target_goal` (P1.3.1, P3.2.2) |
 | [`rviz/semantic_scene.rviz`](rviz/semantic_scene.rviz) | not yet opened on a GPU run | Per-class nvblox meshes, CPU voxels, target goal, masks (`nvblox_semantic.launch.py rviz:=true`) |
 | [`src/semantic_collision_plugin.cpp`](src/semantic_collision_plugin.cpp) | working, not on hardware | MoveIt 2 collision plugin `"Semantic"`: FCL + semantic distance field (see below) |
 | [`src/semantic_field_listener.cpp`](src/semantic_field_listener.cpp) | working, not on hardware | Receives `/scene_repr/distance_field` inside move_group; parameters, TF |
@@ -70,13 +70,22 @@ ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separat
 ## nvblox-backed distance field, target goal, self-filter (2026-10-09)
 
 - **Bridge** (`nvblox_field_bridge.py`, started by `nvblox_semantic.launch.py`):
-  every 0.5 s it requests each class mapper's ESDF inside the plant box,
+  every 1 s (`rate_hz`) it requests each class mapper's ESDF inside the plant
+  box (`grid_center` ± `grid_half_extent_m`, default 0.3 m), merges as soon as
+  every answer is in, and
   resamples the grids (stem 3 mm, leaf 10 mm, other 2 cm) onto one 1 cm grid
   (`nvblox_field.merge_class_grids`: hard classes min(d − padding) minus half
   a voxel diagonal, so resampling never makes a thin stem look farther; the
   leaf class as the soft field; a voxel is known when any mapper observed
   it) and publishes the same `SemanticDistanceField` as `scene_query_node`.
   Run one of the two, not both. Status on `/scene_repr/bridge_status`.
+  Each answer comes at the mapper's voxel size, 4 bytes per voxel: with the
+  3 mm stem and target mappers a 0.6 m box is 8.0 M voxels (32 MB) per class
+  and request, a 1 m box 37 M voxels (148 MB); merging the five classes onto
+  the 60³ grid took 258 ms on the development PC. `bridge_status` reports the
+  answer sizes (`answers`), `request_s` and `merge_ms`; keep the box tight
+  around the plant. The whole-body MPC stops when the newest field is older
+  than its `field_max_age_s` (2.5 s).
 - **`other` class:** depth outside every class mask gets its own mapper (pots,
   walls, supports); its observations also mark the space as observed.
 - **Target goal** (`attractor.py`, P1.3.3): the largest connected cluster of

@@ -48,43 +48,6 @@ stem_grasp_pipeline:
     camera_optical_frame: "camera_color_optical_frame"
     move_group: "arm"
 
-    # --- Segmentation ---
-    mask_mode: "yolo_seg"
-    enable_depth_prefilter: false
-    enable_depth_postfilter: true
-    segmentation_min_depth_m: 0.05
-    segmentation_max_depth_m: 1.20
-    text_prompt: "branch"
-    target_caption: "leaf"
-    target_min_pixels: 30
-    instance_selection_mode: "highest_conf"
-    selection_frame: "base_link"
-    depth_topic: "/camera/aligned_depth_to_color/image_raw"
-    min_valid_depth_pixels: 50
-
-    # --- YOLO ---
-    yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
-    yolo_conf: 0.15
-    yolo_iou: 0.45
-    yolo_stem_class_id: 58           # COCO potted plant
-    yolo_imgsz: 960
-    yolo_mask_threshold: 0.25
-
-    # --- Mask post ---
-    mask_dilate_kernel: 3
-    mask_dilate_iterations: 1
-
-    # --- Grounding ---
-    enable_vesselness_fusion: false
-    vessel_sigma_min: 1.0
-    vessel_sigma_max: 2.0
-    vessel_sigma_step: 0.5
-    vessel_threshold: 0.1
-    vessel_roi_dilate_px: 100
-    vessel_downsample: 2
-    enable_context_prompt: false
-    context_prompt_fallback_to_base: true
-
     # --- Iterative approach (P0.4.13, stem_grasp/approach.py) ---
     # After the reach handoff: servo, then advance along the gripper axis in
     # approach_step steps, re-aligning (image error <= approach_align_tolerance_px
@@ -144,11 +107,11 @@ stem_grasp_pipeline:
     grasp_point_on_stem_axis: true
     stem_radius_max_m: 0.02
 
-    # --- Multi-view capture (kept off by default in Phase 0) ---
-    enable_autonomous_viewpoint_capture: false
-    capture_ring_views: 8
-    capture_ring_arc_deg: 160.0
-    capture_min_viewpoint_separation_deg: 20.0
+    # --- Multi-view capture (ROS 1 values; not ported, no ROS 2 node reads them) ---
+    # enable_autonomous_viewpoint_capture: false
+    # capture_ring_views: 8
+    # capture_ring_arc_deg: 160.0
+    # capture_min_viewpoint_separation_deg: 20.0
 
     # --- Force / safety ---
     max_force_n: 2.0
@@ -186,3 +149,65 @@ stem_grasp_pipeline:
     # and the final approach correct the rest)
     reach_handoff_tolerance_m: 0.02
     reach_handoff_angle_deg: 15.0
+
+# ----------------------------------------------------------------------------
+# Segmentation (stem_grasp/segmentation_node.py; the full list of parameters
+# and their defaults is in stem_grasp/config/pipeline.yaml and the node)
+# ----------------------------------------------------------------------------
+stem_grasp_segmentation:
+  ros__parameters:
+    camera_optical_frame: "camera_color_optical_frame"
+    mask_mode: "yolo_seg"
+    enable_depth_prefilter: false
+    enable_depth_postfilter: true
+    segmentation_min_depth_m: 0.05
+    segmentation_max_depth_m: 1.20
+    text_prompt: "branch"
+    target_caption: "leaf"
+    target_min_pixels: 30
+    instance_selection_mode: "highest_conf"
+    selection_frame: "base_link"
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"
+    min_valid_depth_pixels: 50
+
+    # --- YOLO ---
+    # Stock Ultralytics yolo26n-seg weights are trained on COCO, where class 58
+    # is "potted plant" (the ROS 1 setting). With a custom stem model, set its
+    # stem class id here.
+    yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
+    yolo_conf: 0.15
+    yolo_iou: 0.45
+    yolo_stem_class_id: 58
+    yolo_imgsz: 960
+    yolo_mask_threshold: 0.25
+
+    # --- Mask post ---
+    mask_dilate_kernel: 3
+    mask_dilate_iterations: 1
+
+    # --- Grounding ---
+    enable_vesselness_fusion: false
+    vessel_sigma_min: 1.0
+    vessel_sigma_max: 2.0
+    vessel_sigma_step: 0.5
+    vessel_threshold: 0.1
+    vessel_roi_dilate_px: 100
+    vessel_downsample: 2
+    enable_context_prompt: false
+    context_prompt_fallback_to_base: true
+
+    # --- Motion gate and semantic label (as in pipeline.yaml) ---
+    grounded_sam_every_n_frames: 5
+    segment_only_when_stationary: true
+    motion_gate_off_states: ["SERVOING", "APPROACHING"]
+    # merged label image for the semantic scene (class_demux input_mode:
+    # merged); the yolo_stem_class_id instances are labelled stem (1), other
+    # classes through yolo_class_labels (pipeline.yaml)
+    publish_semantic_label: true
+
+# ----------------------------------------------------------------------------
+# Masked point cloud (stem_grasp/pointcloud_node.py)
+# ----------------------------------------------------------------------------
+stem_grasp_pointcloud:
+  ros__parameters:
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"

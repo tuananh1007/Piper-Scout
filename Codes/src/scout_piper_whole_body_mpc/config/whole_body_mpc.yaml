@@ -31,13 +31,14 @@ whole_body_mpc:
     torch_device: "auto"                     # torch: auto = cuda if available, else cpu
     use_semantic_scene: false                 # true = in-process SemanticVoxelMap
     field_topic: ""                           # /scene_repr/distance_field: CPU map or nvblox bridge
-    field_max_voxel_age_s: 30.0
+    field_max_voxel_age_s: 30.0               # older voxels of the field count as unknown
+    field_max_age_s: 2.5                      # field_topic: stop when the newest field is older
     unknown_policy: "no_entry"                # robot spheres may move inside unknown space, not into it
     scene_grid_center: [0.6, 0.0, 0.6]
     scene_half_extent_m: 0.5
     scene_voxel_size_m: 0.01
     max_state_age_s: 0.2
-    max_geometry_age_s: 1.0
+    max_geometry_age_s: 1.0                   # in-process map (use_semantic_scene)
     goal_tolerance_m: 0.01
     handoff_distance_m: 0.05                  # report handoff_ready to the local servo
     # With a pose goal, "reached" also needs the TCP z axis within this angle of

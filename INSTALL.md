@@ -846,8 +846,9 @@ nodes, RViz and the joint sliders.
 
 **Check:** `ros2 node list` includes `/stem_grasp_pipeline`,
 `/stem_grasp_segmentation`, `/stem_grasp_pointcloud` and
-`/robot_state_publisher`. Segmentation runs with its code defaults here, so
-it publishes empty masks (see 10.9). `use_sim:=true` only sets
+`/robot_state_publisher`. Segmentation takes `yolo_model_path` from
+`system.yaml` (a lab-machine path); without that file it publishes empty
+masks (see 10.9). `use_sim:=true` only sets
 `use_sim_time`; it starts no simulator.
 
 **All hardware-free chain checks in one run.** With no bringup running:
@@ -1081,13 +1082,13 @@ Segmentation needs a model: `pipeline.yaml` and `system.yaml` set
 if the file is missing the node logs a warning and publishes empty masks.
 Copy `src/stem_grasp/config/pipeline.yaml`, set `yolo_model_path` (or
 `mask_mode: hsv_green`, which needs no model) under `stem_grasp_segmentation`,
-and pass the copy with `config:=`. Under `full_system.launch.py` these
-segmentation settings are not applied, because `system.yaml` keys them under
-`stem_grasp_pipeline`. `mask_mode: grounded_sam` also needs
+and pass the copy with `config:=`. Under `full_system.launch.py` the same
+settings come from the `stem_grasp_segmentation` section of
+`src/scout_piper_bringup/config/system.yaml`. `mask_mode: grounded_sam` also needs
 `groundingdino-py`, `segment-anything` and checkpoints, none of which are
 installed.
 
-- **YOLO:** the node loads `yolo_model_path` only if the file exists (no automatic download) and keeps only class `yolo_stem_class_id`. Stock Ultralytics weights have no stem class, so this is the lab's custom-trained stem model. **TODO(maintainer):** record where the trained weights are kept and the class id they use.
+- **YOLO:** the node loads `yolo_model_path` only if the file exists (no automatic download) and keeps only class `yolo_stem_class_id`. Both configs set 58, the COCO class "potted plant" of the stock Ultralytics `yolo26n-seg` weights (the ROS 1 setting); stock weights have no stem class, so a custom-trained stem model needs its own class id there. For the merged label image (semantic scene), `yolo_class_labels` maps further classes of a multi-class model (`pipeline.yaml`). **TODO(maintainer):** record where the lab's weights are kept and the class id they use.
 - **Grounded-SAM** (public weights): GroundingDINO config `groundingdino/config/GroundingDINO_SwinT_OGC.py` (inside the `groundingdino` package) and checkpoint `https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth`; SAM for the default `sam_model_type: vit_b`: `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` (from the two projects' READMEs). Set `gdino_config`, `gdino_checkpoint` and `sam_checkpoint` to the downloaded paths.
 
 **Check:**
@@ -1411,8 +1412,10 @@ ros2 topic echo /whole_body_mpc/status
 ```
 
 **Check:** the status JSON shows `"execute": false` and a `mode` field; a
-`safety` value of `watchdog` means an input is older than `max_state_age_s`
-(0.2 s).
+`safety` value of `watchdog` means an input is older than its limit: the
+state than `max_state_age_s` (0.2 s), the in-process map than
+`max_geometry_age_s` (1 s), or, with `field_topic`, the newest field than
+`field_max_age_s` (2.5 s; before the first field arrives the MPC stops).
 
 **Execute mode, hardware-free** (do this before the robot). `fake_base:=true`
 replaces the Scout driver with `fake_scout_base.py`, which, like the real
@@ -1495,11 +1498,11 @@ Results on 2026-10-09 (4-core x86_64, Python 3.11 with ROS Humble, numpy 1.26.4,
 | Package | Result | Time |
 |---|---|---|
 | `scout_piper_bringup` | 24 passed (the launch tests skip without `launch_ros`) | <1 s |
-| `scout_piper_scene_repr` | 23 passed | ~20 s |
+| `scout_piper_scene_repr` | 31 passed | ~17–30 s |
 | `plant_twin` | 22 passed | ~5–20 s |
-| `scout_piper_jepa` | 15 passed, 2 skipped without torch; 17 passed with torch | ~5 s (~15–50 s with torch) |
-| `scout_piper_whole_body_mpc` | 23 passed | ~55 s |
-| `stem_grasp` (needs ROS) | 40 passed | ~1 s |
+| `scout_piper_jepa` | 20 passed, 2 skipped without torch; 22 passed with torch | ~6 s (~50 s with torch) |
+| `scout_piper_whole_body_mpc` | 28 passed, 7 skipped without torch; 35 passed with torch | ~55 s (~130 s with torch) |
+| `stem_grasp` (needs ROS) | 41 passed | ~1–7 s |
 
 `plant_twin`'s `test_jacobian.py::test_analytic_fit_matches_numeric_and_is_faster`
 asserts a wall-clock speed-up and can fail when the machine is busy; rerun it
@@ -1563,7 +1566,7 @@ and no sample episodes are in the repository yet.
 | `install_vpi.sh` refuses to run | Needs `/opt/ros/humble` and jammy | Not needed in the dev container (the image has VPI 4) |
 | `_ARRAY_API not found` from `cv_bridge` / `sensor_msgs_py` | NumPy 2 in the ROS environment | `python3 -m pip install --user 'numpy<2'` |
 | `colcon test` fails in `scout_piper_scene_repr` lint tests | `ament_lint_auto` (copyright, cpplint, …) | Expected for now; run the functional tests with the `--ctest-args -R` filter (Step 8) |
-| Segmentation publishes empty masks | `yolo_model_path` missing, or settings not applied under `full_system.launch.py` | `stem_grasp.launch.py config:=` with a valid model path or `hsv_green` (10.9) |
+| Segmentation publishes empty masks | `yolo_model_path` missing, or no instance of `yolo_stem_class_id` in view | A valid model path and class id, or `mask_mode: hsv_green`, in `pipeline.yaml` (`stem_grasp.launch.py config:=`) or the `stem_grasp_segmentation` section of `system.yaml` (10.9) |
 | Topics under `/camera/camera/...` | Camera namespace not set | Launch through the bringup or `realsense_nvblox.launch.py` (both set `camera_namespace:=/`) |
 | RealSense driver stuck | Device state | Relaunch with `initial_reset:=true`; a D405 can take seconds to re-enumerate |
 | `nvblox_semantic.launch.py` produces nothing | No segmentation node running (it publishes the merged label image), or no `odom` frame | Start `stem_grasp` segmentation (`stem_grasp.launch.py`), and make sure `odom` exists in TF |

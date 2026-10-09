@@ -1,12 +1,11 @@
 """Episode export assembly, annotation, E1 runner and training helpers (no ROS, no torch)."""
 
-import os
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from scout_piper_jepa.annotate import import_masks, info, interpolate_polygons, rasterize
+from scout_piper_jepa.annotate import apply_polygons, import_masks, info, interpolate_polygons, rasterize
 from scout_piper_jepa.e1 import h1_decision, run_method
 from scout_piper_jepa.episode import EpisodeAssembler
 from scout_piper_jepa.predictor import PersistencePredictor
@@ -51,11 +50,12 @@ def test_assembler_synchronises_depth_state_pose_and_segmentation():
         asm.add("/depth", _img(np.full((48, 64), 500 + k, np.uint16), "16UC1", t))
         asm.add("/seg", _img(np.full((48, 64), 255, np.uint8), "mono8", t + (0.01 if k == 2 else 0.2)))
         asm.add("/rgb", _img(np.full((48, 64, 3), k, np.uint8), "bgr8", t))
+    asm.add("/seg", _img(np.full((48, 64), 255, np.uint8), "mono8", 1.4))   # recorded after its frame
     ep = asm.result()
     assert ep["frames"].shape == (3, 48, 64, 3) and list(ep["frames"][:, 0, 0, 0]) == [0, 2, 4]
     assert np.allclose(ep["states"][1], [0.2, 0.0, 0.2] + [0.02] * 6)
     assert np.allclose(ep["depth"][2], 0.504, atol=1e-3)                    # mm -> m, same frame
-    assert list(ep["seg_masks"].reshape(3, -1).all(1)) == [False, True, False]   # only within 50 ms
+    assert list(ep["seg_masks"].reshape(3, -1).all(1)) == [False, True, True]    # within 50 ms, also late
     assert np.allclose(ep["T_world_cam"][:, 0, 3], [1.0, 1.2, 1.4])
     assert ep["K"][0, 0] == 500.0 and calls[0][:2] == ("odom", "camera_color_optical_frame")
     with pytest.raises(ValueError):
@@ -73,6 +73,9 @@ def test_polygons_interpolate_between_keyframes_and_hide():
     m = rasterize(sq(2), (8, 10))
     assert m.sum() == 16 and m[0, 2] and m[3, 5] and not m[4, 2] and not m[0, 1]
     assert not rasterize(None, (8, 10)).any()
+    first = apply_polygons(None, {0: sq(0), 2: sq(0)}, 6, (8, 10))           # first session: frames 0-2
+    both = apply_polygons(first, {4: sq(2), 5: None}, 6, (8, 10))            # second: frames 4-5
+    assert list(both.reshape(6, -1).any(1)) == [True, True, True, False, True, False]
 
 
 def test_masks_import_from_png_files(tmp_path):

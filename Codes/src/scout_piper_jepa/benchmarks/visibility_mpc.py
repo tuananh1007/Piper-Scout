@@ -134,17 +134,27 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=80)
     ap.add_argument("--goal", type=float, nargs=3, default=[0.70, 0.0, 0.45])
     ap.add_argument("--model", default="", help="TorchACPredictor checkpoint for C3-learned")
-    ap.add_argument("--stride", type=int, default=4)
+    ap.add_argument("--stride", type=int, default=0,
+                    help="controller steps per predictor step (0: from --model's training interval, "
+                         "2 if it has none; without --model 4)")
     a = ap.parse_args()
     m = WholeBodyModel()
     world = make_flower_scene()
     cam = eye_in_hand_pose(m)
     x0 = start_state(world, m, cam, np.random.default_rng(0))
     goal = np.array(a.goal)
-    methods = {"C2": None, "C3-oracle": OracleStatePredictor(world, cam, stride=a.stride)}
+    net = None
     if a.model:
-        from scout_piper_jepa.torch_predictor import TorchACPredictor  # noqa: PLC0415
-        methods["C3-learned"] = StateConditionedPredictor(TorchACPredictor.load(a.model), m.kin.tcp, a.stride)
+        from scout_piper_jepa.torch_predictor import TorchACPredictor, predictor_stride  # noqa: PLC0415
+        net = TorchACPredictor.load(a.model)
+        fit, warning = predictor_stride(net.cfg.step_s, m.dt)
+        if warning:
+            print(warning)
+        a.stride = a.stride or fit
+    a.stride = a.stride or 4
+    methods = {"C2": None, "C3-oracle": OracleStatePredictor(world, cam, stride=a.stride)}
+    if net is not None:
+        methods["C3-learned"] = StateConditionedPredictor(net, m.kin.tcp, a.stride)
     for seed in range(a.seeds):
         for name, pred in methods.items():
             print(json.dumps(run(name, world, m, cam, x0, goal, seed, a.steps, pred)), flush=True)
