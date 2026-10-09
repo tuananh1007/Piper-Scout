@@ -14,14 +14,19 @@ ROS 1 source. The grasp sequence runs hardware-free, not yet on the robot:
 - stepwise final approach (P0.4.13, `approach_enabled`).
 
 - closing the gripper on the stem (`grasp_close_gripper`, GRASPING →
-  GRASPED).
+  GRASPED);
+- releasing it (`~/release`: RELEASING → RETREATING → IDLE; `~/scan` scans
+  again).
+
+The grasp point is on the stem axis. The skeleton of a single-view cloud
+follows the camera-facing half of the stem, so `core.stem_axis_point` fits a
+circle to the cross-section around each skeleton point and moves the point to
+its centre (`grasp_point_on_stem_axis`). The pipeline logs the fitted diameter:
+7.7 mm for the 8 mm synthetic stem.
 
 Open:
 - The MoveIt path is unwired: `moveit_py` has no Humble binary, and
   `moveit_planner.py` returns no plan when it is absent.
-- Nothing releases the stem after GRASPED.
-- The grasp point comes from the skeleton of the stem's camera-facing half, a
-  few mm in front of the centreline; the approach stops about 1 cm before it.
 
 ## Image-based servo (P0.4.12)
 

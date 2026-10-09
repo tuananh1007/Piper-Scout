@@ -12,7 +12,9 @@ approach (P0.4.13): REACHING -> APPROACHING -> AT_GRASP, the TCP at the grasp
 point and the arm holding there. Adding ``-p grasp_close_gripper:=true`` puts
 an object as wide as the stem between the fake fingers (the fake driver's
 ``object_width_m``) and checks AT_GRASP -> GRASPING -> GRASPED with the
-gripper opened for the approach and closed on the stem.
+gripper opened for the approach and closed on the stem. ``--release`` then
+calls the pipeline's ``~/release`` and checks RELEASING -> RETREATING -> IDLE:
+the gripper opens and the gripper backs out along its axis.
 
 Publishes a synthetic stem (a 4 mm vertical cylinder, z 0.25-0.60 m in odom):
 its robot-facing half as a point cloud on /stem_grasp/filtered_cloud, and, as
@@ -64,6 +66,7 @@ def main() -> int:
     ap.add_argument("--tolerance", type=float, default=0.02, help="TCP error allowed [m]")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--servo-seconds", type=float, default=15.0, help="servo time after the handoff")
+    ap.add_argument("--release", action="store_true", help="after the grasp, release and retreat")
     a = ap.parse_args()
 
     import numpy as np  # noqa: PLC0415
@@ -211,7 +214,7 @@ def main() -> int:
     t_handoff = time.time()
     spin(0.5)
     pre_grasp_tcp = link6()
-    at_grasp = held = None
+    at_grasp = held = released = None
     grip_final = 0.0
     if approach:
         t0 = time.time()
@@ -221,6 +224,12 @@ def main() -> int:
         grip_final = next((w for _, w in reversed(widths) if w is not None), 0.0)
         spin(1.0)
         held = link6()
+        if a.release and states[-1][1] == final:
+            t_release = time.time()
+            reply = call(Trigger, "/stem_grasp_pipeline/release", Trigger.Request())
+            while time.time() - t_release < 30.0 and states[-1][1] not in ("IDLE", "ABORTED"):
+                spin(0.2)
+            released = (reply, link6(), t_release)
     else:
         spin(a.servo_seconds)
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
@@ -238,7 +247,8 @@ def main() -> int:
     t_servo = next((t for t, s in states if s == servo_state), None)
     t_done = next((t for t, s in states if s == "AT_GRASP"), None)
     expect = ["REACHING", servo_state] + (["AT_GRASP"] if approach else []) + \
-        (["GRASPING", "GRASPED"] if grasp else [])
+        (["GRASPING", "GRASPED"] if grasp else []) + \
+        (["RELEASING", "RETREATING", "IDLE"] if approach and a.release else [])
     timing = f" (reach {t_servo - t_reach:.1f} s" if t_reach and t_servo else ""
     if timing and t_done:
         timing += f", approach {t_done - t_servo:.1f} s"
@@ -292,6 +302,18 @@ def main() -> int:
                   opened > 0.05 and abs(grip_final - stem_width) < 0.001,
                   f"opened to {1000 * opened:.1f} mm, closed to {1000 * grip_final:.1f} mm "
                   f"on a {1000 * stem_width:.0f} mm stem")
+        if a.release:
+            if released is None or released[1] is None:
+                check("released and retreated", False, "no release (state " + seq[-1] + ")")
+            else:
+                reply, after, t_rel = released
+                back = float((tcp - tcp_pose(after)[0]) @ z)
+                side = float(np.linalg.norm(np.cross(tcp_pose(after)[0] - tcp, z)))
+                opened_after = max([w for t, w in widths if w is not None and t > t_rel] or [0.0])
+                check("released and retreated", reply is not None and reply.success and opened_after > 0.05
+                      and 0.09 < back < 0.13 and side < 0.01,
+                      f"gripper opened to {1000 * opened_after:.1f} mm, gripper backed "
+                      f"{100 * back:.1f} cm along its axis ({100 * side:.2f} cm sideways)")
     elif approach:
         check("TCP at the grasp point, gripper axis through the stem (TF)", False,
               "no AT_GRASP: " + " -> ".join(seq))

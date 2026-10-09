@@ -19,13 +19,16 @@ axis, and adds motion along that axis in steps:
 The caller feeds one update per servo step (new mask) and adds
 ``speed * approach_axis`` to the servo's camera velocity. At AT_GRASP the
 pipeline may close the gripper; ``GripperCloseMonitor`` decides when the
-measured opening has settled on the stem. This module holds no ROS.
+measured opening has settled on the stem, and ``RetreatMonitor`` tracks the
+retreat after a release. This module holds no ROS.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+
+import numpy as np
 
 
 @dataclass
@@ -140,4 +143,28 @@ class GripperCloseMonitor:
             self._ref, self._ref_t = width, now
         if now - self._ref_t >= self.settle_s and now - self.start_t >= self.settle_s:
             return "grasped" if width > self.min_object_m else "empty"
+        return "timeout" if now - self.start_t > self.timeout_s else "wait"
+
+
+@dataclass
+class RetreatMonitor:
+    """Tracks the straight retreat out of the plant after a release.
+
+    ``update`` takes the TCP position (world) and returns "wait", "done" once
+    it has backed ``distance_m`` along -``axis`` (the gripper approach axis at
+    the start), or "timeout".
+    """
+
+    start_t: float
+    start_tcp: np.ndarray
+    axis: np.ndarray
+    distance_m: float = 0.10
+    timeout_s: float = 15.0
+    moved: float = 0.0
+
+    def update(self, now: float, tcp: Optional[np.ndarray]) -> str:
+        if tcp is not None:
+            self.moved = float((np.asarray(self.start_tcp) - np.asarray(tcp)) @ self.axis)
+            if self.moved >= self.distance_m:
+                return "done"
         return "timeout" if now - self.start_t > self.timeout_s else "wait"

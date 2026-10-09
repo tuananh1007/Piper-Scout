@@ -118,6 +118,13 @@ stem_grasp_pipeline:
     grasp_timeout_sec: 5.0
     grasp_min_object_m: 0.002
     gripper_finger_joints: "piper_joint7,piper_joint8"
+    # Release (~/release, std_srvs/Trigger, from GRASPED or AT_GRASP): open the
+    # gripper, back out release_retreat_m along the gripper axis, go IDLE;
+    # ~/scan starts scanning again from IDLE or ABORTED.
+    release_retreat_m: 0.10
+    release_speed_mps: 0.03
+    release_open_timeout_sec: 5.0
+    release_timeout_sec: 15.0
 
     # --- Skeleton stability ---
     skeleton_min_stem_points: 6
@@ -132,6 +139,10 @@ stem_grasp_pipeline:
     acceleration_scale: 0.12
     grasp_strategy: "nearest_target"
     target_point_timeout_sec: 3.5
+    # grasp the stem axis: fit the stem cross-section around each skeleton
+    # point (single-view clouds show only the camera-facing half)
+    grasp_point_on_stem_axis: true
+    stem_radius_max_m: 0.02
 
     # --- Multi-view capture (kept off by default in Phase 0) ---
     enable_autonomous_viewpoint_capture: false

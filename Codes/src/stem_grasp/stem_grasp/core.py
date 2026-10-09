@@ -16,7 +16,8 @@ the observer and ``step`` take the time since the previous measurement
 (``dt``): the pipeline steps once per new mask (10-30 Hz), and a fixed 10 ms
 step with repeated measurements made the velocity estimate (and the sway
 damping) flip every other step; select_grasp_candidates takes an
-approach_hint.
+approach_hint; stem_axis_point (new) moves a skeleton point from the visible
+surface to the stem axis.
 
 Phase 2 of the ROADMAP replaces FullAdaptiveServoController with MPPI-VS;
 preserve the .step() signature so the pipeline node doesn't need to change.
@@ -321,6 +322,50 @@ def extract_main_stem(
 # ---------------------------------------------------------------------------
 # Grasp candidate selection along the extracted stem skeleton
 # ---------------------------------------------------------------------------
+
+
+def stem_axis_point(cloud, pos, stem_dir, band_m: float = 0.01, r_min: float = 0.001,
+                    r_max: float = 0.02, min_points: int = 20, min_arc_deg: float = 60.0):
+    """Centre of the stem cross-section around ``pos``: (centre (3,), radius) or None.
+
+    The skeleton of a single-view stem cloud follows the visible (camera-facing)
+    half of the stem, so its points sit up to a radius in front of the stem
+    axis. This fits a circle (algebraic least squares) to the cloud points
+    within ``band_m`` of ``pos`` along ``stem_dir``, in the plane
+    perpendicular to it. None unless the fit has ``min_points`` points, a
+    radius in [r_min, r_max], an RMS residual under a third of the radius
+    (+0.5 mm) and covers at least ``min_arc_deg`` of the circle.
+    """
+    pts = np.asarray(cloud, dtype=float)
+    pos = np.asarray(pos, dtype=float)
+    d = np.asarray(stem_dir, dtype=float)
+    d = d / (np.linalg.norm(d) + 1e-12)
+    rel = pts - pos
+    along = rel @ d
+    lateral = rel - np.outer(along, d)
+    keep = (np.abs(along) <= band_m) & (np.linalg.norm(lateral, axis=1) <= 2.0 * r_max)
+    if keep.sum() < min_points:
+        return None
+    e1 = np.cross(d, [1.0, 0.0, 0.0])
+    if np.linalg.norm(e1) < 0.1:
+        e1 = np.cross(d, [0.0, 1.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(d, e1)
+    xy = np.column_stack([lateral[keep] @ e1, lateral[keep] @ e2])
+    A = np.column_stack([xy, np.ones(len(xy))])
+    sol, *_ = np.linalg.lstsq(A, -(xy ** 2).sum(1), rcond=None)
+    c = -0.5 * sol[:2]
+    r2 = c @ c - sol[2]
+    if r2 <= 0:
+        return None
+    r = float(np.sqrt(r2))
+    resid = np.linalg.norm(xy - c, axis=1) - r
+    ang = np.degrees(np.arctan2(xy[:, 1] - c[1], xy[:, 0] - c[0]))
+    gaps = np.diff(np.sort(np.r_[ang, ang.min() + 360.0]))
+    arc = 360.0 - gaps.max()
+    if not (r_min <= r <= r_max) or np.sqrt((resid ** 2).mean()) > r / 3 + 5e-4 or arc < min_arc_deg:
+        return None
+    return pos + c[0] * e1 + c[1] * e2, r
 
 
 def select_grasp_candidates(

@@ -16,7 +16,9 @@ end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
     the handoff goes to APPROACHING, which servoes and advances along the
     gripper axis in steps until AT_GRASP (or ABORTED); with
     ``grasp_close_gripper`` it then closes the gripper (GRASPING) until the
-    opening settles on the stem (GRASPED).
+    opening settles on the stem (GRASPED). ``~/release`` opens the gripper
+    (RELEASING), backs out along the gripper axis (RETREATING) and goes IDLE;
+    ``~/scan`` starts scanning again.
   * Multi-view ring (deferred to Phase 4).
 
 References between ports and ROS 1 source (file line numbers):
@@ -54,11 +56,12 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
 from std_msgs.msg import Empty, Float32, Float64, String
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from stem_grasp import core
-from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach
+from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor
 from stem_grasp.moveit_planner import MoveItPlanner
 from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
@@ -79,6 +82,8 @@ class PipelineState(Enum):
     AT_GRASP = auto()      # grasp point between the fingers; no more commands
     GRASPING = auto()      # gripper closing (grasp_close_gripper)
     GRASPED = auto()       # gripper settled on the stem; holding
+    RELEASING = auto()     # ~/release: gripper opening
+    RETREATING = auto()    # backing out along the gripper axis, then IDLE
     ABORTED = auto()
 
 
@@ -126,6 +131,10 @@ class PipelineParams:
     acceleration_scale: float = 0.12
     grasp_strategy: str = "nearest_target"
     target_point_timeout_sec: float = 3.5
+    # Single-view stem clouds show only the camera-facing half, so skeleton
+    # points sit on that surface; fit the cross-section and grasp the axis.
+    grasp_point_on_stem_axis: bool = True
+    stem_radius_max_m: float = 0.02
 
     # Servo
     servo_cmd_topic: str = "/servo_node/delta_twist_cmds"
@@ -159,6 +168,14 @@ class PipelineParams:
     grasp_timeout_sec: float = 5.0
     grasp_min_object_m: float = 0.002     # settled below this: closed on nothing
     gripper_finger_joints: str = "piper_joint7,piper_joint8"   # opening = first - second
+
+    # Release (~/release from GRASPED or AT_GRASP): open the gripper to
+    # grasp_open_width_m, then back the gripper straight out along its axis by
+    # release_retreat_m and go IDLE (~/scan starts scanning again).
+    release_retreat_m: float = 0.10
+    release_speed_mps: float = 0.03
+    release_open_timeout_sec: float = 5.0
+    release_timeout_sec: float = 15.0
 
     # Reach to the pre-grasp pose (P0.4.11): "none" only publishes the target
     # pose; "whole_body_mpc" hands it to scout_piper_whole_body_mpc
@@ -306,6 +323,11 @@ class StemGraspPipeline(Node):
             String, "/stem_grasp/servo_status", 10
         )
         self.pub_gripper = self.create_publisher(Float64, self.params.grasp_gripper_topic, 5)
+        self.release_t: Optional[float] = None
+        self.retreat: Optional[RetreatMonitor] = None
+        self._retreat_pub_t = 0.0
+        self.create_service(Trigger, "~/release", self._release_srv, callback_group=self.cb_group)
+        self.create_service(Trigger, "~/scan", self._scan_srv, callback_group=self.cb_group)
         self._servo_status_t = 0.0
 
         # ---------- timers ----------
@@ -464,6 +486,9 @@ class StemGraspPipeline(Node):
         if self.state == PipelineState.GRASPING:
             self._grasp_tick()
             return
+        if self.state == PipelineState.RELEASING:
+            self._release_tick()
+            return
         if self.state != PipelineState.SCANNING:
             return
         if self.last_stem_cloud is None:
@@ -499,6 +524,8 @@ class StemGraspPipeline(Node):
         )
         if not candidates:
             return
+        if self.params.grasp_point_on_stem_axis:
+            self._centre_on_stem_axis(candidates)
 
         if (self.params.grasp_strategy == "nearest_target"
                 and self.last_target_point is not None
@@ -517,6 +544,18 @@ class StemGraspPipeline(Node):
         # 5) Move to the pre-grasp pose (P0.4.11)
         if self.params.reach_executor == "whole_body_mpc":
             self._start_reach(best)
+
+    def _centre_on_stem_axis(self, candidates: list) -> None:
+        """Move each grasp point from the visible surface to the stem axis."""
+        from scipy.spatial.transform import Rotation as R_scipy
+        for c in candidates:
+            stem_dir = R_scipy.from_quat(c["quat"]).as_matrix()[:, 1]   # candidate y = stem direction
+            fit = core.stem_axis_point(self.last_stem_cloud, c["pos"], stem_dir,
+                                       r_max=float(self.params.stem_radius_max_m))
+            if fit is None:
+                continue
+            shift = fit[0] - c["pos"]
+            c["pos"], c["pre_pos"], c["stem_radius"] = fit[0], c["pre_pos"] + shift, fit[1]
 
     # ------------------------------------------------------------- reaching
     def _start_reach(self, candidate: dict) -> None:
@@ -552,7 +591,10 @@ class StemGraspPipeline(Node):
                                           tcp_tolerance_m=self.params.reach_handoff_tolerance_m,
                                           angle_tolerance_deg=self.params.reach_handoff_angle_deg)
         self._set_state(PipelineState.REACHING)
-        self.get_logger().info(f"reaching pre-grasp {np.round(p, 3)} in {world} via the whole-body MPC")
+        radius = candidate.get("stem_radius")
+        self.get_logger().info(f"reaching pre-grasp {np.round(p, 3)} in {world} via the whole-body MPC"
+                               + (f"; stem diameter {2000 * radius:.1f} mm" if radius else
+                                  "; grasp point not centred on the stem"))
         self._reach_tick()
 
     def _reach_tick(self) -> None:
@@ -587,7 +629,10 @@ class StemGraspPipeline(Node):
         if not self._inner_lock.acquire(blocking=False):
             return
         try:
-            self._servo_step()
+            if self.state == PipelineState.RETREATING:
+                self._retreat_step()
+            else:
+                self._servo_step()
         finally:
             self._inner_lock.release()
 
@@ -693,6 +738,75 @@ class StemGraspPipeline(Node):
         else:
             self.get_logger().warn(f"approach aborted after {steps} steps: {reason}")
             self._set_state(PipelineState.ABORTED)
+
+    # --------------------------------------------------------------- release
+    def _release_srv(self, req, res):
+        if self.state not in (PipelineState.GRASPED, PipelineState.AT_GRASP):
+            res.success, res.message = False, f"release needs GRASPED or AT_GRASP, not {self.state.name}"
+            return res
+        self._command_gripper(self.params.grasp_open_width_m)
+        self.release_t = self._now()
+        self._set_state(PipelineState.RELEASING)
+        res.success, res.message = True, "releasing"
+        return res
+
+    def _scan_srv(self, req, res):
+        if self.state not in (PipelineState.IDLE, PipelineState.ABORTED):
+            res.success, res.message = False, f"scan needs IDLE or ABORTED, not {self.state.name}"
+            return res
+        self._set_state(PipelineState.SCANNING)
+        res.success, res.message = True, "scanning"
+        return res
+
+    def _release_tick(self) -> None:
+        width = self.gripper_width if self._age(self.gripper_width_t) < 0.5 else None
+        if width is not None and width >= self.params.grasp_open_width_m - 0.005:
+            tcp = self._tcp_world()
+            if tcp is None:
+                self.get_logger().warn("release: no TF for the TCP; not retreating")
+                self._set_state(PipelineState.ABORTED)
+                return
+            self.retreat = RetreatMonitor(
+                start_t=self._now(), start_tcp=tcp[0], axis=tcp[1],
+                distance_m=float(self.params.release_retreat_m),
+                timeout_s=float(self.params.release_timeout_sec))
+            self.get_logger().info(f"gripper open ({1000 * width:.1f} mm); retreating "
+                                   f"{100 * self.params.release_retreat_m:.0f} cm")
+            self._set_state(PipelineState.RETREATING)
+        elif self._age(self.release_t) > self.params.release_open_timeout_sec:
+            # never pull away with the stem still held
+            self.get_logger().warn("release: the gripper did not open; not retreating")
+            self._set_state(PipelineState.ABORTED)
+
+    def _tcp_world(self):
+        """(TCP position, approach axis) in mpc_world_frame, or None."""
+        T = self._lookup(self.params.mpc_world_frame, self.params.eef_frame)
+        if T is None:
+            return None
+        return T[:3, 3] + self.params.tcp_offset_m * T[:3, 2], T[:3, 2]
+
+    def _retreat_step(self) -> None:
+        now = self._now()
+        if now - self._retreat_pub_t < 0.05 or self.retreat is None:   # 20 Hz is plenty for servo
+            return
+        self._retreat_pub_t = now
+        tcp = self._tcp_world()
+        decision = self.retreat.update(now, None if tcp is None else tcp[0])
+        if decision != "wait":
+            self._publish_twist(np.zeros(3), self.params.camera_optical_frame)
+            moved = self.retreat.moved
+            self.retreat = None
+            if decision == "done":
+                self.get_logger().info(f"retreated {100 * moved:.1f} cm; IDLE (call ~/scan to start again)")
+                self._set_state(PipelineState.IDLE)
+            else:
+                self.get_logger().warn(f"retreat timed out after {100 * moved:.1f} cm")
+                self._set_state(PipelineState.ABORTED)
+            return
+        T_ce = self._lookup(self.params.camera_optical_frame, self.params.eef_frame)
+        if T_ce is not None:   # straight back along the gripper axis, in the camera frame
+            self._publish_twist(-self.params.release_speed_mps * T_ce[:3, 2],
+                                self.params.camera_optical_frame)
 
     def _command_gripper(self, width: float) -> None:
         self.pub_gripper.publish(Float64(data=float(width)))

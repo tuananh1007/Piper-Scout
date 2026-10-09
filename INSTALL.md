@@ -1065,11 +1065,33 @@ ros2 run stem_grasp pipeline_node --ros-args -p reach_executor:=whole_body_mpc \
   `object_width_m`);
 - the MPC, base and servo checks as above.
 
-The grasp point itself comes from the skeleton of the stem's robot-facing half,
-a few mm in front of the centreline, so the TCP stops about 1 cm before it.
+**Grasp point on the stem axis** (`grasp_point_on_stem_axis`, on by default).
+A single-view cloud shows only the camera-facing half of the stem, so its
+skeleton lies on that surface. The pipeline fits a circle to the stem
+cross-section around each grasp point and moves the point to the circle's
+centre. It logs the fitted diameter with the reach: 7.7 mm for the 8 mm
+synthetic stem. Points where the fit fails (too few points, radius outside
+1 mm–`stem_radius_max_m`, a poor or too narrow arc) stay where they were.
+
+**Release** (`~/release`, std_srvs/Trigger, from GRASPED or AT_GRASP):
+
+```bash
+ros2 service call /stem_grasp_pipeline/release std_srvs/srv/Trigger
+ros2 service call /stem_grasp_pipeline/scan std_srvs/srv/Trigger   # later: scan for the next stem
+```
+
+The pipeline opens the gripper (RELEASING) and waits until the measured opening
+reaches `grasp_open_width_m`. If the gripper does not open within
+`release_open_timeout_sec`, it goes to ABORTED rather than pull away with the
+stem. It then backs the gripper straight out along its axis by
+`release_retreat_m` (10 cm) at `release_speed_mps` (RETREATING) and goes IDLE.
+It does not scan again until `~/scan`. Add `--release` to the check to test it.
+
 Measured hardware-free (2026-10-09, grasp on, four stem positions): GRASPED
-after 3 steps, reach 6.2–8.4 s, the gripper axis 0.00–0.06 cm from the stem
-centreline, the gripper settled at 8.0 mm, no servo slowdown or halt.
+after 3 steps, reach 6.2–8.4 s, the gripper axis 0.00–0.03 cm from the stem
+centreline and 0.07–0.10 cm from the centred grasp point, the gripper settled
+at 8.0 mm, no servo slowdown or halt. With `--release` the gripper reopened to
+60 mm and the gripper backed out 10.1 cm along its axis (0.01 cm sideways).
 
 On the robot, the same chain starts from real segmentation and point clouds;
 run it only after 10.4 and 10.13, and the approach only with someone at the

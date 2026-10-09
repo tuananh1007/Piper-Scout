@@ -83,3 +83,32 @@ def test_approach_hint_puts_the_pre_grasp_on_the_robot_side():
         assert np.linalg.norm(c["pre_pos"][:2]) < np.linalg.norm(c["pos"][:2])   # closer to the arm
     side = select_grasp_candidates(stem, target_offset=0.12)[0]             # no hint: ROS 1 rule
     assert (side["pre_pos"] - side["pos"]) / 0.12 == pytest.approx([0.0, 1.0, 0.0])
+
+
+def _half_shell(center, radius, rng, n=800, facing=(-1.0, 0.0)):
+    """Single-view stem cloud: the half of a vertical cylinder facing ``facing``."""
+    base = np.arctan2(facing[1], facing[0])
+    a = base + rng.uniform(-np.pi / 2, np.pi / 2, n)
+    z = rng.uniform(0.25, 0.60, n)
+    pts = np.column_stack([center[0] + radius * np.cos(a), center[1] + radius * np.sin(a), z])
+    return pts + rng.normal(0, 0.0005, pts.shape)
+
+
+@pytest.mark.parametrize("radius", [0.002, 0.004, 0.008])
+def test_stem_axis_point_recovers_the_axis_from_the_visible_half(radius):
+    from stem_grasp.core import stem_axis_point
+    rng = np.random.default_rng(1)
+    cloud = _half_shell((1.25, 0.0), radius, rng)
+    surface = np.array([1.25 - radius, 0.0, 0.40])            # where the skeleton sits
+    centre, r = stem_axis_point(cloud, surface, [0.0, 0.0, 1.0])
+    assert np.linalg.norm(centre[:2] - [1.25, 0.0]) < 0.0015
+    assert centre[2] == pytest.approx(0.40)                   # height along the stem kept
+    assert r == pytest.approx(radius, abs=0.0015)
+
+
+def test_stem_axis_point_refuses_a_poor_fit():
+    from stem_grasp.core import stem_axis_point
+    rng = np.random.default_rng(2)
+    flat = np.column_stack([np.full(400, 1.25), rng.uniform(-0.03, 0.03, 400), rng.uniform(0.3, 0.5, 400)])
+    assert stem_axis_point(flat, [1.25, 0.0, 0.4], [0.0, 0.0, 1.0]) is None   # a wall, not a stem
+    assert stem_axis_point(flat[:5], [1.25, 0.0, 0.4], [0.0, 0.0, 1.0]) is None

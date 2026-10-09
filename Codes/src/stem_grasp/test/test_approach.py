@@ -2,7 +2,9 @@
 
 import pytest
 
-from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach
+import numpy as np
+
+from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor
 
 DT = 0.1
 
@@ -96,3 +98,14 @@ def test_gripper_settling_on_the_stem_is_a_grasp():
 ])
 def test_gripper_close_failures(widths, kw, expected):
     assert close(widths, **kw)[0] == expected
+
+
+def test_retreat_counts_only_motion_back_along_the_axis():
+    axis = np.array([1.0, 0.0, 0.0])                 # the gripper pointed +x at the stem
+    mon = RetreatMonitor(start_t=0.0, start_tcp=np.zeros(3), axis=axis, distance_m=0.10)
+    assert mon.update(1.0, np.array([0.0, 0.2, 0.0])) == "wait"    # sideways is not back
+    assert mon.update(2.0, np.array([-0.05, 0.0, 0.0])) == "wait"
+    assert mon.update(3.0, np.array([-0.101, 0.0, 0.0])) == "done" and mon.moved == pytest.approx(0.101)
+    stuck = RetreatMonitor(start_t=0.0, start_tcp=np.zeros(3), axis=axis, timeout_s=5.0)
+    assert stuck.update(6.0, np.zeros(3)) == "timeout"
+    assert stuck.update(6.0, None) == "timeout"
