@@ -35,6 +35,7 @@ class Goal:
     p: np.ndarray                         # (3,) world grasp point
     R: Optional[np.ndarray] = None        # (3, 3) desired TCP orientation, optional
     approach_axis: Optional[np.ndarray] = None   # desired TCP z direction (world), optional
+    advance_m: float = 0.0                # the gripper then advances this far along the axis
 
 
 def same_goal(a: Optional[Goal], b: Goal, tol_m: float = 1e-3, tol_axis: float = 1e-3) -> bool:
@@ -68,6 +69,14 @@ class CostWeights:
     # singularity. Off here; whole_body_mpc.yaml enables it.
     reach: float = 0.0
     reach_max_m: float = 0.36
+    # With Goal.advance_m: penalise the distance after the advance, at the end
+    # of the horizon. The wrist straightens as the arm extends (q5 -> 0 is the
+    # Piper's wrist singularity): 0.45 m after a 0.12 m advance gave a Jacobian
+    # condition number of 59 (moveit_servo slows above 45), 0.41 m gave 31. At
+    # the full reach weight (1e4) this terminal term slowed MPPI (offline: no
+    # convergence in 25 s for one goal); 1e3 reaches in 5-7 s.
+    reach_advanced: float = 0.0
+    reach_max_advanced_m: float = 0.40
     # Clearance below which the collision penalty starts. Keep it above the
     # safety filter's d_safe (0.02): with equal margins the planner grazes the
     # boundary the filter refuses to cross and the robot deadlocks there (P3A.6).
@@ -121,6 +130,9 @@ class WholeBodyCost:
         if w.reach > 0:
             over = np.clip(m.kin.wrist_extension(q) - w.reach_max_m, 0, None)
             J += w.reach * (over ** 2).mean(1)
+        if w.reach_advanced > 0 and self.goal.advance_m > 0 and self.goal.approach_axis is not None:
+            ext = m.kin.wrist_extension_after_advance(q[:, -1], self.goal.advance_m)
+            J += w.reach_advanced * np.clip(ext - w.reach_max_advanced_m, 0, None) ** 2
 
         J += w.base * (U[..., 0] ** 2 + w.omega * U[..., 1] ** 2).mean(1)
         dU = np.diff(U, axis=1)

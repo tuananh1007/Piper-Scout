@@ -83,6 +83,8 @@ class WholeBodyMpcNode(Node):
             ("goal_tolerance_m", 0.01), ("handoff_distance_m", 0.05),
             ("approach_tolerance_deg", 15.0), ("w_orient", 2.0),
             ("w_reach", 1e4), ("reach_max_m", 0.36),
+            ("w_reach_advanced", 1e3), ("reach_max_advanced_m", 0.40),
+            ("pose_goal_advance_m", 0.0),
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.execute = bool(p("execute"))
@@ -101,6 +103,8 @@ class WholeBodyMpcNode(Node):
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
         self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
                                    reach=float(p("w_reach")), reach_max_m=float(p("reach_max_m")),
+                                   reach_advanced=float(p("w_reach_advanced")),
+                                   reach_max_advanced_m=float(p("reach_max_advanced_m")),
                                    d_safe=float(p("d_safe")) + max(float(p("plan_margin_m")), 0.0))
         self.d_safe = float(p("d_safe"))
         self.max_state_age = float(p("max_state_age_s"))
@@ -108,6 +112,7 @@ class WholeBodyMpcNode(Node):
         self.tol = float(p("goal_tolerance_m"))
         self.handoff = float(p("handoff_distance_m"))
         self.approach_tol = float(p("approach_tolerance_deg"))
+        self.pose_advance = float(p("pose_goal_advance_m"))
 
         self.scene = None
         if p("use_semantic_scene"):
@@ -174,7 +179,8 @@ class WholeBodyMpcNode(Node):
             return
         pos = msg.pose.position
         self._set_goal(msg.header.frame_id, Goal(p=np.array([pos.x, pos.y, pos.z]),
-                                                 approach_axis=z_axis / np.linalg.norm(z_axis)))
+                                                 approach_axis=z_axis / np.linalg.norm(z_axis),
+                                                 advance_m=self.pose_advance))
 
     def _cancel(self, msg: Empty) -> None:
         if self.goal is None:

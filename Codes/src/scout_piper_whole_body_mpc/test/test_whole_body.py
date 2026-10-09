@@ -122,6 +122,32 @@ def test_reach_margin_moves_the_base_instead_of_stretching_the_arm():
     assert m.kin.wrist_extension(log.X[-1][3:]) < cost.w.reach_max_m + 0.02
 
 
+def test_wrist_extension_after_advance_needs_no_inverse_kinematics():
+    """The shoulder stays put and the wrist centre translates with the TCP."""
+    k = PiperKinematics()
+    q = np.array([0.15, 1.72, -1.15, -0.06, -0.23, 0.23])
+    assert k.wrist_extension_after_advance(q, 0.0) == pytest.approx(k.wrist_extension(q))
+    F = k.link_frames(q)
+    w = F[4, :3, 3] - F[2, :3, 3]
+    assert k.wrist_extension_after_advance(q, 0.12) == pytest.approx(np.linalg.norm(w + 0.12 * F[-1, :3, 2]))
+
+
+def test_advance_term_leaves_the_wrist_room_for_the_final_approach():
+    """A pose goal followed by a 0.12 m advance (stem_grasp): without the term the
+    arm reaches the pre-grasp pose with the wrist 0.46 m out after the advance,
+    where the Piper's wrist singularity is close; with it, under 0.40 m."""
+    stem = np.array([1.1, -0.1])
+    axis = np.r_[stem, 0.0] / np.linalg.norm(stem)
+    pre = np.r_[stem, 0.396] - 0.12 * axis
+    m = WholeBodyModel()
+    cost = WholeBodyCost(m, Goal(p=pre, approach_axis=axis, advance_m=0.12),
+                         w=CostWeights(reach=1e4, reach_advanced=1e3, orient=2.0))
+    log = run_closed_loop(X0, MPPI(m, MPPIConfig(seed=0)), cost, SafetyFilter(m), steps=120)
+    x = np.asarray(log.X)[-1]
+    assert np.linalg.norm(m.tcp_world(x)[:3, 3] - pre) < 0.02
+    assert m.kin.wrist_extension_after_advance(x[3:], 0.12) < cost.w.reach_max_advanced_m + 0.02
+
+
 OBSTACLE_GOAL = np.array([0.62, -0.35, 0.40])
 OBSTACLE = ([0.58, -0.145, 0.434], 0.03)
 

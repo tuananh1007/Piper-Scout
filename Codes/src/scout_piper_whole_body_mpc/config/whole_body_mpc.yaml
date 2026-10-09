@@ -44,3 +44,10 @@ whole_body_mpc:
     # stem servo and the final approach. 0 disables.
     w_reach: 10000.0
     reach_max_m: 0.36
+    # Pose goals (stem_grasp's pre-grasp) are followed by a final approach of
+    # pose_goal_advance_m along the gripper axis (= stem_grasp
+    # target_position_offset_m): keep the wrist under reach_max_advanced_m
+    # after that advance too, or the wrist straightens into its singularity.
+    pose_goal_advance_m: 0.12
+    w_reach_advanced: 1000.0
+    reach_max_advanced_m: 0.40

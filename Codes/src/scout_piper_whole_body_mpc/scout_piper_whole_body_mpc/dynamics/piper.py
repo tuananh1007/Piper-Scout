@@ -120,6 +120,16 @@ class PiperKinematics:
         rw = np.stack([c * w[0] - s * w[1], s * w[0] + c * w[1], np.full_like(c, w[2])], axis=-1)
         return np.linalg.norm(t3 + rw @ R3.T, axis=-1)
 
+    def wrist_extension_after_advance(self, q: np.ndarray, advance_m: float) -> np.ndarray:
+        """Shoulder-to-wrist distance once the TCP has moved ``advance_m`` along
+        its own z with the orientation kept (the stem_grasp final approach).
+
+        The shoulder (joint2 origin, on the joint1 axis) does not move, and the
+        wrist centre translates with the TCP, so no inverse kinematics is needed."""
+        F = self.link_frames(q)
+        w = F[..., 4, :3, 3] - F[..., 2, :3, 3]
+        return np.linalg.norm(w + advance_m * F[..., -1, :3, 2], axis=-1)
+
     def manipulability(self, q: np.ndarray) -> np.ndarray:
         """Yoshikawa measure sqrt(det(J Jᵀ)) of the translational Jacobian
         (scale-consistent; the full 6×6 mixes metres and radians)."""

@@ -60,6 +60,20 @@ instead of 0.65 m. `CostWeights.reach` defaults to 0, so the offline benchmark
 below is unchanged; `test_reach_margin_moves_the_base_instead_of_stretching_the_arm`
 covers the term.
 
+**Room for the final approach (2026-10-09).** After the reach, stem_grasp
+advances the gripper `pose_goal_advance_m` (0.12 m) along its axis with the
+orientation fixed. That straightens the Piper's wrist (q5 → 0 is its
+singularity): one hardware-free run ended at a Jacobian condition number of 59,
+and moveit_servo slowed (status 1). For pose goals the cost adds
+`w_reach_advanced` (1e3) times the squared excess of the shoulder-to-wrist
+distance *after* that advance over `reach_max_advanced_m` (0.40 m). It is
+computed at the end of the horizon without inverse kinematics: the shoulder
+does not move, and the wrist centre translates with the TCP. Offline, the
+distance after the advance went from 0.45–0.48 m to 0.35–0.40 m, with reach in
+52–69 steps instead of 41–49. At the full `w_reach` weight (1e4) the term kept
+one goal from converging within 250 steps. Hardware-free, the stem grasp at
+four positions then ran without a servo slowdown.
+
 **Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an
 exception) it publishes zero base and joint velocities before shutting down.
 Neither `scout_ros2` nor `ugv_sdk` stops the Scout when `/cmd_vel` stops
