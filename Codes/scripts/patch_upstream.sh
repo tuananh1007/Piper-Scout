@@ -10,6 +10,29 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$(cd "${SCRIPT_DIR}/../src" && pwd)"
 
+# VPI major version the build will use. The x86_64 dev image has VPI 4, whose
+# API dropped the NVENC backend and the image-plane .data field (sections 2
+# and 3b port Isaac ROS to it). JetPack 6 on the Jetson ships VPI 3, which
+# Isaac ROS 3.2 is written for, so there those patches must not be applied.
+# Override with VPI_MAJOR=3|4.
+ARCH="$(uname -m)"
+if [[ -z "${VPI_MAJOR:-}" ]]; then
+  if [[ "${ARCH}" == "aarch64" ]]; then VPI_MAJOR=3; else VPI_MAJOR=4; fi
+  for d in /opt/nvidia/vpi[0-9]*; do                 # an installed VPI wins
+    [[ -d "${d}" ]] && VPI_MAJOR="${d##*/vpi}"
+  done
+fi
+echo "Patching for ${ARCH}, VPI ${VPI_MAJOR}"
+
+# A source tree patched for VPI 4 (e.g. imported on the workstation) has to
+# get the upstream VPI 3 code back before a VPI 3 build.
+revert_vpi4_patch() {   # repo-dir file marker
+  if grep -q "$3" "$2" 2>/dev/null; then
+    echo "Reverting the VPI 4 patch in $2 (building against VPI ${VPI_MAJOR})"
+    git -C "$1" checkout -- "$2"
+  fi
+}
+
 # ----------------------------------------------------------------------------
 # 1. ugv_sdk: declare build_type=cmake so colcon doesn't fall back to
 #    ament_cmake. Upstream package.xml has an empty <export></export>.
@@ -37,7 +60,9 @@ fi
 for VPI_UTILS in \
     "${SRC_DIR}/isaac_ros_common/isaac_ros_common/src/vpi_utilities.cpp" \
     "${SRC_DIR}/isaac_ros_nitros/isaac_ros_nitros/src/utils/vpi_utilities.cpp" ; do
-  if [[ -f "${VPI_UTILS}" ]]; then
+  if [[ -f "${VPI_UTILS}" && "${VPI_MAJOR}" -lt 4 ]]; then
+    revert_vpi4_patch "$(dirname "${VPI_UTILS}")" "${VPI_UTILS}" '// NVENC removed in VPI 4'
+  elif [[ -f "${VPI_UTILS}" ]]; then
     if grep -q 'VPI_BACKEND_NVENC' "${VPI_UTILS}" && \
        ! grep -q '// NVENC removed in VPI 4' "${VPI_UTILS}"; then
       echo "Patching ${VPI_UTILS} → removing VPI_BACKEND_NVENC entry"
@@ -124,7 +149,9 @@ fi
 #     nitros_image.cpp uses the old field name in two places. Patch both.
 # ----------------------------------------------------------------------------
 NITROS_IMAGE_CPP="${SRC_DIR}/isaac_ros_nitros/isaac_ros_nitros_type/isaac_ros_nitros_image_type/src/nitros_image.cpp"
-if [[ -f "${NITROS_IMAGE_CPP}" ]]; then
+if [[ -f "${NITROS_IMAGE_CPP}" && "${VPI_MAJOR}" -lt 4 ]]; then
+  revert_vpi4_patch "${SRC_DIR}/isaac_ros_nitros" "${NITROS_IMAGE_CPP}" '// VPI 4 replaced \.data'
+elif [[ -f "${NITROS_IMAGE_CPP}" ]]; then
   if grep -q "// VPI 4 replaced \.data" "${NITROS_IMAGE_CPP}"; then
     echo "${NITROS_IMAGE_CPP}: VPI 4 .data→.pBase patch already applied. Skipping."
   else
@@ -164,7 +191,9 @@ fi
 #      ld: libgxf_core.so: file format not recognized; treating as linker script
 # ----------------------------------------------------------------------------
 NITROS_REPO="${SRC_DIR}/isaac_ros_nitros"
-NITROS_GXF_CORE="${NITROS_REPO}/isaac_ros_gxf/gxf/core/lib/gxf_x86_64_cuda_12_6/core/libgxf_core.so"
+GXF_LIB_DIR=gxf_x86_64_cuda_12_6
+[[ "${ARCH}" == "aarch64" ]] && GXF_LIB_DIR=gxf_jetpack61          # JetPack 6.1+ (L4T r36.4)
+NITROS_GXF_CORE="${NITROS_REPO}/isaac_ros_gxf/gxf/core/lib/${GXF_LIB_DIR}/core/libgxf_core.so"
 if [[ -d "${NITROS_REPO}/.git" ]]; then
   if [[ -f "${NITROS_GXF_CORE}" ]] && \
      [[ "$(stat -c%s "${NITROS_GXF_CORE}")" -gt 10000 ]]; then

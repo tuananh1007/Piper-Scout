@@ -74,6 +74,16 @@ distance after the advance went from 0.45–0.48 m to 0.35–0.40 m, with reach 
 one goal from converging within 250 steps. Hardware-free, the stem grasp at
 four positions then ran without a servo slowdown.
 
+**Jetson AGX Orin (`profile:=orin`, 2026-10-09).** The MPPI solve is numpy on
+the CPU. With the reach terms, 256 samples took 62 ms per 100 ms step on one
+2.1 GHz x86 core; 192 took 41 ms, 128 took 32 ms, and 128 with one refinement
+step 27 ms. `whole_body_mpc.launch.py profile:=orin` loads
+`config/whole_body_mpc_orin.yaml` (128 samples) after the main config. The
+hardware-free MPC chain reached its goal in 6.8 s with it (median solve 44 ms
+in the full ROS stack), and the stem grasp passed at two positions. The node
+warns when a solve takes over 90 % of the period. Orin timings are still to be
+measured (INSTALL.md Path A).
+
 **Stopping.** When the node exits (Ctrl-C, SIGTERM from `ros2 launch`, an
 exception) it publishes zero base and joint velocities before shutting down.
 Neither `scout_ros2` nor `ugv_sdk` stops the Scout when `/cmd_vel` stops

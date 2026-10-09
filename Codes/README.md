@@ -80,7 +80,7 @@ See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
 |---|---|---|
 | ROS 2 distro | **Humble** | AgileX official branch is `humble`; EOL May 2027 gives 12 months. |
 | Vendoring | **vcs import** via `repos.yaml` | Standard ROS 2 way; cheap to update versions. |
-| Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; cross-build later via Docker or native rebuild. |
+| Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; then a native rebuild on the Orin (JetPack 6.1/6.2, INSTALL.md Path A). |
 | Arm driver | `agilexrobotics/piper_ros@humble` | Official, ros2_control + MoveIt 2 included. |
 | Base driver | `agilexrobotics/scout_ros2` + POLIMI `scout_nav2` | Official CAN driver + community Nav2 tuning. |
 | Camera | `realsense-ros@4.58.4` (D405) | Upstream; no functional change vs ROS 1. Pinned to the release matching ROS Humble's librealsense2. |

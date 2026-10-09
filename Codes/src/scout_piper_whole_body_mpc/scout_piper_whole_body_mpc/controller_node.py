@@ -239,6 +239,10 @@ class WholeBodyMpcNode(Node):
             u_mpc = self.mppi.solve(x, cost, self.u_prev)
             mode = "handoff_ready" if err < self.handoff else "whole_body"
         solve_ms = 1e3 * (time.perf_counter() - t0)
+        if solve_ms > 900.0 * self.model.dt:
+            self.get_logger().warn(
+                f"MPPI solve took {solve_ms:.0f} ms of the {1e3 * self.model.dt:.0f} ms period; "
+                "lower samples (profile:=orin) or refine_iters", throttle_duration_sec=5.0)
         rep = safety.project(x, u_mpc, self.u_prev, state_age_s=state_age, geometry_age_s=geom_age)
         self._send(rep.u)
         self.u_prev = rep.u

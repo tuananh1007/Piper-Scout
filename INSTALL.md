@@ -60,40 +60,156 @@ you power anything on.
 
 | Path | Machine | Use it for | Documented here |
 |---|---|---|---|
-| **A** | Jetson Orin AGX on the robot | Final deployment | **No** — see [Path A](#path-a-jetson-orin-agx-not-documented-yet) |
+| **A** | Jetson AGX Orin 64 GB on the robot | Final deployment: the whole robot stack on the robot, the workstation as operator station | Yes, [Path A](#path-a-jetson-agx-orin-64-gb-on-the-robot); not yet run on the Orin |
 | **B** | x86_64 Ubuntu 22.04, native ROS 2 Humble | Development; hardware bring-up from a 22.04 machine | Yes; the nvblox build dependencies exist only as Dockerfile steps (3B.4, untested natively) |
 | **C** | x86_64 Ubuntu 20.04 workstation + Docker dev container | The lab workstation; the path on which nvblox was built and validated | Yes ([`Codes/README.md`](Codes/README.md), [`Codes/docker/README.md`](Codes/docker/README.md)) |
 | **D** | Any machine with Python 3.10–3.12, no ROS, no robot | Algorithm work: pure-Python tests and synthetic benchmarks | Yes ([below](#research-quick-start-without-ros-path-d)) |
 
-| Step | B | C | D |
-|---|---|---|---|
-| 1 Prerequisites | yes | yes | yes |
-| 2 Clone | yes | yes | yes |
-| 3 System dependencies | 3B | 3C | skip |
-| 4 Pull upstream packages | yes | yes, on the host | skip |
-| 5 Patch upstream packages | yes | yes, on the host | skip |
-| 6 rosdep + build | 6B | 6C, in the container | skip |
-| 7 Source the environment | yes | yes (container) | skip |
-| 8 Verify the build | yes | yes (container) | [Research quick start](#research-quick-start-without-ros-path-d) |
-| 9 Hardware setup | robot only | robot only | skip |
-| 10 Run the system | yes | yes (container) | skip |
+| Step | A | B | C | D |
+|---|---|---|---|---|
+| 1 Prerequisites | A.1 (JetPack) | yes | yes | yes |
+| 2 Clone | yes | yes | yes | yes |
+| 3 System dependencies | A.2–A.3 | 3B | 3C | skip |
+| 4 Pull upstream packages | yes | yes | yes, on the host | skip |
+| 5 Patch upstream packages | yes (VPI 3) | yes | yes, on the host | skip |
+| 6 rosdep + build | 6B | 6B | 6C, in the container | skip |
+| 7 Source the environment | yes | yes | yes (container) | skip |
+| 8 Verify the build | yes | yes | yes (container) | [Research quick start](#research-quick-start-without-ros-path-d) |
+| 9 Hardware setup | + A.5 | robot only | robot only | skip |
+| 10 Run the system | + A.6 | yes | yes (container) | skip |
 
-### Path A: Jetson Orin AGX (not documented yet)
+### Path A: Jetson AGX Orin 64 GB on the robot
 
-The Phase 0 decision ([`Codes/README.md`](Codes/README.md)) is to bring up
-on the workstation first and move to the Jetson Orin AGX later, "via Docker
-or native rebuild". No Jetson procedure exists yet, and the dev image cannot
-be reused as is: it is x86_64 only (CUDA apt repo `ubuntu2204/x86_64`, VPI
-repo `jetson/x86_64/jammy`, GXF prebuilts `gxf_x86_64_cuda_12_6`). The dev
-container uses host networking, so it can already talk DDS to a Jetson on the
-same LAN if both use the same `ROS_DOMAIN_ID` (the container defaults to `42`).
+**Status (2026-10-09):** written from the pinned upstreams and checked off the
+robot (below); not yet run on the Orin. Start with `./scripts/check_jetson.sh`
+on the Orin and record its output.
 
-Constraint from the pinned upstreams: Isaac ROS release-3.2 builds its
-arm64 images on CUDA 12.6 / Ubuntu 22.04 (`isaac_ros_common` `docker/Dockerfile.x86_64`,
-`base-arm64` stage), and ROS 2 Humble needs Ubuntu 22.04, so the Jetson needs a
-JetPack 6 release with Ubuntu 22.04 and CUDA 12.6.
+**Why.** The 16 GB workstation can build the workspace (Step 6) and run the
+Phase 0 stack (about 1 GB, 10 intro), but not comfortably everything at once:
+one nvblox process per semantic class, YOLO or Grounded-SAM, the V-JEPA node and
+RViz all load CUDA. The Orin's 64 GB are shared by its CPU and GPU, so the
+whole robot stack can run on the robot. The workstation then becomes the
+operator station (A.7).
 
-- **TODO(maintainer):** record the Orin's JetPack / L4T version, then document native vs. aarch64 container, the aarch64 VPI and GXF sources, the nvblox build and the torch wheel for V-JEPA.
+| Runs on | What |
+|---|---|
+| Orin (on the robot) | Piper, Scout and RealSense drivers (the hardware plugs in here), `robot_state_publisher`, servo + bridge + relay, whole-body MPC, stem_grasp (pipeline, segmentation, point cloud), nvblox / semantic scene, Piper-JEPA node |
+| Workstation | RViz, rqt, recording rosbags of selected topics, offline training and benchmarks (path D), development builds |
+
+Control loops (servo, MPC, pipeline) stay on the Orin: they must not depend on
+the network.
+
+**A.1 JetPack.** Use JetPack **6.1 or 6.2** (L4T r36.4, Ubuntu 22.04, CUDA
+12.6, VPI 3). These are what Isaac ROS release-3.2 is built for: its
+`Dockerfile.aarch64` uses L4T r36.4, VPI 3.2.4 and CUDA 12.6, and the GXF
+prebuilts are `gxf_jetpack61`. Flash with NVIDIA SDK Manager, onto an NVMe SSD
+if the Orin has one: the dev kit's 64 GB eMMC is tight for JetPack, ROS, the
+build, models and bags. Then, on the Orin:
+
+```bash
+sudo apt-get update && sudo apt-get install -y nvidia-jetpack   # CUDA 12.6, cuDNN, TensorRT, VPI 3
+sudo nvpmodel -m 0 && sudo jetson_clocks                        # MAXN; jetson_clocks lasts until reboot
+sudo apt-get install -y earlyoom
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
+```
+
+**Check:** after Step 2, `./scripts/check_jetson.sh` (read-only) prints L4T
+R36 revision 4.x, CUDA 12.6, VPI 3 and MAXN, with no FAIL line except for steps
+not done yet.
+
+**A.2 ROS 2 and packages.**
+- Follow 3B.1–3B.2 as written: the ROS apt repository has arm64 Humble
+  packages.
+- Follow 3B.3, but install torch as in A.3 first.
+- From 3B.4 skip CUDA and VPI (JetPack has them), but install the build
+  libraries and `magic_enum` exactly as there:
+
+```bash
+sudo apt-get install -y --no-install-recommends \
+  libgflags-dev libgoogle-glog-dev libsqlite3-dev libbenchmark-dev libgtest-dev libgmock-dev
+# then the magic_enum block of 3B.4
+```
+
+**A.3 PyTorch and YOLO.** The aarch64 `torch` on PyPI does not use the
+Jetson's GPU. Install NVIDIA's Jetson wheel first (NVIDIA's *Installing
+PyTorch for Jetson Platform* guide, the JetPack 6.1 / Python 3.10 wheel), and a
+`torchvision` built for it (the Ultralytics *NVIDIA Jetson* guide links
+matching wheels). Then install `ultralytics`; installed the other way round,
+pip pulls a CPU-only torch. **Check:**
+`python3 -c "import torch; print(torch.cuda.is_available())"` prints `True`
+(check_jetson.sh reports FAIL otherwise). The V-JEPA node uses the same torch.
+Optional, not tested: export YOLO to TensorRT on the Orin
+(`yolo export model=<weights>.pt format=engine half=True`) and point
+`yolo_model_path` at the `.engine` file.
+
+**A.4 Workspace.** Steps 2, 4, 5, 6B, 7 and 8 as for path B, with a fresh
+clone on the Orin:
+- `patch_upstream.sh` detects VPI 3 and leaves out its two VPI 4 ports (the
+  NVENC entry and the image-plane `.data` field), which JetPack's VPI 3 still
+  needs. If the tree was patched for VPI 4 before, it restores those files.
+  The Git LFS pull also brings the `gxf_jetpack61` prebuilts.
+- `./scripts/colcon_build_safe.sh --symlink-install` compiles CUDA for the Orin
+  (8.7, from `/etc/nv_tegra_release`) and, with about 60 GB free, runs 12
+  compilers (one per core). `nvblox_ros` also selects 8.7 by itself on aarch64.
+
+**A.5 Robot I/O on the Orin** (not tested).
+- **CAN.** The Piper's and the Scout's USB-CAN adapters need the `gs_usb`
+  module (`modinfo gs_usb`; check_jetson.sh). If JetPack's kernel lacks it,
+  build it from the L4T kernel sources (Jetson Linux developer guide, kernel
+  customization). The AGX Orin's own CAN controllers (`mttcan`) can take
+  `can0`/`can1`. Then either unload them if unused (`sudo modprobe -r mttcan`),
+  or give the adapters other names with `can_activate.sh` (9.1) and pass
+  `piper_can_port:=<name> scout_can_port:=<name>` to `full_system.launch.py`.
+- **RealSense D405.** Use the ROS `librealsense2` with `realsense-ros` from
+  Step 4. If the camera is not found, Intel's Jetson instructions build
+  librealsense with the RSUSB backend (`-DFORCE_RSUSB_BACKEND=ON`).
+- udev rules and the rest of Step 9 as on the workstation.
+
+**A.6 Run.** Step 10 on the Orin, with:
+- **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
+  whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
+  numpy on the CPU. 256 samples took 62 ms of the 100 ms step on a 2.1 GHz x86
+  core, and the Orin's ARM cores are slower. `profile:=orin`
+  (`config/whole_body_mpc_orin.yaml`) uses 128 samples: 32 ms there, and the
+  hardware-free MPC and grasp chains passed with it. The node warns when a solve
+  takes over 90 % of the period; watch `solve_ms` in `/whole_body_mpc/status`;
+- **`bringup_rviz:=false`,** and RViz on the workstation (A.7);
+- **`tegrastats`** to watch memory, GPU load and temperatures.
+
+**A.7 Workstation as the operator station.** Put both machines on the same
+wired LAN.
+
+```bash
+# on both machines (the dev container already uses host networking and ROS_DOMAIN_ID=42)
+export ROS_DOMAIN_ID=42
+export ROS_LOCALHOST_ONLY=0
+sudo apt-get install -y chrony   # keep the clocks within a few ms: TF and the servo compare stamps
+```
+
+- **RMW:** use the same one on both: either Humble's default Fast DDS, or
+  `RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` on both.
+- **Firewall:** allow DDS (UDP) between the two, or keep the robot LAN free of
+  host firewalls.
+- **RViz on the workstation:** `rviz2 -d $(ros2 pkg prefix
+  scout_piper_bringup)/share/scout_piper_bringup/rviz/full_system.rviz`.
+- **Bandwidth:** do not view raw camera images over Wi-Fi. A 640×480 colour
+  stream at 30 Hz is about 28 MB/s. Install `ros-humble-image-transport-plugins`
+  on the Orin and choose the `compressed` transport in RViz.
+
+**Fallback:** if the native nvblox build fails on the Orin, Isaac ROS's own
+aarch64 dev container (`isaac_ros_common/scripts/run_dev.sh`) is the upstream
+path; it has not been set up for this workspace.
+
+**Checked off the robot (2026-10-09):**
+- the MPC and grasp chains with `profile:=orin` (MPC chain reached in 6.8 s,
+  MPPI median 44 ms; grasp with release at two stem positions);
+- `patch_upstream.sh` switching between VPI 4 and VPI 3 on a copy of the
+  imported sources;
+- `check_jetson.sh` on x86.
+
+Nothing has run on the Orin itself.
+
+- **TODO(maintainer):** run `./scripts/check_jetson.sh` on the Orin and record the L4T / JetPack version, `gs_usb` and the CAN interface names here.
 
 ## Step 1 — Prerequisites
 
@@ -1321,7 +1437,7 @@ python -m pip install 'numpy<2' scipy pyyaml pytest opencv-python-headless
 - `scipy` is needed by all four suites (`scout_piper_jepa` uses it in its tests without declaring it); `pyyaml` reads the scene policy files; `opencv-python-headless` enables `plant_twin`'s outline test (skipped without it).
 - Optional, torch (the two torch tests in `scout_piper_jepa`, and the E3 benchmark): `python -m pip install torch`. On Linux this installs the CUDA build (~4–5 GB); on a CPU-only machine use PyTorch's CPU index instead: `python -m pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 - Optional: a C++17 compiler (`sudo apt-get install -y build-essential`) enables the C++ sampler check in `scout_piper_scene_repr` (skipped otherwise).
-- Versions known to work here: torch 2.14.1 (PyPI, Python 3.13) and the conda-forge CPU build used for the E3 benchmark. The Jetson wheel source is part of the Path A TODO.
+- Versions known to work here: torch 2.14.1 (PyPI, Python 3.13) and the conda-forge CPU build used for the E3 benchmark. On the Jetson use NVIDIA's wheel (Path A, A.3).
 
 Run the tests from each package directory with `python -m pytest` (plain
 `pytest`, or running from `Codes/`, fails with `ModuleNotFoundError`):

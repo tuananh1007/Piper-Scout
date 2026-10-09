@@ -45,7 +45,7 @@ troubleshooting). The short version:
 
 | Path | Machine | Guide |
 |---|---|---|
-| A | Jetson Orin AGX on the robot | Not documented yet ([details](INSTALL.md#path-a-jetson-orin-agx-not-documented-yet)) |
+| A | Jetson AGX Orin 64 GB on the robot (whole robot stack; the workstation as operator station) | [Path A](INSTALL.md#path-a-jetson-agx-orin-64-gb-on-the-robot), not yet run on the Orin |
 | B | x86_64 Ubuntu 22.04, native ROS 2 Humble | [Steps 1–10](INSTALL.md#choose-your-path) |
 | C | x86_64 Ubuntu 20.04 workstation, Docker dev container (the validated nvblox path) | [Steps 1–10](INSTALL.md#choose-your-path) |
 | D | Any machine with Python 3.10–3.12, no ROS, no robot | [Research quick start](INSTALL.md#research-quick-start-without-ros-path-d) |

@@ -15,7 +15,8 @@
 #   BUILD_RESERVE_GB=3    memory left for the desktop, browser and IDE
 #   BUILD_GB_PER_JOB=1.5  memory budgeted per compiler (measured peak 1.25)
 #   CUDA_ARCHS=86         GPU architectures for CUDA code (default: the GPUs
-#                         nvidia-smi reports; "default" keeps the packages' own)
+#                         nvidia-smi reports, 87 on a JetPack 6 Jetson; "default"
+#                         keeps the packages' own)
 #   DRY_RUN=1             print the colcon command instead of running it
 set -euo pipefail
 
@@ -62,7 +63,11 @@ export CMAKE_BUILD_PARALLEL_LEVEL=$make_jobs
 archs=${CUDA_ARCHS:-}
 if [[ -z "$archs" ]] && command -v nvidia-smi > /dev/null 2>&1; then
   archs=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
-            | tr -d ' .' | sort -u | paste -sd ';' || true)
+            | tr -d ' .' | grep -E '^[0-9]+$' | sort -u | paste -sd ';' || true)
+fi
+# Jetson: JetPack 6 (L4T r36) runs only on Orin modules, compute capability 8.7
+if [[ -z "$archs" ]] && grep -q '^# R36' /etc/nv_tegra_release 2>/dev/null; then
+  archs=87
 fi
 args=("$@")
 if [[ -n "$archs" && "$archs" != "default" && " ${args[*]} " != *CMAKE_CUDA_ARCHITECTURES* ]]; then

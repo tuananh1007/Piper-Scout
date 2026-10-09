@@ -88,6 +88,17 @@ def _declare_args():
             description="Launch the Scout base driver. Requires CAN1 hardware.",
         ),
         DeclareLaunchArgument(
+            "piper_can_port",
+            default_value="can0",
+            description="CAN interface of the Piper's USB-CAN adapter (INSTALL.md 9.1).",
+        ),
+        DeclareLaunchArgument(
+            "scout_can_port",
+            default_value="can1",
+            description="CAN interface of the Scout's USB-CAN adapter. On a Jetson AGX Orin "
+                        "the onboard CAN may already be can0/can1 (INSTALL.md Path A).",
+        ),
+        DeclareLaunchArgument(
             "bringup_camera",
             default_value="false",
             description="Launch the RealSense camera driver. Requires USB camera.",
@@ -214,7 +225,7 @@ def _launch_setup(context, *args, **kwargs):
             name="piper_ctrl_single_node",
             output="screen",
             parameters=[{
-                "can_port": "can0",
+                "can_port": LaunchConfiguration("piper_can_port"),
                 "auto_enable": True,
                 "gripper_exist": True,
                 "gripper_val_mutiple": 1,
@@ -300,7 +311,7 @@ def _launch_setup(context, *args, **kwargs):
             ),
             condition=IfCondition(LaunchConfiguration("bringup_base")),
             launch_arguments={
-                "port_name": "can1",
+                "port_name": LaunchConfiguration("scout_can_port"),
                 "use_sim_time": use_sim,
             }.items(),
         )
