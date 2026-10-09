@@ -41,3 +41,6 @@ __pycache__/
 
 # test logs (TEST_PROCEDURE.md): kept locally, sent separately
 test_logs/
+
+# recorded datasets (scripts/record_bag.sh)
+bags/

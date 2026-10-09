@@ -56,6 +56,7 @@ class ACPredictorConfig:
     steps: int = 1500
     seed: int = 0
     action_scale: List[float] = field(default_factory=lambda: [1.0] * 9)
+    device: str = "cpu"                   # "cuda" for GPU training / inference
 
     @classmethod
     def p0(cls, **kw) -> "ACPredictorConfig":
@@ -110,9 +111,10 @@ class TorchACPredictor:
         torch = _torch()
         self.cfg = cfg
         self.history = cfg.history
-        self.net = net if net is not None else _build_net(cfg)
+        self.device = cfg.device
+        self.net = (net if net is not None else _build_net(cfg)).to(self.device)
         self.net.eval()
-        self._scale = torch.tensor(cfg.action_scale, dtype=torch.float32)
+        self._scale = torch.tensor(cfg.action_scale, dtype=torch.float32, device=self.device)
         self.loss_history: List[float] = []
 
     # ----------------------------------------------------------- inference
@@ -134,10 +136,10 @@ class TorchACPredictor:
             Z_hist = np.concatenate([np.repeat(Z_hist[:, :1], self.history - K, 1), Z_hist], 1)
         Z_hist = Z_hist[:, -self.history:]
         with torch.no_grad():
-            Zh = torch.from_numpy(Z_hist.reshape(B, self.history, hf * wf, C).copy())
-            A = torch.from_numpy(np.asarray(actions, np.float32).copy())
+            Zh = torch.from_numpy(Z_hist.reshape(B, self.history, hf * wf, C).copy()).to(self.device)
+            A = torch.from_numpy(np.asarray(actions, np.float32).copy()).to(self.device)
             out = self._rollout_t(Zh, A)
-        return out.numpy().reshape(B, A.shape[1], hf, wf, C)
+        return out.cpu().numpy().reshape(B, A.shape[1], hf, wf, C)
 
     # ------------------------------------------------------------ storage
     def save(self, path: str) -> None:
@@ -145,10 +147,16 @@ class TorchACPredictor:
         torch.save({"config": asdict(self.cfg), "state_dict": self.net.state_dict()}, path)
 
     @classmethod
-    def load(cls, path: str) -> "TorchACPredictor":
+    def load(cls, path: str, device: Optional[str] = None) -> "TorchACPredictor":
+        """Load a checkpoint; ``device`` overrides the one it was trained on
+        (e.g. a GPU-trained model on a CPU-only machine)."""
         torch = _torch()
         ck = torch.load(path, map_location="cpu", weights_only=False)
         cfg = ACPredictorConfig(**{k: tuple(v) if k == "grid_hw" else v for k, v in ck["config"].items()})
+        if device is not None:
+            cfg.device = device
+        elif cfg.device.startswith("cuda") and not torch.cuda.is_available():
+            cfg.device = "cpu"
         net = _build_net(cfg)
         net.load_state_dict(ck["state_dict"])
         return cls(cfg, net)
@@ -188,14 +196,15 @@ def train_predictor(episodes: Sequence[Dict[str, np.ndarray]], cfg: ACPredictorC
     win = episode_windows(episodes, K, H)
     if not win:
         raise ValueError("episodes too short for history + horizon")
-    Zs = [torch.from_numpy(ep["Z"].reshape(len(ep["Z"]), M, -1).astype(np.float32)) for ep in episodes]
-    As = [torch.from_numpy(ep["A"].astype(np.float32)) for ep in episodes]
+    dev = model.device
+    Zs = [torch.from_numpy(ep["Z"].reshape(len(ep["Z"]), M, -1).astype(np.float32)).to(dev) for ep in episodes]
+    As = [torch.from_numpy(ep["A"].astype(np.float32)).to(dev) for ep in episodes]
     Ws = [torch.from_numpy((1.0 + cfg.lambda_target * ep["target"].reshape(len(ep["Z"]), M)
-                            + cfg.lambda_plant * ep["plant"].reshape(len(ep["Z"]), M)).astype(np.float32))
+                            + cfg.lambda_plant * ep["plant"].reshape(len(ep["Z"]), M)).astype(np.float32)).to(dev)
           for ep in episodes]
     opt = torch.optim.AdamW(net.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg.steps)
-    disc = torch.tensor([cfg.gamma ** k for k in range(H)])
+    disc = torch.tensor([cfg.gamma ** k for k in range(H)], device=dev)
     for step in range(cfg.steps):
         pick = rng.integers(len(win), size=cfg.batch)
         Zh = torch.stack([Zs[e][t - K + 1:t + 1] for e, t in (win[i] for i in pick)])          # B,K,M,C

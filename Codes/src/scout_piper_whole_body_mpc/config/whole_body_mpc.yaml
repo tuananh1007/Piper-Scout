@@ -27,7 +27,12 @@ whole_body_mpc:
     d_safe: 0.02                              # safety filter: hard one-step clearance
     plan_margin_m: 0.01                       # planner penalises below d_safe + this (0 deadlocks)
     refine_iters: 2                           # gradient refinement steps per solve (0 = pure MPPI)
+    backend: "numpy"                         # numpy (CPU) | torch (profile:=gpu / orin_gpu)
+    torch_device: "auto"                     # torch: auto = cuda if available, else cpu
     use_semantic_scene: false                 # true = in-process SemanticVoxelMap
+    field_topic: ""                           # /scene_repr/distance_field: CPU map or nvblox bridge
+    field_max_voxel_age_s: 30.0
+    unknown_policy: "no_entry"                # robot spheres may move inside unknown space, not into it
     scene_grid_center: [0.6, 0.0, 0.6]
     scene_half_extent_m: 0.5
     scene_voxel_size_m: 0.01

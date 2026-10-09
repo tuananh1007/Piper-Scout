@@ -16,10 +16,14 @@ arm-only (W0) and sequential base-then-arm (W1) comparators live alongside it.
 | `costs/terms.py` | J_geo: goal (+ optional orientation / approach axis), smooth collision penalty, unknown-space penalty, leaf soft cost, manipulability, joint-limit margin, base motion, smoothness; `extra` hook for Piper-JEPA J_vis / J_id |
 | `solvers/mppi.py` | MPPI with temporally smooth (knot-interpolated) noise, warm start, `arm_only` mode for the W0 baseline; elitism (`keep_best`) and gradient refinement in knot space (`refine_iters`, candidate B) |
 | `baselines/sequential.py` | W1: base pose from batched DLS IK (current pose first, then rings facing the goal; clearance-checked), turn/drive/turn base phase with the arm frozen, then arm-only MPPI |
-| `safety/projection.py` | box + rate limits, one-step joint limits, one-step hard clearance (scales the command toward zero), watchdog on stale state/geometry and unknown space at the robot |
-| `scene_adapter.py` | `semantic_distance_fn` / `semantic_leaf_fn` over `scout_piper_scene_repr`'s query; analytic sphere fields for synthetic scenes |
-| `sim.py`, `benchmarks/reachability.py` | closed-loop offline runs (WE2): W0, W1, W3 on R1–R3 and the obstacle scene O1 |
-| `controller_node.py` | ROS 2 node; **dry run by default** |
+| `baselines/reactive_qp.py` | W2: one-step holistic QP over (v, ω, q̇) — lazy base, joint limits, linearised sphere clearance, optional reach margin (SciPy SLSQP, 2–4 ms per step) |
+| `safety/projection.py` | box + rate limits, one-step joint limits, one-step hard clearance (scales the command toward zero), watchdog on stale state/geometry; unknown space: `unknown_policy` "stop" (any sphere in unknown space) or "no_entry" (spheres may move inside never-observed space, not into it) |
+| `scene_adapter.py` | `semantic_distance_fn` / `semantic_leaf_fn` over `scout_piper_scene_repr`'s query (outside the plant grid = free); analytic spheres, capsules (stems), discs (leaves); `gridded` voxel fields for fast synthetic queries |
+| `scenes.py` | synthetic cluttered-plant rows for P3.3 (capsule stems / branches, pots, disc leaves, targets at peduncles, pre-grasp goals) |
+| `torch_backend.py` | the same model, cost and MPPI in torch (CUDA on the RTX 3060 / Orin, or CPU); `TorchGridField` puts the semantic field on the device; autograd refinement |
+| `calibration.py`, `calibration_nodes.py` | slip identification from an excitation plan and an external pose reference, TCP pivot calibration, eye-in-hand calibration (Park–Martin); ROS recorders `calibrate_slip`, `calibrate_tcp`, `calibrate_hand_eye` |
+| `sim.py`, `benchmarks/` | closed-loop offline runs: `reachability.py` (R1–R3, O1), `plant_scenes.py` (W0–W3 on 30 plant scenes), `semantic_vs_occupancy.py` (P1.4.2, synthetic or recorded scenes), `timing.py` (numpy / torch / CUDA solve time) |
+| `controller_node.py` | ROS 2 node; **dry run by default**; `backend: torch` for the GPU; `extra_terms` hook (Piper-JEPA's predictive node) |
 
 ## ROS interface
 
@@ -29,7 +33,8 @@ in   /joint_states                  sensor_msgs/JointState (joint_names param)
 in   /whole_body_mpc/goal           geometry_msgs/PointStamped in world_frame
 in   /whole_body_mpc/goal_pose      geometry_msgs/PoseStamped in world_frame; z axis = approach direction
 in   /whole_body_mpc/cancel         std_msgs/Empty: drop the goal, stop, mode "idle"
-in   geometry                       in-process semantic map (use_semantic_scene: true)
+in   geometry                       field_topic (SemanticDistanceField from scene_query_node or the
+                                   nvblox bridge) or the in-process semantic map (use_semantic_scene)
 out  /whole_body_mpc/preview/cmd_vel, /whole_body_mpc/preview/joint_jog   (execute: false)
 out  /cmd_vel, /servo_node/delta_joint_cmds (control_msgs/JointJog)     (execute: true)
 out  /whole_body_mpc/status         std_msgs/String JSON (mode, error, safety, timing, ages)
@@ -103,6 +108,79 @@ median, ≤ 185 ms worst case. The fake drivers are kinematic stand-ins (no slip
 no arm dynamics), so this checks plumbing, frames, timing and stopping, not
 tracking on the robot.
 
+**Profiles.** `whole_body_mpc.launch.py profile:=default | orin | gpu | orin_gpu`
+loads `config/whole_body_mpc_<profile>.yaml` after the main config: `orin`
+128 numpy samples; `gpu` the torch backend on CUDA with 1024 samples;
+`orin_gpu` the torch backend on the Orin's GPU with 512. Set the sample
+counts from `benchmarks/timing.py` on each machine (MODULE_TASKS.md A2, B2).
+`field_topic:=` and `goal_pose_topic:=` override those parameters from the
+command line (e.g. `goal_pose_topic:=/scene_repr/target_goal`).
+
+## Torch / GPU backend (P3.1, 2026-10-09)
+
+`torch_backend.py` is a line-by-line port of the model, every cost term and
+the MPPI solver (elitism, warm start; the gradient refinement uses autograd
+instead of finite differences). The base stays two non-holonomic inputs
+(v, ω) of an exact unicycle rollout, so no cuRobo fork, virtual planar
+joints or non-holonomic penalty are needed (P3.1.1–P3.1.3). Geometry: the
+semantic field snapshot on the device (`TorchGridField`, trilinear, unknown
+voxels invalid), or the numpy distance function evaluated on the CPU.
+`test_torch_backend.py` checks rollout, FK, spheres, manipulability and every
+cost term against numpy (float64, 1e-6) and closed-loop R1, R3 and an
+obstacle on the device field.
+
+`benchmarks/timing.py`, 4-core x86 sandbox without a GPU, one thread, median
+ms per solve (2 iterations, 2 refinement steps):
+
+| Samples | numpy | numpy, plant field | torch CPU | torch CPU, plant field |
+|---|---|---|---|---|
+| 128 | 59 | 144 | 22 | 46 |
+| 256 | 93 | 232 | 27 | 68 |
+| 512 | 164 | 409 | 39 | 115 |
+| 1024 | 327 | 796 | 69 | 202 |
+
+CUDA numbers come from the workstation and the Orin (MODULE_TASKS.md A2, B2).
+
+## Cluttered plant scenes, W0–W3 (P3.3, 2026-10-09)
+
+`benchmarks/plant_scenes.py --scenes 30`: synthetic rows of 1–3 potted
+plants (capsule stems, stakes and branches, disc leaves) 0.75–1.7 m ahead,
+the goal 12 cm before a peduncle 0.25–0.65 m high; the planners and the
+safety filter use the scene on a 1 cm voxel grid, the reported clearances
+the exact geometry. 22 of the 30 targets are out of the arm's reach from the
+start (no collision-free IK within 5 mm from 16 seeds).
+
+| Method | All | Arm-reachable | Arm-unreachable | Median steps | Median base travel |
+|---|---|---|---|---|---|
+| W0 arm-only | 8/30 | 8/8 | 0/22 | 91 | 0 |
+| W1 sequential | 30/30 | 8/8 | 22/22 | 150 | 0.38 m |
+| W2 reactive QP | 28/30 | 8/8 | 20/22 | 42 | 0.24 m |
+| W3 unified MPPI | 29/30 | 8/8 | 21/22 | 60 | 0.21 m |
+
+Exit gate P3.3.2 (≥ 50 % of the arm-unreachable targets reached): W3 95 %,
+passed on synthetic scenes. W2 stalls at the clearance boundary in two scenes
+(the one-step QP has no horizon); W3 ends 4.6 cm short in one (P09) at the
+planning margin; W1 reaches all but needs the full 150 steps. Synthetic
+geometry, kinematic model: robot runs decide.
+
+`benchmarks/semantic_vs_occupancy.py` (P1.4.2) runs W3 with leaves soft
+(semantic policy) or hard (occupancy only) on the same scenes: 18/20 vs 17/20,
+one scene of difference. With `--episode` it builds the semantic map from
+recorded scenes instead (scout_piper_scene_repr `offline.py`).
+
+## Calibration (P3A.7, 2026-10-09)
+
+- `ros2 run scout_piper_whole_body_mpc calibrate_slip [--execute] --pose-topic <external pose>`:
+  drives `calibration.excitation_plan` (straight, arcs, turns on the spot,
+  ~50 s, returns near the start), records commands and poses, fits `k_v`,
+  `k_omega` without the settling after each command change. On the fake base
+  with slip 0.9 / 0.75 it found 0.879 / 0.741 with 1.5 s segments.
+- `calibrate_tcp`: Enter captures the flange pose while the gripper tip
+  touches one fixed point; least-squares pivot fit → `tcp_offset_m`; refuses
+  orientation spreads below 20°.
+- `calibrate_hand_eye --aruco --marker-length <m>` (or `--board-topic`):
+  flange and board poses → link6 → camera transform as a URDF `<origin>`.
+
 ## Measured (offline, synthetic, 4-core x86 dev CPU)
 
 `PYTHONPATH=. python3 benchmarks/reachability.py --seeds 3` (2026-10-07):
@@ -155,8 +233,7 @@ two deadlocked against the filter (4.8 cm, 26 cm); all three fixes 8/8 seeds
   through the semantic scene adapter and have not been run yet.
 - Kinematic model only; the skid-steer correction is two scalars until WE1
   data says otherwise.
-- W2 (holistic / reactive QP) is not implemented.
-- Not run on hardware; the tests cover the numpy core only (no ROS needed).
+- Not run on hardware; the tests cover the numpy core and the torch backend (no ROS needed).
 
 ## Tests
 

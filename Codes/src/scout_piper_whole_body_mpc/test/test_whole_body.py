@@ -265,6 +265,33 @@ def test_unknown_geometry_at_the_robot_stops():
     assert rep.reason == "watchdog" and np.all(rep.u == 0)
 
 
+def test_no_entry_policy_moves_in_unknown_space_but_never_into_it():
+    """Eye-in-hand camera: most of the arm sits in never-observed space. "no_entry"
+    lets those spheres move but refuses a step that takes an observed sphere
+    into unknown space; "stop" (the strict default) stops outright."""
+    m = WholeBodyModel()
+    x_limit = 0.45                                            # observed for x < 0.45, unknown beyond
+
+    def field(p):
+        return np.full(len(p), 1.0), p[:, 0] < x_limit
+
+    C0, _ = m.collision_spheres(X0[None])
+    assert (C0[0, :, 0] >= x_limit).any() and (C0[0, :, 0] < x_limit).any()
+    forward = np.r_[0.2, 0.0, np.zeros(6)]
+    strict = SafetyFilter(m, distance_fn=field)
+    assert strict.project(X0, forward, forward).reason == "watchdog"
+    lenient = SafetyFilter(m, distance_fn=field, unknown_policy="no_entry")
+    back = np.r_[-0.2, 0.0, np.zeros(6)]
+    rep = lenient.project(X0, back, back)                      # backing away keeps known spheres known
+    assert rep.reason in ("ok", "rate") and rep.u[0] < 0
+    x_edge = X0.copy()
+    x_edge[0] = x_limit - 0.01 - C0[0, :, 0].max() + 0.0        # front-most sphere 1 cm short of unknown
+    rep = lenient.project(x_edge, forward, forward)
+    assert rep.reason == "clearance" and rep.u[0] < forward[0]
+    Cn, _ = m.collision_spheres(m.rollout(x_edge, rep.u[None, None])[0, 1][None])
+    assert (Cn[0, :, 0] < x_limit).sum() >= (m.collision_spheres(x_edge[None])[0][0, :, 0] < x_limit).sum()
+
+
 # --------------------------------------------------- semantic scene adapter
 def test_semantic_scene_query_plugs_in():
     sys.path.insert(0, os.path.join(SRC, "scout_piper_scene_repr", "python"))
@@ -283,3 +310,8 @@ def test_semantic_scene_query_plugs_in():
     fn = semantic_distance_fn(SemanticDistanceQuery(vmap), now=0.0)
     d, valid = fn(np.array([[0.7, 0.0, 0.3], [0.5, 0.2, 0.4]]))
     assert valid.all() and abs(d[0] - (0.10 - 0.005 - 0.005)) < 0.011 and d[1] > d[0]
+    # outside the grid (base, arm behind the camera): valid and free, not unknown
+    d_out, v_out = fn(np.array([[-0.5, 0.0, 0.2]]))
+    assert v_out[0] and np.isinf(d_out[0])
+    strict = semantic_distance_fn(SemanticDistanceQuery(vmap), now=0.0, outside_free=False)
+    assert not strict(np.array([[-0.5, 0.0, 0.2]]))[1][0]

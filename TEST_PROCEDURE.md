@@ -6,6 +6,9 @@ and the first things to check if it fails. Background and alternatives are
 in [`INSTALL.md`](INSTALL.md); this file only says what to run, in which
 order, and what to write down.
 
+The semantic scene, Piper-JEPA and whole-body MPC tasks that build on these
+tests are in [`MODULE_TASKS.md`](MODULE_TASKS.md).
+
 **Order.** Part W (workstation) → Part J (Jetson) → Part R (robot). Within a
 part, run the tests in order and stop at the first failure: later tests
 assume the earlier ones passed. Part R runs only after Part J has passed

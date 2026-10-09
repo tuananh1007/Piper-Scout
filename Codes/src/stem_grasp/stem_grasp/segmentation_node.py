@@ -28,7 +28,7 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -70,6 +70,30 @@ def motion_gate_applies(enabled: bool, pipeline_state: str, off_states) -> bool:
     with it on, each servo step would stop the arm until it settled again.
     """
     return bool(enabled) and pipeline_state not in set(off_states or [])
+
+
+def compose_label(masks: Dict[int, np.ndarray], shape, paint_order=(3, 2, 1, 4)) -> np.ndarray:
+    """Merged semantic label image (mono8) for scout_piper_scene_repr's
+    class_demux (``input_mode: merged``): each pixel holds the label id of
+    its class (semantic_classes.yaml: stem 1, branch 2, leaf 3, target 4),
+    0 elsewhere. Classes are painted in ``paint_order`` (later wins, so a
+    target on a stem stays target); labels not listed are painted last."""
+    label = np.zeros(shape, np.uint8)
+    order = [k for k in paint_order if k in masks] + [k for k in masks if k not in paint_order]
+    for k in order:
+        m = masks[k]
+        if m is not None and np.shape(m) == tuple(shape):
+            label[np.asarray(m) > 0] = int(k)
+    return label
+
+
+def parse_class_labels(entries) -> Dict[int, int]:
+    """["0:1", "2:3"] -> {0: 1, 2: 3} (YOLO class id -> semantic label id)."""
+    out = {}
+    for e in entries or []:
+        cid, _, lab = str(e).partition(":")
+        out[int(cid)] = int(lab)
+    return out
 
 
 class _Throttle:
@@ -149,6 +173,11 @@ class StemSegmentationNode(Node):
             # the motion gate keeps scans clean, but the image-based servo
             # needs masks while the arm moves: no gate in these pipeline states
             motion_gate_off_states=["SERVOING", "APPROACHING"],
+            # merged label image for the semantic scene (P1.1.4)
+            publish_semantic_label=True,
+            semantic_label_topic="/stem_grasp/semantic_label",
+            yolo_class_labels=["0:1"],          # YOLO class id -> label id (stem 1, branch 2, leaf 3, target 4)
+            label_paint_order=[3, 2, 1, 4],
             stationary_joint_vel_threshold=0.02,
             joint_states_timeout_sec=0.75,
             stationary_settle_sec=0.12,
@@ -227,6 +256,9 @@ class StemSegmentationNode(Node):
         self.centroid_pub = self.create_publisher(
             PointStamped, "/stem_grasp/mask_centroid", 1
         )
+        self.label_pub = self.create_publisher(Image, str(self.p["semantic_label_topic"]), 1)
+        self._class_labels = parse_class_labels(self.p["yolo_class_labels"])
+        self._yolo_class_masks: Dict[int, np.ndarray] = {}
         self.target_mask_pub = self.create_publisher(
             Image, "/stem_grasp/target_mask", 1
         )
@@ -521,6 +553,7 @@ class StemSegmentationNode(Node):
         return target
 
     def _segment_yolo(self, bgr: np.ndarray) -> Tuple[np.ndarray, float]:
+        self._yolo_class_masks = {}
         if self.yolo is None:
             return np.zeros(bgr.shape[:2], dtype=np.uint8), 0.0
         predict_kwargs = dict(
@@ -557,9 +590,17 @@ class StemSegmentationNode(Node):
         thr = float(self.p["yolo_mask_threshold"])
         stem_class = int(self.p["yolo_stem_class_id"])
         mc, cc = [], []
+        H, W = bgr.shape[:2]
         for idx, m in enumerate(masks):
             cid = int(classes[idx]) if len(classes) > idx else -1
             det = float(confs[idx]) if len(confs) > idx else 0.0
+            lab = self._class_labels.get(cid)
+            if lab is not None:                      # every instance of a mapped class
+                mm = (m > thr).astype(np.uint8)
+                if mm.shape != (H, W):
+                    mm = cv2.resize(mm, (W, H), interpolation=cv2.INTER_NEAREST)
+                prev = self._yolo_class_masks.get(lab)
+                self._yolo_class_masks[lab] = mm if prev is None else np.maximum(prev, mm)
             if cid != stem_class:
                 continue
             mc.append((m > thr).astype(np.uint8) * 255)
@@ -957,6 +998,8 @@ class StemSegmentationNode(Node):
         out.header = msg.header
         self.mask_pub.publish(out)
         self.conf_pub.publish(Float32(data=stem_conf))
+        if bool(self.p["publish_semantic_label"]):
+            self._publish_label(msg.header, mode, mask, post_keep if bool(self.p["enable_depth_postfilter"]) else None)
         self._publish_centroid(msg.header, centroid)
         self._publish_target(msg.header)
         self._publish_combined_centroid(msg.header, mask, self._cached_target_mask)
@@ -965,6 +1008,23 @@ class StemSegmentationNode(Node):
             self._publish_debug(bgr, mask, stem_conf, centroid)
 
     # ----------------------------------------------------------- publishers
+    def _publish_label(self, header, mode: str, mask: np.ndarray, keep: Optional[np.ndarray]) -> None:
+        """Merged label image: every mapped YOLO class (all instances), else the
+        stem mask as label 1; the target mask (grounded_sam) as label 4."""
+        masks: Dict[int, np.ndarray] = {}
+        if mode == "yolo_seg" and self._yolo_class_masks:
+            masks.update(self._yolo_class_masks)
+        else:
+            masks[1] = mask
+        if self._cached_target_mask is not None and np.shape(self._cached_target_mask) == mask.shape:
+            masks[4] = self._cached_target_mask
+        if keep is not None:
+            masks = {k: np.where(keep, m, 0) for k, m in masks.items()}
+        label = compose_label(masks, mask.shape, tuple(int(v) for v in self.p["label_paint_order"]))
+        out = self.bridge.cv2_to_imgmsg(label, encoding="mono8")
+        out.header = header
+        self.label_pub.publish(out)
+
     def _publish_centroid(self, header, centroid):
         if centroid is None:
             return

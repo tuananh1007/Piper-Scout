@@ -121,9 +121,10 @@ def _declare_args():
         ),
         DeclareLaunchArgument(
             "scene_classes",
-            default_value="stem,branch,leaf,target",
+            default_value="stem,branch,leaf,target,other",
             description="Classes the semantic stack maps, one nvblox process each "
-                        "(e.g. stem,target on a 16 GB / 12 GB-GPU workstation).",
+                        "(e.g. stem,target,other on a 16 GB / 12 GB-GPU workstation); "
+                        "'other' is the non-plant depth (pots, walls, supports).",
         ),
         DeclareLaunchArgument(
             "bringup_rviz",

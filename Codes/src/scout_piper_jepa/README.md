@@ -11,7 +11,7 @@ turns those predictions into a cost for the whole-body MPC. Research plan:
 
 | Module | Role |
 |---|---|
-| `encoder.py` | `DenseEncoder` interface. `VJepaEncoder` (V-JEPA 2/2.1 via `torch.hub`, lazy torch import) and `ColorPatchEncoder` (numpy reference used by the tests; **not** a V-JEPA result) |
+| `encoder.py` | `DenseEncoder` interface. `VJepaEncoder` (V-JEPA 2/2.1 via `torch.hub`, lazy torch import), `DinoV2Encoder` (DINOv2 patch tokens, the E1 baseline T2) and `ColorPatchEncoder` (numpy reference used by the tests; **not** a V-JEPA result) |
 | `target_memory.py` | descriptor from the init mask; per frame: cosine similarity → gated softmax → image mean/covariance, entropy, confidence, `tracking`/`occluded`/`lost`; 3-D estimate from aligned depth when valid |
 | `metrics.py` | E1 metrics: ID retention, false-switch rate, centre error, jitter, occlusion recovery |
 | `action.py` | action embedding Γ = [Δs_b, Δθ_b, Δp_ee, Δr_ee, Δg] in the base frame at t, from a command (`action_embedding`) or, batched, from two whole-body states (`action_from_states`, used for training data and MPC rollouts) |
@@ -21,7 +21,13 @@ turns those predictions into a cost for the whole-body MPC. Research plan:
 | `prediction_metrics.py` | E3 metrics per horizon: target error, visibility F1 and AUROC, identity accuracy / switch rate, target-region vs global latent error |
 | `predictive_cost.py` | Stage C `JepaVisibilityCost`, an `ExtraTerm` for the whole-body MPC: J_vis (centring, entropy, FoV barrier, soft loss of visibility) + J_id, with a geometry anchor (below) |
 | `synthetic.py` | synthetic dense-feature world: z-buffered surfel renderer for an eye-in-hand camera, flower + identical twin + occluding leaf + stems + wall, random-motion episodes |
-| `episode.py` | rosbag2 → `.npz` export and offline evaluation (`jepa_episode eval …`) |
+| `episode.py` | rosbag2 → `.npz` export (frames, aligned depth, intrinsics, camera poses from the bag's TF, whole-body states from `/odom` + `/joint_states`, framewise masks, merged labels; two passes, TF first) and offline evaluation (`jepa_episode eval …`) |
+| `annotate.py` | target / distractor / plant masks: PNG import from any tool, keyframe polygons with vertex interpolation (OpenCV window), `info` (`jepa_annotate`) |
+| `e1.py` | E1 comparison T0 (framewise segmentation), T1 (Lucas–Kanade), T2 (DINOv2 + memory), T3 / T4 (V-JEPA 2 / 2.1 + memory) from `config/e1_methods.yaml`, and the H1 go/no-go rule (`jepa_e1`) |
+| `train.py` | P3B.9: features per episode (cached), Γ from states, masks to the grid, P0 / P2 / P3 training on CUDA, E3 scores vs persistence, checkpoints (`jepa_train`; `--synthetic N` for a check without data) |
+| `latency.py` | P3B.10: predictor rollout and predictive-cost time per sample count, fp16 option (`jepa_latency`) |
+| `predictive_mpc_node.py` | C3 (P3B.11): the whole-body MPC node with the target memory, the learned predictor and the visibility cost in one process |
+| `ground.py` | publish a target mask (PNG, box or circle) on `/piper_jepa/init_mask` (`jepa_ground`) |
 | `image_codec.py` | `sensor_msgs/Image` ↔ numpy without cv_bridge; shared by the node and the bag exporter |
 | `target_state_node.py` | ROS 2 node |
 
@@ -159,10 +165,29 @@ twin; with torch: the untrained network is exactly persistence and survives a
 save/load round trip, and a trained P2 uses the action (beats persistence and
 the action-free P0 on a shift world).
 
+## Datasets, E1, training, latency, C3 (2026-10-09)
+
+The path from robot to results, each step a command (MODULE_TASKS.md has the order):
+
+```text
+record_bag.sh e1|e3  →  jepa_episode export  →  jepa_annotate  →  jepa_e1 run (H1 go/no-go)
+                                                               →  jepa_train (P0 / P2 / P3)  →  jepa_latency (Orin)
+                                                                                             →  predictive_mpc_node (C3)
+```
+
+Checked here without a GPU: the export on a bag recorded from the fake robot
+(37 frames, states for 34, camera poses for 35), annotation and E1 runner on
+synthetic episodes (T0 / T1 / reference memory; V-JEPA and DINOv2 not
+loaded), training on synthetic episodes (CPU smoke run only), latency on the
+CPU (64 samples × 4 predictor steps ≈ 250 ms: a GPU is needed for 10 Hz), and
+the predictive MPC node on the fake robot with a synthetic camera (cost
+active in 216 of 216 cycles once grounded; persistence predictor).
+
 ## Not done yet
 
-- V-JEPA inference has not been run yet (the tests use only the numpy
-  `ColorPatchEncoder`); the hub entry point is configuration until verified on the Orin.
+- V-JEPA and DINOv2 inference have not been run yet (the tests use only the
+  numpy `ColorPatchEncoder`); the hub entry points in `config/e1_methods.yaml`
+  are to be verified on the workstation (MODULE_TASKS.md A6).
 - Touching/merged instances are not handled specially.
 - Stage B/C run only on the synthetic world: no recorded E3 episodes (P3B.8),
   no V-JEPA features, no GPU timing (P3B.10), and the closed-loop C3 result

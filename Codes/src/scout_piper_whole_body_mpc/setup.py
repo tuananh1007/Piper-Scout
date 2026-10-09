@@ -10,7 +10,9 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/whole_body_mpc.launch.py"]),
-        ("share/" + package_name + "/config", ["config/whole_body_mpc.yaml", "config/whole_body_mpc_orin.yaml"]),
+        ("share/" + package_name + "/config", ["config/whole_body_mpc.yaml", "config/whole_body_mpc_orin.yaml",
+                                            "config/whole_body_mpc_gpu.yaml",
+                                            "config/whole_body_mpc_orin_gpu.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -21,5 +23,8 @@ setup(
     tests_require=["pytest"],
     entry_points={"console_scripts": [
         "whole_body_mpc_node = scout_piper_whole_body_mpc.controller_node:main",
+        "calibrate_slip = scout_piper_whole_body_mpc.calibration_nodes:slip_main",
+        "calibrate_tcp = scout_piper_whole_body_mpc.calibration_nodes:tcp_main",
+        "calibrate_hand_eye = scout_piper_whole_body_mpc.calibration_nodes:hand_eye_main",
     ]},
 )

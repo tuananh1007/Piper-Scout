@@ -20,6 +20,7 @@ visual servo for the final approach.
 | [`PROGRESS.md`](PROGRESS.md) | Living per-phase task tracker — update as work ships |
 | [`INSTALL.md`](INSTALL.md) | Step-by-step installation, setup and run guide |
 | [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) | Test sequence for the workstation, the Jetson AGX Orin and the robot, with pass criteria and a results log |
+| [`MODULE_TASKS.md`](MODULE_TASKS.md) | Tasks to run for the semantic scene, Piper-JEPA and the whole-body MPC: PC (GPU) first, then the Jetson, the robot, and the analysis of the recorded data |
 | [`Codes/`](Codes/) | ROS 2 Humble colcon workspace (Phase 0 baseline + Phase 1, 2A, 3A and 3B packages) |
 | [`research/`](research/) | Research tracks (semantic scene, plant twin, Piper-JEPA, whole-body MPC, active perception), shared platform facts and ID registry |
 
@@ -73,7 +74,9 @@ ros2 launch scout_piper_description view_robot.launch.py      # URDF check, no h
 ```
 
 To test a machine or the robot, follow [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md)
-(workstation, then Jetson, then robot; stop at the first failure).
+(workstation, then Jetson, then robot; stop at the first failure). The
+research modules' remaining work (GPU, Orin, robot data) is in
+[`MODULE_TASKS.md`](MODULE_TASKS.md).
 
 Algorithms only (path D), from the repository root:
 

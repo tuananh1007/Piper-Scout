@@ -25,3 +25,7 @@ target:
   voxel_size_m: 0.003
   max_integration_distance_m: 0.5
   weighting: constant
+other:                                 # pots, walls, supports, everything outside the class masks
+  voxel_size_m: 0.02
+  max_integration_distance_m: 1.2
+  weighting: inverse_square

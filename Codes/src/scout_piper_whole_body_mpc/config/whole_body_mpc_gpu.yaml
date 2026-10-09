@@ -1,0 +1,11 @@
+# Torch backend on a CUDA GPU (profile:=gpu), loaded after whole_body_mpc.yaml.
+# Same model, cost and solver as the numpy path (torch_backend.py, checked
+# against it by test_torch_backend.py); the semantic map's fields are copied
+# to the GPU when the map changes. More samples are affordable there: measure
+# with benchmarks/timing.py --backends torch-cuda and keep the p95 solve time
+# under 90 ms (the node warns above that).
+whole_body_mpc:
+  ros__parameters:
+    backend: "torch"
+    torch_device: "cuda"
+    samples: 1024

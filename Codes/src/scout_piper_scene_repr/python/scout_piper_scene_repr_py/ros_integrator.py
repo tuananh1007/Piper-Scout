@@ -16,6 +16,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformListener
 
+from .self_filter import parse_boxes, robot_mask
 from .voxel_map import SemanticVoxelMap, grid_around
 
 
@@ -43,7 +44,8 @@ class RosSceneIntegrator:
                  camera_info_topic: str = "/camera/aligned_depth_to_color/camera_info",
                  classes: Sequence[str] = ("stem", "branch", "leaf", "target"),
                  grid_center=(0.6, 0.0, 0.6), half_extent_m: float = 0.5,
-                 voxel_size_m: float = 0.01, stride: int = 4, max_range_m: float = 1.0):
+                 voxel_size_m: float = 0.01, stride: int = 4, max_range_m: float = 1.0,
+                 self_filter_boxes: Optional[Sequence[str]] = None):
         self.node, self.world, self.stride = node, world_frame, stride
         self.map = SemanticVoxelMap(grid_around(grid_center, half_extent_m, voxel_size_m),
                                     classes=tuple(classes) + ("other",), max_range_m=max_range_m)
@@ -52,6 +54,8 @@ class RosSceneIntegrator:
         self.K: Optional[np.ndarray] = None
         self.cam_frame: Optional[str] = None
         self.last_integrate_ms = 0.0
+        self.boxes = parse_boxes(self_filter_boxes) if self_filter_boxes else []
+        self.filtered_pixels = 0
         self.tf = Buffer()
         self.tfl = TransformListener(self.tf, node)
         be = QoSProfile(depth=2, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -82,6 +86,18 @@ class RosSceneIntegrator:
         if msg.encoding == "16UC1":
             d /= 1000.0
         d[d <= 0] = np.nan
+        if self.boxes:                         # robot self-filter (P1.7.8)
+            Ts = []
+            for b in self.boxes:
+                try:
+                    t = self.tf.lookup_transform(self.cam_frame, b.frame,
+                                                 rclpy.time.Time.from_msg(msg.header.stamp))
+                    Ts.append(transform_matrix(t.transform))
+                except Exception:  # noqa: BLE001 — link without TF: skip its box
+                    Ts.append(None)
+            rm = robot_mask(d, self.K, self.boxes, Ts)
+            self.filtered_pixels = int(rm.sum())
+            d[rm] = np.nan
         masks = {c: m for c, m in self.masks.items() if m.shape == d.shape}
         stamp = msg.header.stamp.sec + 1e-9 * msg.header.stamp.nanosec
         t0 = time.perf_counter()

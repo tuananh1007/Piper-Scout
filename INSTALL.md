@@ -1282,17 +1282,23 @@ Details: [`PHASE1_RUNTIME.md`](Codes/src/scout_piper_scene_repr/docs/PHASE1_RUNT
    `camera_link`. Use `initial_reset:=true` only when the driver is stuck.
 
 4. **Per-class semantic nvblox (never run).** Needs the camera, the
-   `stem_grasp` segmentation node and an `odom` frame in TF. Use
-   `input_mode:=separate`: the segmentation node publishes `/stem_grasp/mask`
-   (and `/stem_grasp/target_mask` only in `grounded_sam` mode), not a merged
-   label image.
+   `stem_grasp` segmentation node and an `odom` frame in TF. The segmentation
+   node publishes the merged label image `/stem_grasp/semantic_label` (stem 1,
+   branch 2, leaf 3, target 4), which the default `input_mode:=merged` reads;
+   `input_mode:=separate` reads `/stem_grasp/mask` and `/stem_grasp/target_mask`
+   instead.
 
    ```bash
-   ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
+   ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py classes:=stem,target,other
    ```
 
    `full_system.launch.py bringup_scene_repr:=true` includes this launch file
-   with its default, `input_mode:=merged`. Each class is a separate
+   with its default, `input_mode:=merged`. The launch also maps
+   the class `other` (depth outside every mask) and starts
+   `nvblox_field_bridge.py`, which merges the class ESDFs into
+   `/scene_repr/distance_field` and `/scene_repr/target_goal` for the MoveIt
+   plugin and the whole-body MPC (`field_topic:=`); `rviz:=true` opens
+   `rviz/semantic_scene.rviz`. Not run yet: MODULE_TASKS.md A4. Each class is a separate
    `nvblox_node` process with its own CUDA context; on the 16 GB workstation
    map fewer classes with `classes:=stem,target` (here) or
    `scene_classes:=stem,target` (`full_system.launch.py`).
@@ -1560,7 +1566,7 @@ and no sample episodes are in the repository yet.
 | Segmentation publishes empty masks | `yolo_model_path` missing, or settings not applied under `full_system.launch.py` | `stem_grasp.launch.py config:=` with a valid model path or `hsv_green` (10.9) |
 | Topics under `/camera/camera/...` | Camera namespace not set | Launch through the bringup or `realsense_nvblox.launch.py` (both set `camera_namespace:=/`) |
 | RealSense driver stuck | Device state | Relaunch with `initial_reset:=true`; a D405 can take seconds to re-enumerate |
-| `nvblox_semantic.launch.py` produces nothing | Default `input_mode:=merged` has no producer, or no `odom` frame | `input_mode:=separate`, and make sure `odom` exists in TF |
+| `nvblox_semantic.launch.py` produces nothing | No segmentation node running (it publishes the merged label image), or no `odom` frame | Start `stem_grasp` segmentation (`stem_grasp.launch.py`), and make sure `odom` exists in TF |
 | `move_group` refuses every plan with the Semantic plugin | No distance field, or no TF to `odom` | Run `class_demux_node` + `scene_query_node.py` with depth and TF (10.10.5); check `ros2 topic hz /scene_repr/distance_field` |
 | `plant_twin` never initialises | No `/stem_grasp/target_mask` / leaf cloud outside `grounded_sam` mode | See 10.11 |
 | Whole-body MPC publishes nothing | Missing `/odom`, `/joint_states` with `piper_joint*` names (the relay, 10.3), or a goal in `odom` | Check the inputs in 10.13 |
@@ -1574,6 +1580,7 @@ and no sample episodes are in the repository yet.
 ## Where to go next
 
 - [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md): the test sequence for the workstation, the Jetson AGX Orin and the robot, with a results log.
+- [`MODULE_TASKS.md`](MODULE_TASKS.md): the semantic scene, Piper-JEPA and whole-body MPC tasks (GPU benchmarks, Orin timing, calibration, datasets, training).
 - [`Codes/README.md`](Codes/README.md): workspace layout, upstream packages, decisions locked for Phase 0.
 - [`Codes/PHASE0_CHECKLIST.md`](Codes/PHASE0_CHECKLIST.md): the full Phase 0 bring-up and porting checklist (calibration, servo wiring, ROS 1 regression, Nav2, sign-off).
 - [`Codes/docker/README.md`](Codes/docker/README.md): dev container details.

@@ -13,6 +13,9 @@ Inputs
                                  (hands the arm to another servo client)
   geometry (use_semantic_scene)  in-process SemanticVoxelMap from aligned depth +
                                  /scene_repr/mask/<class> (scout_piper_scene_repr)
+  field_topic (if set)           scout_piper_scene_repr/SemanticDistanceField from
+                                 scene_query_node (CPU map) or nvblox_field_bridge.py (nvblox,
+                                 GPU); used instead of the in-process map
 
 Outputs
   execute == false (default): /whole_body_mpc/preview/cmd_vel, /whole_body_mpc/preview/joint_jog
@@ -86,6 +89,11 @@ class WholeBodyMpcNode(Node):
             ("w_reach", 1e4), ("reach_max_m", 0.36),
             ("w_reach_advanced", 1e3), ("reach_max_advanced_m", 0.40),
             ("pose_goal_advance_m", 0.0),
+            ("field_topic", ""),              # e.g. /scene_repr/distance_field ("" = off)
+            ("field_max_voxel_age_s", 30.0),  # voxels older than this count as unknown
+            ("unknown_policy", "no_entry"),   # no_entry | stop (see safety/projection.py)
+            ("backend", "numpy"),             # numpy | torch (GPU when torch_device is cuda)
+            ("torch_device", "auto"),         # auto (cuda if available) | cuda | cpu
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.execute = bool(p("execute"))
@@ -97,10 +105,24 @@ class WholeBodyMpcNode(Node):
                               v_max=float(p("v_max")), omega_max=float(p("omega_max"))),
             arm=ArmParams(qd_max=float(p("qd_max"))),
             kin=PiperKinematics(tcp_offset_m=float(p("tcp_offset_m"))))
-        self.mppi = MPPI(self.model, MPPIConfig(horizon=int(p("horizon")), samples=int(p("samples")),
-                                                iterations=int(p("iterations")),
-                                                temperature=float(p("temperature")),
-                                                refine_iters=int(p("refine_iters"))))
+        mppi_cfg = MPPIConfig(horizon=int(p("horizon")), samples=int(p("samples")),
+                              iterations=int(p("iterations")), temperature=float(p("temperature")),
+                              refine_iters=int(p("refine_iters")))
+        self.backend = str(p("backend"))
+        if self.backend == "torch":
+            from .torch_backend import TorchMPPI, default_device  # noqa: PLC0415 — needs torch
+            dev = str(p("torch_device"))
+            self.mppi = TorchMPPI(self.model, mppi_cfg, device=default_device() if dev == "auto" else dev)
+            self.get_logger().info(f"MPPI on torch ({self.mppi.device}), {mppi_cfg.samples} samples")
+        elif self.backend == "numpy":
+            self.mppi = MPPI(self.model, mppi_cfg)
+        else:
+            raise ValueError(f"backend {self.backend!r}: numpy or torch")
+        self._field_version = -1
+        self.unknown_policy = str(p("unknown_policy"))
+        self.field_snap = None
+        self.field_max_age = float(p("field_max_voxel_age_s"))
+        self._field_stamp = None
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
         self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
                                    reach=float(p("w_reach")), reach_max_m=float(p("reach_max_m")),
@@ -115,8 +137,18 @@ class WholeBodyMpcNode(Node):
         self.approach_tol = float(p("approach_tolerance_deg"))
         self.pose_advance = float(p("pose_goal_advance_m"))
 
+        if p("field_topic"):
+            from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: PLC0415
+            from scout_piper_scene_repr.msg import SemanticDistanceField  # noqa: PLC0415
+            from scout_piper_scene_repr_py.field import snapshot_from_msg  # noqa: PLC0415
+            qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self.create_subscription(SemanticDistanceField, p("field_topic"),
+                                     lambda m: setattr(self, "field_snap", snapshot_from_msg(m)), qos)
         self.scene = None
-        if p("use_semantic_scene"):
+        if p("use_semantic_scene") and p("field_topic"):
+            self.get_logger().warn("field_topic set: use_semantic_scene ignored")
+        elif p("use_semantic_scene"):
             from scout_piper_scene_repr_py.distance_query import SemanticDistanceQuery  # noqa: PLC0415
             from scout_piper_scene_repr_py.ros_integrator import RosSceneIntegrator  # noqa: PLC0415
             self.scene = RosSceneIntegrator(self, world_frame=self.world,
@@ -131,6 +163,9 @@ class WholeBodyMpcNode(Node):
         self.goal: Optional[Goal] = None
         self.u_prev = np.zeros(8)
         self._overruns = collections.deque(maxlen=20)   # solve > 90 % of the period
+        # extra cost terms (WholeBodyCost.extra), e.g. Piper-JEPA's visibility cost
+        # (scout_piper_jepa predictive_mpc_node subclasses this node)
+        self.extra_terms: list = []
 
         self.create_subscription(Odometry, "/odom", self._odom, 10)
         self.create_subscription(JointState, "/joint_states", self._js, 20)
@@ -218,16 +253,30 @@ class WholeBodyMpcNode(Node):
         state_age = now - min(self.t_base, self.t_q)
         dist_fn = leaf_fn = None
         geom_age = 0.0
-        if self.scene is not None:
+        if self.field_snap is not None:
+            from scout_piper_scene_repr_py.field import snapshot_distance_fn, snapshot_leaf_fn  # noqa: PLC0415
+            snap = self.field_snap
+            geom_age = now - snap.stamp
+            dist_fn = snapshot_distance_fn(snap, now=now, max_voxel_age_s=self.field_max_age)
+            leaf_fn = snapshot_leaf_fn(snap) if snap.soft_distance is not None else None
+            if self.backend == "torch" and snap.stamp != self._field_stamp:
+                from .torch_backend import TorchGridField  # noqa: PLC0415
+                self.mppi.field = TorchGridField.from_snapshot(snap, now=now, max_age_s=self.field_max_age,
+                                                               device=self.mppi.device)
+                self._field_stamp = snap.stamp
+        elif self.scene is not None:
             self.scene.integrate_latest()
             geom_age = now - self.scene.map.stamp if np.isfinite(self.scene.map.stamp) else np.inf
             dist_fn = semantic_distance_fn(self.query, now=self.scene.map.stamp)
             leaf_fn = semantic_leaf_fn(self.query)
+            if self.backend == "torch" and self.scene.map.version != self._field_version:
+                self._update_device_field()
         x = np.r_[self.base, self.q]
         cost = WholeBodyCost(self.model, self.goal, distance_fn=dist_fn,
-                             leaf_fn=leaf_fn, w=self.weights)
+                             leaf_fn=leaf_fn, w=self.weights, extra=list(self.extra_terms))
         safety = SafetyFilter(self.model, distance_fn=dist_fn, d_safe=self.d_safe,
-                              max_state_age_s=self.max_state_age, max_geometry_age_s=self.max_geom_age)
+                              max_state_age_s=self.max_state_age, max_geometry_age_s=self.max_geom_age,
+                              unknown_policy=self.unknown_policy)
         T_tcp = self.model.tcp_world(x)
         err = float(np.linalg.norm(T_tcp[:3, 3] - self.goal.p))
         angle = None
@@ -248,12 +297,25 @@ class WholeBodyMpcNode(Node):
             self.get_logger().warn(
                 f"MPPI solves overrun: {sum(self._overruns)} of the last {len(self._overruns)} took "
                 f"over 90 % of the {1e3 * self.model.dt:.0f} ms period (last {solve_ms:.0f} ms); "
-                "lower samples (profile:=orin) or refine_iters", throttle_duration_sec=5.0)
+                "lower samples (profile:=orin) or refine_iters, or use backend torch on the GPU", throttle_duration_sec=5.0)
         rep = safety.project(x, u_mpc, self.u_prev, state_age_s=state_age, geometry_age_s=geom_age)
         self._send(rep.u)
         self.u_prev = rep.u
         self.mppi.shift()
         self._publish(err, angle, mode, rep, solve_ms, state_age, geom_age)
+
+    def _update_device_field(self) -> None:
+        """Copy the semantic map's hard / leaf fields to the MPPI device (torch backend)."""
+        from scout_piper_scene_repr_py.field import export_field  # noqa: PLC0415
+        from .torch_backend import TorchGridField  # noqa: PLC0415
+        snap = export_field(self.query)
+        if snap is None:
+            return
+        self.mppi.field = TorchGridField.from_snapshot(
+            snap, now=snap.stamp, max_age_s=self.query.max_age_s,
+            leaf_weight=self.query.policies["leaf"].cost_weight if "leaf" in self.query.policies else 50.0,
+            device=self.mppi.device)
+        self._field_version = self.scene.map.version
 
     def _publish(self, err, angle, mode, rep, solve_ms, state_age, geom_age) -> None:
         self.pub_status.publish(String(data=json.dumps({

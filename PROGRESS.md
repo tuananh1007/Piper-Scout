@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-09 (TEST_PROCEDURE.md and `hardware_free_checks.sh`; stem_grasp segmentation no longer pauses during the servo and approach; P0.1.13 Jetson AGX Orin deployment path; stem_grasp grasp point on the stem axis, release and retreat; P0.4.13 grasp: gripper closes on the stem, wrist room for the final approach; P0.1 memory-safe build and runtime for the 16 GB workstation; P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-09 (MODULE_TASKS.md; semantic scene: label image, nvblox ESDF bridge, target goal, self-filter, RViz, semantic vs occupancy; whole-body MPC: torch / GPU backend, W2 QP, 30-scene benchmark, calibration tools; Piper-JEPA: E1 runner, export and annotation, training, latency, predictive MPC node; TEST_PROCEDURE.md and `hardware_free_checks.sh`; stem_grasp segmentation no longer pauses during the servo and approach; P0.1.13 Jetson AGX Orin deployment path; stem_grasp grasp point on the stem axis, release and retreat; P0.4.13 grasp: gripper closes on the stem, wrist room for the final approach; P0.1 memory-safe build and runtime for the 16 GB workstation; P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -159,30 +159,30 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.1.1 | Install `isaac_ros_nvblox` on workstation | ☑ | 2026-05-18 — source build validated in dev container; `nvblox_ros`, `nvblox_msgs`, and example bringup packages discoverable after sourcing `install/setup.bash`. |
 | P1.1.2 | Feed RealSense color+depth to nvblox; verify TSDF reconstruction | ☑ | 2026-05-18 — added `realsense_nvblox.launch.py` + camera-frame nvblox config; D405 aligned depth runs ~29-30 Hz and nvblox publishes TSDF/mesh/ESDF topics while allocating GPU TSDF blocks from live depth. |
 | P1.1.3 | Benchmark nvblox update rate on Orin AGX target | ☐ | Goal: < 33 ms |
-| P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ☐ | v0 uses mask-gated depth (no fork) |
+| P1.1.4 | Wire semantic mask channel from `segmentation_node` to nvblox | ◐ | v0 uses mask-gated depth (no fork) 2026-10-09 — segmentation_node publishes the merged label image `/stem_grasp/semantic_label` (stem 1, branch 2, leaf 3, target 4; YOLO class map `yolo_class_labels`), so `nvblox_semantic.launch.py` runs in its default merged mode; class_demux adds `other` (depth outside every mask). Unit-tested; to run: MODULE_TASKS.md A4 |
 
 #### P1.2 — Per-class SDFs (v0)
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ☐ | 2026-10-07 — launch moved to `nvblox_ros` (smoke-test setup + per-class overrides); not yet run |
+| P1.2.1 | Stand up 4 parallel TSDFs (stem / branch / leaf / target) | ◐ | 2026-10-07 — launch moved to `nvblox_ros` (smoke-test setup + per-class overrides); not yet run 2026-10-09 — mappers for stem, branch, leaf, target and `other` (pots, walls); `classes:=` subset; still not run (no GPU here): MODULE_TASKS.md A4 / B3 |
 | P1.2.2 | Per-class inflation / padding configurable via YAML | ☑ | `semantic_classes.yaml` 2026-05-17 |
-| P1.2.3 | Visualize each SDF separately in RViz | ☐ | |
+| P1.2.3 | Visualize each SDF separately in RViz | ◐ | 2026-10-09 — `rviz/semantic_scene.rviz` (per-class nvblox meshes, CPU voxels, target goal, masks), `nvblox_semantic.launch.py rviz:=true`; plugin class taken from nvblox_rviz_plugin 3.2; to check on the first GPU run (MODULE_TASKS.md A4) |
 
 #### P1.3 — MoveIt 2 collision plugin
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | 2026-10-07 — plugin reads the CPU field (P1.7.7); nvblox per-class ESDFs still to feed it |
+| P1.3.1 | Custom collision plugin reading nvblox SDFs | ◐ | 2026-10-07 — plugin reads the CPU field (P1.7.7); nvblox per-class ESDFs still to feed it 2026-10-09 — `nvblox_field_bridge.py`: per-class ESDFs (`~/get_esdf_and_gradient`, esdf_mode 3d) resampled to one grid with the class policies and published as `/scene_repr/distance_field`, the message the plugin and the MPC already read (`nvblox_field.py`, unit-tested on synthetic ESDF responses); not run against nvblox yet (MODULE_TASKS.md A4) |
 | P1.3.2 | Hard collision for stem/branch; soft cost for leaf | ◐ | 2026-10-07 — hard classes with padding + leaf penetration cap in the plugin; graded leaf cost only in the Python query / MPC (MoveIt collision is boolean) |
-| P1.3.3 | Target SDF exposed as attractor for goal generation | ☐ | Policy schema in place |
+| P1.3.3 | Target SDF exposed as attractor for goal generation | ☑ | Policy schema in place. 2026-10-09 — `attractor.py`: largest target cluster → grasp point, horizontal approach from the base, pre-grasp 12 cm before it; published as `/scene_repr/target_goal` (PoseStamped, z = approach) by scene_query_node and the nvblox bridge; the MPC follows it with `goal_pose_topic:=/scene_repr/target_goal`. Unit-tested; robot run in MODULE_TASKS.md C4 |
 
 #### P1.4 — Benchmark
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P1.4.1 | 20-scene cluttered-plant test set (recorded bags) | ☐ | |
-| P1.4.2 | Compare planning success: Octomap vs ours | ☐ | Goal: ≥ 30 % failure reduction |
+| P1.4.1 | 20-scene cluttered-plant test set (recorded bags) | ◐ | 2026-10-09 — `scripts/record_bag.sh scene` records the topics; bag → episode export with depth, poses and labels (scout_piper_jepa episode.py); offline map from an episode (`offline.py`). The 20 scenes are still to record (MODULE_TASKS.md C5) |
+| P1.4.2 | Compare planning success: Octomap vs ours | ◐ | Goal: ≥ 30 % failure reduction. 2026-10-09 — `benchmarks/semantic_vs_occupancy.py` (scout_piper_whole_body_mpc): same MPC, leaves soft vs hard. Synthetic, 20 scenes: occupancy 17/20, semantic 18/20, i.e. 33 % fewer failures, but one scene of difference: weak evidence. `--episode` runs the same comparison on recorded scenes (MODULE_TASKS.md D1) |
 
 #### P1.5 — v1 fork (research contribution)
 
@@ -202,7 +202,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.7.4 | All depth consumers on `/camera/aligned_depth_to_color/image_raw` | ☑ | 2026-10-06 |
 | P1.7.5 | `scene_query_node` (markers + status) | ☑ | 2026-10-06 — untested on hardware |
 | P1.7.6 | S1/S3 runs on real thin-structure scenes; Orin timing | ☐ | |
-| P1.7.8 | Robot self-filter for depth (fingers in view become `other` obstacles) | ☐ | until then exempt the finger links (ACM / `ignore_links`) |
+| P1.7.8 | Robot self-filter for depth (fingers in view become `other` obstacles) | ◐ | until then exempt the finger links (ACM / `ignore_links`) 2026-10-09 — `self_filter.py`: boxes on piper_link7/8 projected into the depth image, pixels no farther than the box removed before integration, in scene_query_node (CPU map) and class_demux (nvblox); `self_filtered_px` in map_status. Box sizes approximate: tune on the robot (MODULE_TASKS.md C1) |
 | P1.7.7 | MoveIt plugin uses the query (replace stub) — P1.4 | ☑ | 2026-10-07 — `Semantic` = FCL + `/scene_repr/distance_field` (sphere-covered links, unknown/stale = obstacle, no field ⇒ collision); gtest with a real MoveIt model + pluginlib load; not on hardware. Also fixed: plugin was exported as an allocator, which MoveIt cannot load |
 
 ### 1B — `plant_twin` integration
@@ -242,8 +242,8 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P2A.2 | Target memory: gated softmax, mean/cov, entropy, confidence, occlusion/lost, 3-D from aligned depth | ☑ | 2026-10-06 — gate + coasting needed: ungated memory jumps to an identical twin during occlusion |
 | P2A.3 | E1 metrics + episode export/eval tools | ☑ | 2026-10-06 |
 | P2A.4 | ROS 2 node with re-grounding via `/piper_jepa/init_mask` | ☑ | 2026-10-06 — untested on hardware |
-| P2A.5 | Record E1 dataset and annotate target/distractor masks | ☐ | |
-| P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ☐ | go/no-go gate |
+| P2A.5 | Record E1 dataset and annotate target/distractor masks | ◐ | 2026-10-09 — tools: `record_bag.sh e1`; `episode export` with depth, intrinsics, camera poses, states, framewise masks, labels; `annotate` (PNG import, keyframe polygons with interpolation, distractors). Recording and annotation pending (MODULE_TASKS.md A10 pilot, C6) |
+| P2A.6 | Run V-JEPA 2 vs 2.1 vs baselines (T0–T4) on E1 | ◐ | go/no-go gate. 2026-10-09 — `scout_piper_jepa.e1`: T0 framewise segmentation, T1 Lucas–Kanade, T2 DINOv2 + memory (new `DinoV2Encoder`), T3 / T4 V-JEPA 2 / 2.1 + memory (`config/e1_methods.yaml`), weighted E1 scores and the H1 rule (T4 vs best of T0–T2). Tested on synthetic episodes; V-JEPA / DINOv2 not run (no GPU here): MODULE_TASKS.md A6, D2 |
 
 ---
 
@@ -287,31 +287,31 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P3A.4 | Safety filter (limits, one-step clearance, watchdog) | ☑ | 2026-10-06 |
 | P3A.5 | Semantic-scene adapter + dry-run ROS node | ☑ | 2026-10-06 — untested on hardware |
 | P3A.6 | Escape obstacle local minima (gradient refinement, candidate B) | ☑ | 2026-10-07 — not a minimum: the MPPI average was worse than "stop" (elitism fixes), sampling missed the last cm (knot-space gradient refinement), planner and filter shared d_safe and deadlocked (planner margin +1 cm); O1 8/8 seeds ≤ 1 cm |
-| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ☐ | |
-| P3A.8 | Orin timing (WE7) | ☐ | ≈60 ms/step on x86 dev CPU (≈85 ms with an obstacle field) |
+| P3A.7 | WE1 slip identification + hand-eye/TCP calibration on hardware | ◐ | 2026-10-09 — `calibration.py` + ROS recorders: `calibrate_slip` (excitation plan, external pose topic, settling excluded; fake base with slip 0.9 / 0.75 → 0.879 / 0.741 with 1.5 s segments), `calibrate_tcp` (pivot), `calibrate_hand_eye` (Park–Martin, ArUco or a pose topic). Robot runs pending (MODULE_TASKS.md C2) |
+| P3A.8 | Orin timing (WE7) | ◐ | ≈60 ms/step on x86 dev CPU (≈85 ms with an obstacle field) 2026-10-09 — `benchmarks/timing.py` (numpy / torch-cpu / torch-cuda, with and without the plant field). 4-core x86 sandbox, one thread: numpy 256 samples 93 ms (232 ms with the field), torch-cpu 27 ms (68 ms). PC GPU and Orin numbers pending (MODULE_TASKS.md A2, B2) |
 | P3A.9 | W1 sequential baseline (IK base pose → base phase → arm-only MPPI) | ☑ | 2026-10-07 — R3: W1 3/3 in 150 steps, 0.85 m base travel vs W3 3/3 in 59–92 steps, 0.65 m (offline, synthetic) |
-| P3A.10 | W2 holistic / reactive QP baseline | ☐ | |
+| P3A.10 | W2 holistic / reactive QP baseline | ☑ | 2026-10-09 — `baselines/reactive_qp.py`: one-step QP over (v, ω, q̇) with lazy base, joint limits, linearised clearance and optional reach margin (SLSQP, 2–4 ms per step). R1–R3 and O1 reached (0.9–1.0 cm); 30 plant scenes 28/30 (20/22 arm-unreachable), stalling at two obstacles where the MPC's horizon helps |
 | P3A.11 | Execute mode end to end through servo, hardware-free | ☑ | 2026-10-07 — `fake_scout_base.py` + `fake_base:=true`, `execute:=` launch argument, `mpc_chain_check.py`: 10 runs on 4 goals reached in 3.6–14 s, 0.87–0.99 cm TCP error from TF, base stopped, no servo halt. Found and fixed: stopping the node mid-motion left the base driving (no Scout command timeout) — the node now sends zero commands on exit. 2026-10-08 — reach margin (`w_reach`, `reach_max_m` 0.36 m shoulder-to-wrist): far goals ended with the arm stretched (0.54 m on R3), so the stem servo halted at the singularity; now the base covers the rest (0.35 m on R3). Bringup helper nodes (relay, bridge, fake drivers) exit cleanly on Ctrl-C (one relay run died with an RCLError in rclpy's shutdown race) |
 
 ### P3.1 — cuRobo extension
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P3.1.1 | Decide: planar virtual joint vs. forked CUDA kernel | ☐ | Pick higher-novelty path |
-| P3.1.2 | Build 8-DoF kinematic chain in cuRobo | ☐ | |
-| P3.1.3 | Non-holonomic constraint penalty for differential drive | ☐ | |
+| P3.1.1 | Decide: planar virtual joint vs. forked CUDA kernel | ☑ | Pick higher-novelty path. 2026-10-09 — decision: own batched torch rollout with the base as (v, ω) inputs instead of planar virtual joints in a forked cuRobo kernel (exact non-holonomic model, one cost implementation, nothing to build for the Orin); collision through the semantic distance-field snapshot instead of cuRobo + nvblox (torch_backend.py docstring) |
+| P3.1.2 | Build 8-DoF kinematic chain in cuRobo | ☑ | 2026-10-09 — replaced per P3.1.1: `torch_backend.py` (TorchModel FK / rollout / spheres / manipulability, TorchCost with every J_geo term, TorchMPPI with autograd refinement, TorchGridField on the device); term-by-term parity with numpy and closed-loop R1 / R3 / obstacle tests (`test_torch_backend.py`); node `backend: torch`, profiles `gpu` / `orin_gpu` |
+| P3.1.3 | Non-holonomic constraint penalty for differential drive | ☑ | 2026-10-09 — not needed: the unicycle rollout enforces the non-holonomic constraint exactly (v along the heading only), in numpy and torch |
 
 ### P3.2 — Cost design
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P3.2.1 | Reach + manipulability + base-laziness + visibility costs | ◐ | 2026-10-06 — goal, manipulability and base-motion costs in P3A.3; visibility open (Phase 3B J_visibility) |
-| P3.2.2 | Phase 1 semantic SDFs integrated as cost potentials | ◐ | 2026-10-06 — CPU `SemanticDistanceQuery` via `scene_adapter.py` (P3A.5); nvblox-backed field open |
+| P3.2.1 | Reach + manipulability + base-laziness + visibility costs | ☑ | 2026-10-06 — goal, manipulability and base-motion costs in P3A.3; visibility open (Phase 3B J_visibility) 2026-10-09 — visibility cost: Piper-JEPA `JepaVisibilityCost` through `WholeBodyCost.extra` (P3B.6), in the node through `extra_terms` (predictive_mpc_node) |
+| P3.2.2 | Phase 1 semantic SDFs integrated as cost potentials | ◐ | 2026-10-06 — CPU `SemanticDistanceQuery` via `scene_adapter.py` (P3A.5); nvblox-backed field open 2026-10-09 — the node plans on `/scene_repr/distance_field` (`field_topic`; CPU map or the nvblox bridge), copied to the GPU for the torch backend; points outside the plant grid count as free (they made the safety filter stop the base before); `unknown_policy: no_entry` lets spheres move inside never-observed space but not into it. Hardware-free: scene_query_node → field → MPC used it every cycle. nvblox-backed run pending (MODULE_TASKS.md A5, C4) |
 | P3.2.3 | Safety filter: clip whole-body command through Phase 2B MPPI | ☐ | standalone limits/clearance/watchdog filter done in P3A.4 |
 
 ### P3.3 — Benchmark
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P3.3.1 | 30 cluttered-plant scenes; arm-only vs sequential vs holistic-QP vs ours | ☐ | |
-| P3.3.2 | ≥ 50 % previously-unreachable targets reachable via base motion | ☐ | Exit gate |
+| P3.3.1 | 30 cluttered-plant scenes; arm-only vs sequential vs holistic-QP vs ours | ☑ | 2026-10-09 — `benchmarks/plant_scenes.py` + `scenes.py`: 30 synthetic plant rows (capsule stems / branches, pots, disc leaves, targets at peduncles). W0 8/30, W1 30/30 (median 150 steps, 0.38 m base), W2 28/30 (42 steps, 0.24 m), W3 29/30 (60 steps, 0.21 m) |
+| P3.3.2 | ≥ 50 % previously-unreachable targets reachable via base motion | ◐ | Exit gate. 2026-10-09 — synthetic: W3 reaches 21 of 22 arm-unreachable targets (95 %, gate ≥ 50 % passed); robot confirmation pending (MODULE_TASKS.md C3–C4) |
 
 ---
 
@@ -330,10 +330,10 @@ Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](res
 | P3B.5 | E3 metrics + synthetic E3 benchmark | ☑ | 2026-10-07 — synthetic, one seed: P3 E_target(4) 13.0 px vs 18.0 persistence / 21.9 P2; see `scout_piper_jepa/README.md` |
 | P3B.6 | `JepaVisibilityCost` in `WholeBodyCost.extra`, geometry-anchored read-out | ☑ | 2026-10-07 — anchor fixes the identical-twin failure of the plain §12 read-out |
 | P3B.7 | Synthetic closed loop C2 vs C3-oracle | ◐ | 2026-10-07 — inconclusive: C3 trades goal error for visibility without a reliable gain; needs a feasibility check, near-goal constraint, more samples |
-| P3B.8 | Record and annotate E3 robot episodes (arm-only, base-only, combined, occlusion) | ☐ | bags → features + Γ + masks |
-| P3B.9 | Train P2/P3 on V-JEPA 2.1 features (GPU) | ☐ | after P2A.6 go/no-go |
-| P3B.10 | Predictor latency on the Orin (samples × horizon) | ☐ | CPU oracle render ≈ 2 s per control step at 64 samples |
-| P3B.11 | C3 with the learned predictor in the loop; E5 visibility-sensitive scenes | ☐ | |
+| P3B.8 | Record and annotate E3 robot episodes (arm-only, base-only, combined, occlusion) | ◐ | bags → features + Γ + masks. 2026-10-09 — tools ready (`record_bag.sh e3`, export with states and camera poses, annotation); end to end on the fake robot: 37 frames, states for 34, poses for 35, base 0.6 m. Recording pending (MODULE_TASKS.md C7) |
+| P3B.9 | Train P2/P3 on V-JEPA 2.1 features (GPU) | ◐ | after P2A.6 go/no-go. 2026-10-09 — `scout_piper_jepa.train`: feature caching per episode, Γ from states, masks to the grid, episode split, P0 / P2 / P3 training on CUDA (`device`), E3 scores vs persistence, checkpoints. Synthetic smoke run on CPU only; GPU runs MODULE_TASKS.md A7, D3 |
+| P3B.10 | Predictor latency on the Orin (samples × horizon) | ◐ | CPU oracle render ≈ 2 s per control step at 64 samples. 2026-10-09 — `scout_piper_jepa.latency`: rollout and predictive-cost time per sample count (fp16 option). CPU here: 64 samples × 4 steps ≈ 250 ms, too slow for 10 Hz on a CPU; GPU numbers MODULE_TASKS.md A8 / B4 |
+| P3B.11 | C3 with the learned predictor in the loop; E5 visibility-sensitive scenes | ◐ | 2026-10-09 — `predictive_mpc_node` (C3): the MPC node + Stage A memory + learned predictor + visibility cost in one process, camera pose from FK and the TF hand-eye, `jepa_ground` grounds the target. Hardware-free: cost active in 216/216 cycles once grounded. Learned model and robot runs pending (MODULE_TASKS.md B6, C8) |
 
 ---
 

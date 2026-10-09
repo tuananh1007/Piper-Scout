@@ -86,3 +86,18 @@ def test_segmentation_keeps_masks_flowing_while_servoing():
     assert not seg.motion_gate_applies(True, "SERVOING", off)
     assert not seg.motion_gate_applies(True, "APPROACHING", off)
     assert not seg.motion_gate_applies(False, "SCANNING", off)
+
+
+def test_semantic_label_image_paints_classes_in_order():
+    """P1.1.4: the merged label image class_demux reads (stem 1, branch 2,
+    leaf 3, target 4); a target on a stem stays target, leaves are painted first."""
+    seg = importlib.import_module("stem_grasp.segmentation_node")
+    shape = (4, 6)
+    stem = np.zeros(shape, np.uint8); stem[:, 2] = 255
+    leaf = np.zeros(shape, np.uint8); leaf[1:3, 1:4] = 1
+    target = np.zeros(shape, np.uint8); target[2, 2] = 255
+    lab = seg.compose_label({1: stem, 3: leaf, 4: target}, shape)
+    assert lab.dtype == np.uint8 and lab[0, 2] == 1 and lab[1, 1] == 3 and lab[1, 2] == 1
+    assert lab[2, 2] == 4 and lab[0, 0] == 0
+    assert seg.compose_label({1: np.zeros((2, 2))}, shape).max() == 0     # wrong shape is ignored
+    assert seg.parse_class_labels(["0:1", "2:3"]) == {0: 1, 2: 3}

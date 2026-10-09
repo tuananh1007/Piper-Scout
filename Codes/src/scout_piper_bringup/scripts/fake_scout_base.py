@@ -14,7 +14,10 @@ the Scout firmware stops on its own is not documented (INSTALL.md 10.5); set
 
 The base tracks the commanded velocities with a first-order lag
 (``time_constant_s``) within the Scout's limits and integrates a unicycle; it
-is a kinematic stand-in, not a model of skid-steer slip.
+is a kinematic stand-in. ``slip_k_v`` / ``slip_k_omega`` (default 1) scale
+the velocities it actually moves with, as skid-steer slip does; its odometry
+then plays the external pose reference for testing the slip identification
+(scout_piper_whole_body_mpc ``calibrate_slip``).
 """
 
 import math
@@ -65,6 +68,8 @@ def main() -> None:
             self.v_lim = float(p("max_linear_speed", 1.5).value)      # Scout 2.0 spec
             self.w_lim = float(p("max_angular_speed", 1.0).value)
             self.timeout = float(p("cmd_timeout_s", 0.0).value)       # 0: no timeout (scout_ros2)
+            self.k_v = float(p("slip_k_v", 1.0).value)
+            self.k_w = float(p("slip_k_omega", 1.0).value)
             self.x = self.y = self.yaw = 0.0
             self.v = self.w = 0.0
             self.cmd = (0.0, 0.0)
@@ -87,7 +92,8 @@ def main() -> None:
                 v_cmd = w_cmd = 0.0
             self.v = track(self.v, v_cmd, self.dt, self.tau, self.v_lim)
             self.w = track(self.w, w_cmd, self.dt, self.tau, self.w_lim)
-            self.x, self.y, self.yaw = unicycle_step(self.x, self.y, self.yaw, self.v, self.w, self.dt)
+            self.x, self.y, self.yaw = unicycle_step(self.x, self.y, self.yaw, self.k_v * self.v,
+                                                     self.k_w * self.w, self.dt)
             stamp = now.to_msg()
             qz, qw = math.sin(self.yaw / 2), math.cos(self.yaw / 2)
             tf = TransformStamped()

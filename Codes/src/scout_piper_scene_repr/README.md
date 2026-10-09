@@ -15,7 +15,9 @@ unvalidated until then.
 | Path | Status | Purpose |
 |---|---|---|
 | [`docs/PHASE1_DESIGN.md`](docs/PHASE1_DESIGN.md) | done | Design doc — read first |
-| [`python/class_demux_node.py`](python/class_demux_node.py) | working | Fans semantic label image → per-class mask + gated depth |
+| [`python/class_demux_node.py`](python/class_demux_node.py) | working | Fans semantic label image → per-class mask + gated depth; adds `other` (depth outside every mask) and removes the gripper fingers (self-filter) |
+| [`python/nvblox_field_bridge.py`](python/nvblox_field_bridge.py) | untested against nvblox | Per-class nvblox ESDFs (`~/get_esdf_and_gradient`) → `/scene_repr/distance_field` + `/scene_repr/target_goal` (P1.3.1, P3.2.2) |
+| [`rviz/semantic_scene.rviz`](rviz/semantic_scene.rviz) | not yet opened on a GPU run | Per-class nvblox meshes, CPU voxels, target goal, masks (`nvblox_semantic.launch.py rviz:=true`) |
 | [`src/semantic_collision_plugin.cpp`](src/semantic_collision_plugin.cpp) | working, not on hardware | MoveIt 2 collision plugin `"Semantic"`: FCL + semantic distance field (see below) |
 | [`src/semantic_field_listener.cpp`](src/semantic_field_listener.cpp) | working, not on hardware | Receives `/scene_repr/distance_field` inside move_group; parameters, TF |
 | [`include/.../semantic_distance_field.hpp`](include/scout_piper_scene_repr/semantic_distance_field.hpp) | working | Header-only field sampler + robot sphere cover (C++ twin of `field.py`) |
@@ -25,10 +27,10 @@ unvalidated until then.
 | [`config/nvblox_per_class.yaml`](config/nvblox_per_class.yaml) | done | Per-class nvblox tuning |
 | [`config/realsense_nvblox.yaml`](config/realsense_nvblox.yaml) | working | Single-camera nvblox smoke-test profile |
 | [`launch/realsense_nvblox.launch.py`](launch/realsense_nvblox.launch.py) | working | P1.1.2 RealSense color/depth -> nvblox TSDF/ESDF launch |
-| [`launch/nvblox_semantic.launch.py`](launch/nvblox_semantic.launch.py) | untested | Phase 1 v0 launch (demux + 4 `nvblox_ros` nodes, set up like the smoke test); not yet run (P1.2.1) |
+| [`launch/nvblox_semantic.launch.py`](launch/nvblox_semantic.launch.py) | untested | Phase 1 v0 launch: demux + one `nvblox_ros` node per class (stem, branch, leaf, target, other; `classes:=`) + the field bridge (`field_bridge:=true`) + RViz (`rviz:=true`); not yet run (P1.2.1, MODULE_TASKS.md A4) |
 | [`launch/test_class_demux.launch.py`](launch/test_class_demux.launch.py) | working | P1.1.0 plumbing test with `python/test_mask_publisher.py` (no nvblox) |
 | [`python/scout_piper_scene_repr_py/`](python/scout_piper_scene_repr_py/) | working | CPU `SemanticVoxelMap` + `SemanticDistanceQuery` (v0 query backend, see below) |
-| [`python/scene_query_node.py`](python/scene_query_node.py) | untested on hardware | Live CPU map; `/scene_repr/voxels`, `/scene_repr/map_status`, `/scene_repr/distance_field` |
+| [`python/scene_query_node.py`](python/scene_query_node.py) | hardware-free checked | Live CPU map (fingers self-filtered); `/scene_repr/voxels`, `/scene_repr/map_status`, `/scene_repr/distance_field`, `/scene_repr/target_goal` |
 | [`plugin_description.xml`](plugin_description.xml) | done | pluginlib export (`collision_detection::CollisionPlugin` named `Semantic`) |
 
 ## Prerequisites
@@ -36,7 +38,7 @@ unvalidated until then.
 1. `nvblox_ros` built from source in the dev container; see [`docs/PHASE1_RUNTIME.md`](docs/PHASE1_RUNTIME.md).
 2. Intel RealSense publishing aligned depth (the P1.1.2 smoke test used a D405; the URDF models a D435; model to be confirmed).
 3. For semantic v0, the `stem_grasp` segmentation node publishing either:
-   - **merged mode**: a single `mono8` label image on `/stem_grasp/semantic_label` (1=stem, 2=branch, 3=leaf, 4=target), OR
+   - **merged mode** (default; `segmentation_node` publishes it since 2026-10-09, `publish_semantic_label`): a single `mono8` label image on `/stem_grasp/semantic_label` (1=stem, 2=branch, 3=leaf, 4=target; YOLO classes mapped with `yolo_class_labels`), OR
    - **separate mode** (Phase 0 fallback): the legacy `/stem_grasp/mask` + `/stem_grasp/target_mask` pair.
 
 ## Run P1.1.2 RealSense -> nvblox
@@ -65,9 +67,34 @@ ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py
 ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
 ```
 
+## nvblox-backed distance field, target goal, self-filter (2026-10-09)
+
+- **Bridge** (`nvblox_field_bridge.py`, started by `nvblox_semantic.launch.py`):
+  every 0.5 s it requests each class mapper's ESDF inside the plant box,
+  resamples the grids (stem 3 mm, leaf 10 mm, other 2 cm) onto one 1 cm grid
+  (`nvblox_field.merge_class_grids`: hard classes min(d − padding) minus half
+  a voxel diagonal, so resampling never makes a thin stem look farther; the
+  leaf class as the soft field; a voxel is known when any mapper observed
+  it) and publishes the same `SemanticDistanceField` as `scene_query_node`.
+  Run one of the two, not both. Status on `/scene_repr/bridge_status`.
+- **`other` class:** depth outside every class mask gets its own mapper (pots,
+  walls, supports); its observations also mark the space as observed.
+- **Target goal** (`attractor.py`, P1.3.3): the largest connected cluster of
+  target voxels, approached horizontally from `base_link`, pre-grasp 12 cm in
+  front; `/scene_repr/target_goal` (PoseStamped, z = approach). The MPC follows
+  it with `whole_body_mpc.launch.py goal_pose_topic:=/scene_repr/target_goal`.
+- **Self-filter** (`self_filter.py`, P1.7.8): boxes on `piper_link7` /
+  `piper_link8` (`self_filter_boxes`) projected with the depth intrinsics;
+  pixels inside a box and no farther than it are removed before integration.
+  The default boxes are estimates: tune them on the robot (MODULE_TASKS.md C1).
+- **Offline** (`offline.py`): the map from an exported episode (depth, poses,
+  labels), for the recorded-scene benchmark (P1.4.2,
+  scout_piper_whole_body_mpc `benchmarks/semantic_vs_occupancy.py --episode`).
+
 ## Next steps
 
-See `P1.x` in [`../../../PROGRESS.md`](../../../PROGRESS.md).
+[`MODULE_TASKS.md`](../../../MODULE_TASKS.md) A4, A5, B3, C1, C4, C5, D1; see
+`P1.x` in [`../../../PROGRESS.md`](../../../PROGRESS.md).
 
 ## CPU semantic map + planner distance query (v0 query backend)
 
