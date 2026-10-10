@@ -1167,7 +1167,11 @@ point.
 handoff goes to APPROACHING instead of SERVOING. The servo keeps the stem on
 the gripper axis, and once the image error has stayed under
 `approach_align_tolerance_px` (8 px) for `approach_settle_sec`, the gripper
-advances along its axis at `approach_speed_mps` (2 cm/s). Each advance is one
+advances along its axis at `approach_speed_mps` (2 cm/s). The error is judged
+as the mean image-error vector over `approach_align_window_sec` (1.5 s): a
+stem that sways faster than about 15 mm/s never settles sample by sample, while
+the open fingers capture far more than its sway (simulated trials, stem_grasp
+README). Each advance is one
 `approach_step` (5 cm), and the gripper re-aligns between steps. The pipeline
 stops commanding and goes to AT_GRASP when the grasp point is within
 `approach_distance_tolerance` (1 cm) along the axis. It goes to ABORTED (and

@@ -192,6 +192,8 @@ class PipelineParams:
     approach_enabled: bool = False        # false: servo only, no motion toward the stem
     approach_speed_mps: float = 0.02      # advance speed along the gripper axis
     approach_align_tolerance_px: float = 8.0  # image error that allows the next step
+    approach_align_window_sec: float = 1.5    # alignment on the mean error vector over this window (0: per
+                                              # sample; a swaying stem never settles sample by sample)
     approach_timeout_sec: float = 60.0
 
     # Grasp (after AT_GRASP): open the gripper before the approach, close it on
@@ -615,6 +617,7 @@ class StemGraspPipeline(Node):
             mask_wait_s=float(p.approach_mask_wait_sec),
             min_mask_pixels=int(p.approach_min_leaf_pixels),
             align_tolerance_px=float(p.approach_align_tolerance_px),
+            align_window_s=float(p.approach_align_window_sec),
             speed_mps=float(p.approach_speed_mps), timeout_s=float(p.approach_timeout_sec),
             contact_force_n=float(p.contact_threshold_n), contact_hold_s=float(p.contact_hold_sec))
 
@@ -865,7 +868,8 @@ class StemGraspPipeline(Node):
         status = {}
         if self.approach is not None:
             speed = self._approach_speed(diag["error_norm"], distance,
-                                         int(np.count_nonzero(self.last_mask)))
+                                         int(np.count_nonzero(self.last_mask)),
+                                         np.asarray(raw, float) - np.asarray(desired, float))
             if speed is None:                      # approach ended; servo halts
                 return
             vel = vel + speed * approach_cam       # advance along the gripper axis
@@ -897,7 +901,8 @@ class StemGraspPipeline(Node):
         desired_distance = distance                           # SERVOING: hold the distance
         status = {}
         if self.approach is not None:
-            speed = self._approach_speed(error_px, distance, int(np.count_nonzero(self.last_mask)))
+            speed = self._approach_speed(error_px, distance, int(np.count_nonzero(self.last_mask)),
+                                         np.asarray(raw, float) - np.asarray(desired, float))
             if speed is None:                                 # approach ended; servo halts
                 return
             desired_distance = distance - speed * p.mppi_horizon * p.mppi_dt
@@ -933,9 +938,10 @@ class StemGraspPipeline(Node):
                 "plan_terms": diag.get("plan_terms", {}), "nominal_terms": diag.get("nominal_terms", {}),
                 **status})))
 
-    def _approach_speed(self, error_px: float, distance_m: float, pixels: int) -> Optional[float]:
+    def _approach_speed(self, error_px: float, distance_m: float, pixels: int,
+                        error_uv: Optional[np.ndarray] = None) -> Optional[float]:
         """Advance speed for this servo step, or None once the approach ended."""
-        st = self.approach.update(self._now(), error_px, distance_m, pixels, self.current_force)
+        st = self.approach.update(self._now(), error_px, distance_m, pixels, self.current_force, error_uv=error_uv)
         if st.phase in ("done", "abort"):
             self._end_approach(st.phase, st.reason)
             return None

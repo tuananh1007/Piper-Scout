@@ -69,7 +69,7 @@ def main() -> int:
 
     def param(node, name):
         reply = call(GetParameters, f"{node}/get_parameters", GetParameters.Request(names=[name]))
-        return reply.values[0] if reply.values and reply.values[0].type != 0 else None
+        return reply.values[0] if reply is not None and reply.values and reply.values[0].type != 0 else None
 
     def tcp_world(offset):
         tr = tf_buffer.lookup_transform("odom", "piper_link6", rclpy.time.Time())

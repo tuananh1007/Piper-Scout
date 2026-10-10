@@ -42,7 +42,7 @@ needs R0–R8 of the same file.
 | Semantic scene | CPU map + query + MoveIt plugin; **merged label image** from stem_grasp (P1.1.4); **`other` class** and **finger self-filter** in the demux / CPU map (P1.7.8); **nvblox ESDF bridge** → `/scene_repr/distance_field` (P1.3.1, P3.2.2); **target attractor** → `/scene_repr/target_goal` (P1.3.3); **RViz config** (P1.2.3); **semantic vs occupancy** benchmark, synthetic 18/20 vs 17/20 and an offline mode for recorded scenes (P1.4.2); `record_bag.sh scene` (P1.4.1) | first run of the per-class nvblox stack and the bridge (A4, B3), Orin rate (B3), recorded scenes (C5, D1), robot runs (C4) |
 | Piper-JEPA | Stage A memory, Stage B predictors, Stage C cost; **DINOv2 encoder** (T2); **E1 runner T0–T4** with the H1 go/no-go rule (P2A.6); **bag → episode export** with depth, poses, states, segmentation, labels; **annotation tool** (P2A.5, P3B.8); **training command** with GPU support (P3B.9); **latency benchmark** (P3B.10); **predictive MPC node C3** (P3B.11) | V-JEPA / DINOv2 inference (A6), GPU training and latency (A7, A8, B4), datasets (C6, C7), H1 decision (D2), E3 training (D3), C3 on the robot (C8) |
 | Contact force | no F/T sensor: **joint-effort force estimate** (`dynamics/effort.py`, `effort_force_node` on `/ft_sensor/raw`, `~/tare`), **`calibrate_effort`** (move to a checked centre, multi-sine, fit, held-out residual, 3-σ threshold); relay passes driver efforts; fake driver simulates efforts and a TCP force; stem_grasp `force_topic`, tare on servo start, stale-force stop, thresholds into the MPPI servo; hardware-free: 0.04 N error on 3 N, calibration gains 1.00, 3 N push trips the force gate in 0.2 s (retract 5 cm, ABORTED) | real driver efforts and noise, calibration on the robot (C2 step 4) |
-| Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes; **semantic clearance** from `/scene_repr/distance_field` with the target stem released (`exclude_target`: obstacle voxels connected to the grasp point; neighbours stay hard), hardware-free grasp with a synthetic field passes; **Phase 2B hard gates** (force limit → retract 5 cm → ABORTED, silent force source → stop, target lost 2 s → SCANNING, hard clearance violation → stop) and the **WE6 handoff** numbers in `grasp_chain_check.py` | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
+| Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes; **semantic clearance** from `/scene_repr/distance_field` with the target stem released (`exclude_target`: obstacle voxels connected to the grasp point; neighbours stay hard), hardware-free grasp with a synthetic field passes; **Phase 2B hard gates** (force limit → retract 5 cm → ABORTED, silent force source → stop, target lost 2 s → SCANNING, hard clearance violation → stop) and the **WE6 handoff** numbers in `grasp_chain_check.py`; **simulated P2.3 trials** (`benchmarks/servo_trials.py`: IBVS 48/50, MPPI 49/50 after the approach alignment window; MPPI ~40 % faster; exit gate not reachable in simulation) | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
 
 ---
 
@@ -289,6 +289,17 @@ python3 src/scout_piper_whole_body_mpc/benchmarks/visual_servo_timing.py --sampl
   --out $LOG/A13_vs_timing.jsonl | tee $LOG/A13_vs_timing.txt
 ./scripts/hardware_free_checks.sh --servo mppi 2>&1 | tee $LOG/A13_hwfree_mppi.txt
 ```
+
+Simulated scripted trials (P2.3.1; CPU, about 1 h for 50 trials x 3 controllers):
+
+```bash
+PYTHONPATH=src/stem_grasp:src/scout_piper_whole_body_mpc:src/scout_piper_scene_repr/python \
+  python3 src/stem_grasp/benchmarks/servo_trials.py --trials 50 --align-window 1.5 \
+  --out $LOG/A13_servo_trials.jsonl | tail -40 | tee $LOG/A13_servo_trials.txt
+```
+
+Reference (this sandbox): IBVS 48/50, MPPI 49/50, MPPI + field 47/50, median
+approach 8.9 s (MPPI) vs 14.6 s (IBVS).
 
 **Expect:** torch-CUDA median under 10 ms at 512 samples (CPU reference:
 numpy ~50 ms at 256, torch-CPU ~27 ms at 512); all grasp checks `PASS` with
@@ -571,7 +582,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | A11 plant benchmarks | | | W0–W3, semantic vs occupancy |
 | A12 slip on the fake base | | | k_v, k_omega |
 | A12 force estimate (fake arm) | | | estimate error, gains, 3-σ, abort s |
-| A13 MPPI servo timing + grasp | | | median ms per backend, approach s |
+| A13 MPPI servo timing + grasp | | | median ms per backend, approach s, simulated trials per controller |
 | B2 MPC timing Orin | | | chosen profile, samples |
 | B3 nvblox on the Orin | | | integration ms per class, RAM |
 | B4 predictor latency Orin | | | samples |

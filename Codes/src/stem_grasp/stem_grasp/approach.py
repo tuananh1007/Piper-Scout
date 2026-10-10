@@ -47,6 +47,8 @@ class ApproachConfig:
     timeout_s: float = 60.0            # approach_timeout_sec
     contact_force_n: float = 0.15      # contact_threshold_n
     contact_hold_s: float = 0.1        # contact_hold_sec: the force must stay above it this long
+    align_window_s: float = 0.0        # approach_align_window_sec: judge alignment on the mean error
+                                       # over this window (0: every sample; see IterativeApproach)
 
 
 @dataclass
@@ -57,7 +59,16 @@ class ApproachStatus:
 
 
 class IterativeApproach:
-    """Decides, per servo step, whether to advance the gripper along its axis."""
+    """Decides, per servo step, whether to advance the gripper along its axis.
+
+    With ``align_window_s`` > 0 the align / advance decisions use the norm of the
+    mean image error *vector* (``error_uv``) over that window instead of each
+    sample: a stem swaying faster than the servo follows (simulated trials:
+    peak sway above ~15 mm/s) never stays within the tolerance sample by
+    sample, while the open fingers capture far more than the sway; over about
+    one sway period the signed error averages out and what remains is the
+    steady offset. (Averaging the error magnitude does not: the mean of |sin| is
+    two thirds of its amplitude.) Without ``error_uv`` the scalar mean is used."""
 
     def __init__(self, cfg: ApproachConfig, start_t: float) -> None:
         self.cfg = cfg
@@ -69,14 +80,16 @@ class IterativeApproach:
         self._step_goal_d: Optional[float] = None   # distance at which this step ends
         self._mask_ok_t = start_t
         self._contact_since: Optional[float] = None
+        self._errors: list = []                     # (t, error_px) within align_window_s
 
     def _end(self, phase: str, reason: str) -> ApproachStatus:
         self.phase, self.reason = phase, reason
         return ApproachStatus(phase, 0.0, reason)
 
     def update(self, now: float, error_px: float, distance_m: float,
-               mask_pixels: int, force_n: float = 0.0) -> ApproachStatus:
-        """``distance_m``: grasp point minus TCP along the approach axis."""
+               mask_pixels: int, force_n: float = 0.0, error_uv: Optional[np.ndarray] = None) -> ApproachStatus:
+        """``distance_m``: grasp point minus TCP along the approach axis;
+        ``error_uv``: the image error vector (measured minus desired pixel)."""
         c = self.cfg
         if self.phase in ("done", "abort"):
             return ApproachStatus(self.phase, 0.0, self.reason)
@@ -98,9 +111,16 @@ class IterativeApproach:
         if mask_pixels < c.min_mask_pixels:
             if now - self._mask_ok_t > c.mask_wait_s:
                 return self._end("abort", f"stem mask under {c.min_mask_pixels} px for {c.mask_wait_s} s")
-            self._aligned_since = None
+            self._aligned_since, self._errors = None, []
             return ApproachStatus(self.phase, 0.0)
         self._mask_ok_t = now
+        if c.align_window_s > 0 and np.isfinite(error_px):
+            e = np.asarray(error_uv, float) if error_uv is not None else np.array([error_px])
+            self._errors = [(t, v) for t, v in self._errors if t > now - c.align_window_s] + [(now, e)]
+            if now - self._errors[0][0] < 0.5 * c.align_window_s:
+                error_px = max(error_px, c.align_tolerance_px + 1e-9)   # not enough history yet: not aligned
+            else:
+                error_px = float(np.linalg.norm(np.mean([v for _, v in self._errors], axis=0)))
 
         if self.phase == "advance":
             if distance_m <= self._step_goal_d or error_px > 3.0 * c.align_tolerance_px:

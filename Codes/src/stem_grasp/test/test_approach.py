@@ -138,3 +138,19 @@ def test_servo_gates(approaching, force, force_age, mask_age, expected):
     out = servo_gate(ServoGates(), approaching, force, force_age, mask_age)
     assert (out[0] if out else None) == expected
     assert servo_gate(ServoGates(force_max_age_s=0.0, lost_target_s=0.0), False, 0.0, 9.0, 9.0) is None   # gates off
+
+
+@pytest.mark.parametrize("window, arrives", [(0.0, False), (1.5, True)])
+def test_a_swaying_stem_needs_the_alignment_window(window, arrives):
+    """Error vector swinging +-14 px at 0.7 Hz around a 2 px offset: never within
+    8 px for 0.4 s sample by sample, aligned on average."""
+    app = IterativeApproach(ApproachConfig(align_window_s=window, timeout_s=40.0), start_t=0.0)
+    d, t, st = 0.12, 0.0, None
+    for _ in range(int(40.0 / DT)):
+        e = np.array([2.0 + 14.0 * np.sin(2 * np.pi * 0.7 * t), 0.0])
+        st = app.update(t, float(np.linalg.norm(e)), d, 500, 0.0, error_uv=e)
+        if st.phase in ("done", "abort"):
+            break
+        d -= st.speed * DT
+        t += DT
+    assert (st.phase == "done") == arrives, (st.phase, st.reason, d)

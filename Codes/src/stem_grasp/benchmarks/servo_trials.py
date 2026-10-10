@@ -204,7 +204,8 @@ class Scene:
 
 def run_trial(trial: Trial, controller: str, samples: int = 256, dt: float = 0.05, timeout_s: float = 60.0,
               stiffness: float = 150.0, max_force_n: float = 2.0, force_noise_n: float = 0.1,
-              contact_threshold_n: float = 0.5, miss_m: float = 0.01, trace: Optional[list] = None) -> dict:
+              contact_threshold_n: float = 0.5, miss_m: float = 0.01, trace: Optional[list] = None,
+              align_window_s: float = 0.0) -> dict:
     model = WholeBodyModel()
     kin = model.kin
     scene = Scene(trial)
@@ -214,7 +215,8 @@ def run_trial(trial: Trial, controller: str, samples: int = 256, dt: float = 0.0
            np.array([0.0, 1.2, -1.0, 0.0, 0.5, 0.0]))
     T_fc = T_flange_cam()                                      # the URDF's (assumed) hand-eye transform
     T_fc_true = T_flange_cam(trial.calib_xyz, trial.calib_rot)   # the real mount differs
-    approach = IterativeApproach(ApproachConfig(contact_force_n=contact_threshold_n), start_t=0.0)
+    approach = IterativeApproach(ApproachConfig(contact_force_n=contact_threshold_n, align_window_s=align_window_s),
+                                 start_t=0.0)
     ibvs = FullAdaptiveServoController(fx=K[0, 0], fy=K[1, 1], cx=K[0, 2], cy=K[1, 2],
                                        lambda_0=0.8, lambda_inf=0.5, rho=0.3)
     mppi = None
@@ -268,7 +270,7 @@ def run_trial(trial: Trial, controller: str, samples: int = 256, dt: float = 0.0
             qd = np.zeros(6)
         else:
             err = float(np.linalg.norm(raw - desired))
-            st = approach.update(now, err, distance, int(mask.sum()), f_meas)
+            st = approach.update(now, err, distance, int(mask.sum()), f_meas, error_uv=raw - desired)
             if st.phase in ("done", "abort"):
                 break
             if mppi is None:
@@ -329,6 +331,8 @@ def main() -> None:
     ap.add_argument("--samples", type=int, default=256, help="MPPI samples")
     ap.add_argument("--stiffness", type=float, default=150.0, help="N/m of the stem")
     ap.add_argument("--miss", type=float, default=0.01, help="m: largest lateral miss counted as a grasp")
+    ap.add_argument("--align-window", type=float, default=0.0,
+                    help="s: approach alignment on the mean error over this window (stem_grasp approach_align_window_sec)")
     ap.add_argument("--out", default="", help="JSON lines per trial")
     a = ap.parse_args()
     rows = []
@@ -336,7 +340,8 @@ def main() -> None:
     for i in range(a.first_seed, a.first_seed + a.trials):
         trial = Trial.draw(i)
         for c in a.controllers.split(","):
-            r = run_trial(trial, c, samples=a.samples, stiffness=a.stiffness, miss_m=a.miss)
+            r = run_trial(trial, c, samples=a.samples, stiffness=a.stiffness, miss_m=a.miss,
+                          align_window_s=a.align_window)
             rows.append(r)
             line = json.dumps(r)
             print(line, flush=True)

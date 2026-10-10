@@ -234,7 +234,7 @@ def main() -> int:
 
     def param(node, name):
         reply = call(GetParameters, f"{node}/get_parameters", GetParameters.Request(names=[name]))
-        return reply.values[0] if reply.values and reply.values[0].type != 0 else None
+        return reply.values[0] if reply is not None and reply.values and reply.values[0].type != 0 else None
 
     for node, name in (("/piper_ctrl_single_node", "initial_gripper"),
                        ("/scout_base_node", "time_constant_s")):

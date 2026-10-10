@@ -80,6 +80,7 @@ stem_grasp_pipeline:
     approach_goal_orientation_tolerance: 0.05
     approach_speed_mps: 0.02
     approach_align_tolerance_px: 8.0
+    approach_align_window_sec: 1.5   # judged on the mean error vector over this window (stem sway)
     approach_timeout_sec: 60.0
     # Grasp after AT_GRASP (needs approach_enabled): open the gripper before
     # the approach, close it on arrival through piper_servo_bridge
