@@ -314,8 +314,8 @@ class TorchCost:
             for term in self.cost.extra:
                 J = J + tm.tensor(term(Xn, Un))
             if self.cost.secondary:
-                e_T = torch.sqrt(dist2[:, -1]).detach().cpu().numpy().astype(float)
-                J = J + tm.tensor(self.cost.secondary_cost(Xn, Un, e_T))
+                e_mean = torch.sqrt(dist2).mean(1).detach().cpu().numpy().astype(float)
+                J = J + tm.tensor(self.cost.secondary_cost(Xn, Un, e_mean))
         return J
 
 

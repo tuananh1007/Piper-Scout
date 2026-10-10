@@ -181,9 +181,9 @@ def test_secondary_terms_rerank_only_within_the_goal_tolerance():
     U = np.zeros((3, 4, 8))
     X = m.rollout(x0, U)
     p_end = m.tcp_world(X[:, -1])[:, :3, 3]
-    goal = p_end[0]
-    X[1, -1, 0] += 0.005                       # terminal TCP 5 mm off (base moved 5 mm)
-    X[2, -1, 0] += 0.05                        # 5 cm off
+    goal = p_end[0] - np.array([0.2, 0.0, 0.0])  # 20 cm behind: the tolerance stays 1 cm (not 20 % of it)
+    X[1, 1:, 0] += 0.005                       # TCP 5 mm farther over the horizon (base moved 5 mm)
+    X[2, 1:, 0] += 0.05                        # 5 cm farther
     likes_far = lambda X, U: 200.0 * (0.05 - (X[:, -1, 0] - x0[0]))   # noqa: E731 — 10, 9, 0
     add = WholeBodyCost(m, Goal(p=goal), extra=[likes_far])
     sec = WholeBodyCost(m, Goal(p=goal), secondary=[likes_far], secondary_tol_m=0.01)

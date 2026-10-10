@@ -11,12 +11,16 @@ visibility/identity terms through ``WholeBodyCost.extra`` without touching
 these.
 
 ``WholeBodyCost.secondary`` holds terms that may only re-rank motions that are
-about as good at reaching the goal as the best one: a candidate whose terminal
-TCP error exceeds the smallest seen in this control step (this cost object)
-by more than ``secondary_tol_m`` pays ``secondary_penalty`` · excess², so a
-secondary term can buy at most ``secondary_tol_m`` of goal error. Additive
-``extra`` terms trade freely against the goal (P3B.7: the visibility cost
-gave up 3–17 cm of goal error that way).
+about as good at reaching the goal as the best one: a candidate whose TCP
+error, averaged over the horizon, exceeds the smallest seen in this control
+step (this cost object) by more than the tolerance pays ``secondary_penalty``
+· excess². The tolerance is ``secondary_tol_m``, shrunk to
+``secondary_tol_frac`` of the current TCP error near the goal, so the
+controller converges like the geometry-only one there. The horizon average
+(not the terminal error) keeps a receding horizon from postponing progress
+forever: with a terminal-only test the visibility cost held the flower in view
+for 16 s and ended 18 cm from the goal (P3B.7). Additive ``extra`` terms trade
+freely against the goal (the visibility cost gave up 3–15 cm that way).
 """
 
 from __future__ import annotations
@@ -101,17 +105,21 @@ class WholeBodyCost:
     extra: List[ExtraTerm] = field(default_factory=list)   # e.g. Piper-JEPA J_vis, J_id
     secondary: List[ExtraTerm] = field(default_factory=list)   # re-rank only (see module doc)
     secondary_tol_m: float = 0.01
+    secondary_tol_frac: float = 0.2
     secondary_penalty: float = 1e6
 
     def __post_init__(self) -> None:
-        self._best_terminal = np.inf      # smallest terminal TCP error seen (monotone per control step)
+        self._best_err = np.inf           # smallest horizon-mean TCP error seen (monotone per control step)
 
-    def secondary_cost(self, X: np.ndarray, U: np.ndarray, terminal_err: np.ndarray) -> np.ndarray:
-        """Σ secondary terms plus the goal-error constraint (shared with the torch backend)."""
+    def secondary_cost(self, X: np.ndarray, U: np.ndarray, mean_err: np.ndarray) -> np.ndarray:
+        """Σ secondary terms plus the goal-error constraint (shared with the torch backend);
+        ``mean_err`` (B,) is the TCP error averaged over the planned states."""
         if not self.secondary:
             return np.zeros(len(X))
-        self._best_terminal = min(self._best_terminal, float(np.min(terminal_err)))
-        excess = np.clip(terminal_err - (self._best_terminal + self.secondary_tol_m), 0, None)
+        self._best_err = min(self._best_err, float(np.min(mean_err)))
+        e_now = float(np.linalg.norm(self.model.tcp_world(np.asarray(X)[0, 0])[:3, 3] - self.goal.p))
+        tol = min(self.secondary_tol_m, self.secondary_tol_frac * e_now)
+        excess = np.clip(mean_err - (self._best_err + tol), 0, None)
         J = self.secondary_penalty * excess ** 2
         for term in self.secondary:
             J = J + term(X, U)
@@ -166,5 +174,5 @@ class WholeBodyCost:
             J += w.smooth * ((U[:, 0] - u_prev) ** 2).sum(-1)
         for term in self.extra:
             J += term(X, U)
-        J += self.secondary_cost(X, U, np.sqrt(dist2[:, -1]))
+        J += self.secondary_cost(X, U, np.sqrt(dist2).mean(1))
         return J
