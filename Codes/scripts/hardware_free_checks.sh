@@ -9,6 +9,7 @@
 #   ./scripts/hardware_free_checks.sh --quick            # servo, MPC and one full grasp only
 #
 # Options: --profile default|orin   MPC profile (whole_body_mpc.launch.py profile:=)
+#          --servo ibvs|mppi        stem_grasp servo controller for the grasp checks (Phase 2B)
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
 #          --quick                  skip the extra stem positions
@@ -18,13 +19,14 @@
 # Takes about 10 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
-profile=default quick=0
+profile=default quick=0 servo=ibvs
 log_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test_logs/hwfree_$(date +%Y%m%d_%H%M%S)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile) profile="$2"; shift 2 ;;
     --log-dir) log_dir="$2"; shift 2 ;;
     --quick)   quick=1; shift ;;
+    --servo)   servo="$2"; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -73,7 +75,7 @@ run_check() {   # run_check <name> <with_base 0|1> <with_mpc 0|1> <pipeline args
   if [[ "$pipe" != "-" ]]; then
     # shellcheck disable=SC2086
     start "$dir/pipeline.log" ros2 run stem_grasp pipeline_node --ros-args \
-      -p reach_executor:=whole_body_mpc $pipe
+      -p reach_executor:=whole_body_mpc -p servo_controller:="$servo" $pipe
   fi
   sleep 12                                            # let everything come up
   timeout 300 "$@" > "$dir/check.out" 2>&1
@@ -99,7 +101,7 @@ fi
 ros2 daemon stop > /dev/null 2>&1
 
 echo
-echo "Summary (MPC profile: $profile; logs: $log_dir)"
+echo "Summary (MPC profile: $profile; servo: $servo; logs: $log_dir)"
 printf '  %s\n' "${results[@]}" | tee "$log_dir/summary.txt"
 grep -h "MPPI solves overrun" "$log_dir"/*/mpc.log 2> /dev/null | head -3 | sed 's/^/  warning: /'
 ! printf '%s\n' "${results[@]}" | grep -q '^FAIL'

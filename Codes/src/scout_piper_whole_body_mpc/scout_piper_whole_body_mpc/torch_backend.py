@@ -16,7 +16,7 @@ Pieces, each a line-by-line port of its numpy counterpart:
   TorchModel      dynamics/whole_body.py + dynamics/piper.py: rollout (closed
                   form with cumulative sums), FK, collision spheres,
                   manipulability, wrist extension
-  TorchCost       costs/terms.py WholeBodyCost (all terms; ``extra`` numpy
+  TorchCost       costs/terms.py WholeBodyCost (all terms; ``extra`` / ``secondary`` numpy
                   terms such as Piper-JEPA's are evaluated on the CPU)
   TorchGridField  a dense distance grid on the device, trilinear lookups;
                   from a ``DistanceFieldSnapshot`` (semantic scene / nvblox
@@ -309,10 +309,13 @@ class TorchCost:
         J = J + w.smooth * (dU ** 2).sum((1, 2))
         if u_prev is not None:
             J = J + w.smooth * ((U[:, 0] - u_prev) ** 2).sum(-1)
-        if self.cost.extra:
+        if self.cost.extra or self.cost.secondary:
             Xn, Un = X.detach().cpu().numpy().astype(float), U.detach().cpu().numpy().astype(float)
             for term in self.cost.extra:
                 J = J + tm.tensor(term(Xn, Un))
+            if self.cost.secondary:
+                e_T = torch.sqrt(dist2[:, -1]).detach().cpu().numpy().astype(float)
+                J = J + tm.tensor(self.cost.secondary_cost(Xn, Un, e_T))
         return J
 
 
@@ -368,7 +371,8 @@ class TorchMPPI:
         torch, cfg, tm = self.torch, self.cfg, self.tm
         x = tm.tensor(x0)
         up = None if u_prev is None else tm.tensor(u_prev)
-        tc = TorchCost(tm, cost, self.field)
+        # a cost with its own torch twin (visual_servo.VisualServoCost) brings it along
+        tc = cost.torch_cost(tm, self.field) if hasattr(cost, "torch_cost") else TorchCost(tm, cost, self.field)
         lo, hi = tm.u_low.clone(), tm.u_high.clone()
         if cfg.arm_only:
             lo[:2] = 0.0

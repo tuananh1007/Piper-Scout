@@ -133,6 +133,9 @@ stem_grasp_pipeline:
     servo_row_band_px: 12
     target_point_max_age_sec: 0.5
     servo_mask_max_age_sec: 0.3
+    # Phase 2B: "mppi" replaces the IBVS with the arm-only MPPI visual servo
+    # (JointJog; mppi_* parameters in stem_grasp/config/pipeline.yaml)
+    servo_controller: "ibvs"
     # Move to the pre-grasp pose (P0.4.11): "none" only publishes
     # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
     # (run it with execute:=true and bringup_servo:=true), waits for "reached",

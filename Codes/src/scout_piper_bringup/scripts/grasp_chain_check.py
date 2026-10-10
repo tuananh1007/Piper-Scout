@@ -97,7 +97,9 @@ def main() -> int:
     n.create_subscription(String, "/whole_body_mpc/status",
                           lambda m: mpc.append((time.time(), json.loads(m.data))), 50)
     n.create_subscription(PoseStamped, "/whole_body_mpc/goal_pose", goals.append, 10)
-    n.create_subscription(JointJog, "/servo_node/delta_joint_cmds", lambda m: jogs.append(time.time()), 50)
+    # the MPC's joint commands only: the stem_grasp MPPI servo (servo_controller: mppi) tags its own
+    n.create_subscription(JointJog, "/servo_node/delta_joint_cmds",
+                          lambda m: m.header.frame_id != "stem_grasp" and jogs.append(time.time()), 50)
     n.create_subscription(Int8, "/servo_node/status", lambda m: servo.append(m.data), 100)
     ibvs = []
     n.create_subscription(String, "/stem_grasp/servo_status",

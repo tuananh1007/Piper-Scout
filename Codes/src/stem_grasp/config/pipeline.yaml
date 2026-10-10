@@ -75,6 +75,15 @@ stem_grasp_pipeline:
     servo_row_band_px: 12
     target_point_max_age_sec: 0.5
     servo_mask_max_age_sec: 0.3
+    # Phase 2B MPPI visual servo instead of the IBVS (the IBVS stays the
+    # baseline): arm-only MPPI on the Piper joint velocities, JointJog on
+    # servo_joint_cmd_topic, Scout still; mppi_dt about the mask period.
+    servo_controller: "ibvs"              # ibvs | mppi
+    mppi_samples: 256
+    mppi_horizon: 20
+    mppi_dt: 0.05
+    mppi_backend: "numpy"                 # numpy | torch (mppi_device cuda on the GPU)
+    mppi_qd_max: 0.5
     # Move to the pre-grasp pose (P0.4.11): "none" only publishes
     # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
     # (run it with execute:=true and bringup_servo:=true), waits for "reached",

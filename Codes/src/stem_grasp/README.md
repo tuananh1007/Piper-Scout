@@ -28,6 +28,28 @@ Open:
 - The MoveIt path is unwired: `moveit_py` has no Humble binary, and
   `moveit_planner.py` returns no plan when it is absent.
 
+## MPPI visual servo (Phase 2B, `servo_controller: mppi`)
+
+`servo_controller: mppi` replaces the IBVS below (which stays the default and
+the baseline) with `scout_piper_whole_body_mpc.visual_servo.MppiVisualServo`:
+an arm-only MPPI over the six joint velocities, published as `JointJog` on
+`servo_joint_cmd_topic` (frame_id `stem_grasp`), with the Scout still. Per new
+mask it takes the same geometry as the IBVS (measured stem pixel, the pixel
+where the gripper axis crosses the target depth, the metric target), plus the
+joint states and the link6 → camera transform from TF. In SERVOING it holds the
+distance to the stem; in APPROACHING the stepwise approach (`approach.py`)
+sets the distance it should reach over the horizon. Every command passes the
+whole-body `SafetyFilter` (velocity, acceleration, joint limits); the force,
+mask-age and approach aborts below still apply. `/stem_grasp/servo_status`
+then also carries `solve_ms`, the image-prediction `mode` and the cost of each
+term for the executed plan and the resolved-rate nominal (`plan_terms`,
+`nominal_terms`).
+
+Hardware-free (fake arm and base, `hardware_free_checks.sh --quick --servo
+mppi`): the full grasp passes — approach in 12 s, gripper axis 0.02 cm from the
+stem centreline, gripper closed on the stem, release and retreat. Not run on
+the robot or the GPU yet (MODULE_TASKS.md A13, B7, C9).
+
 ## Image-based servo (P0.4.12)
 
 In SERVOING, `_inner_loop` steps `core.FullAdaptiveServoController` once per

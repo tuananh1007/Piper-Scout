@@ -78,6 +78,7 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.declare_parameters("", [
             ("jepa_model", ""), ("jepa_device", "cuda"), ("jepa_stride", 0),   # 0 = from the checkpoint
             ("w_vis", 1.0), ("w_id", 1.0),
+            ("jepa_constrained", True),   # visibility only within secondary_tol_m of the best goal error
             ("encoder", "color_patch"), ("hub_entry", ""), ("image_size", 384), ("encoder_device", "cuda"),
             ("rgb_topic", "/camera/color/image_raw"),
             ("depth_topic", "/camera/aligned_depth_to_color/image_raw"),
@@ -121,6 +122,7 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.vis_args = dict(predictor=predictor, w=VisibilityCostWeights(w_vis=float(p("w_vis")),
                                                                            w_id=float(p("w_id"))),
                              stride=stride)
+        self.constrained = bool(p("jepa_constrained"))
         self.flange = p("flange_frame")
         self.anchor_tol = float(p("anchor_tolerance_m"))
         self.T_flange_cam: Optional[np.ndarray] = None
@@ -142,7 +144,8 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.create_subscription(CameraInfo, p("camera_info_topic"), self._info, be)
         self.create_subscription(Image, p("init_mask_topic"), self._mask, 2)
         self.pub_ctx = self.create_publisher(String, "/piper_jepa/mpc_context", 5)
-        self.get_logger().info("predictive MPC (C3): visibility cost active once the target is grounded")
+        self.get_logger().info("predictive MPC (C3): visibility cost active once the target is grounded, "
+                               + ("secondary (goal error first)" if self.constrained else "additive"))
 
     # ------------------------------------------------------------- inputs
     def _info(self, msg: CameraInfo) -> None:
@@ -203,7 +206,10 @@ class PredictiveMpcNode(WholeBodyMpcNode):
                 self.vis = JepaVisibilityCost(image_hw=rgb.shape[:2], K=self.K,
                                               camera_pose=self._camera_pose if self.T_flange_cam is not None else None,
                                               **self.vis_args)
-                self.extra_terms = [self.vis]
+                if self.constrained:
+                    self.secondary_terms = [self.vis]
+                else:
+                    self.extra_terms = [self.vis]
             self.vis.set_context(np.stack(self.Z_hist), self.memory.r, self.u_now, p_world=self.p_world)
         elif self.vis is not None:
             self.vis.clear()

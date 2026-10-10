@@ -9,7 +9,12 @@ torch_predictor; needs torch).
 
 The default goal sits between the flower and its identical twin: a camera
 looking straight at it sees the twin while the leaf hides the flower, so
-geometry alone can end with the wrong flower in view. Reported per run:
+geometry alone can end with the wrong flower in view. ``view_feasibility``
+first checks that the scene allows a view-preserving end pose: of the sampled
+whole-body poses that put the TCP on the goal, the fraction that see the
+flower. C3 runs with the visibility cost additive (``C3-*``, the P3B.7 setup)
+and secondary (``C3c-*``: it may cost at most ``--tol`` of goal error,
+``WholeBodyCost.secondary``). Reported per run:
   visible_frac   fraction of control steps with the flower truly in view
   centre_px      mean distance of the flower from the image centre when visible
   final_visible  flower in view at the end
@@ -53,6 +58,28 @@ def start_state(world, model, cam, rng, n=40000, min_dist=0.25):
     return cand[int(np.argmin(score))]
 
 
+def view_feasibility(world, model, cam, goal, n=200_000, z_tol=0.01, seed=0):
+    """Whole-body poses with the TCP within ``z_tol`` of the goal (arm joints
+    sampled, base yaw sampled, base x, y solved so the TCP is on the goal):
+    (number of such poses, fraction that see the flower, fraction that see it
+    within a quarter image width of the centre)."""
+    rng = np.random.default_rng(seed)
+    q = rng.uniform(model.kin.lower, model.kin.upper, (n, 6))
+    X = np.concatenate([np.zeros((n, 3)), q], 1)
+    p = model.tcp_world(X)[:, :3, 3]                        # TCP in the base frame (base at the origin)
+    keep = np.abs(p[:, 2] - goal[2]) < z_tol
+    X, p = X[keep], p[keep]
+    th = rng.uniform(-np.pi, np.pi, len(X))
+    c, s = np.cos(th), np.sin(th)
+    X[:, 2] = th
+    X[:, 0] = goal[0] - (c * p[:, 0] - s * p[:, 1])
+    X[:, 1] = goal[1] - (s * p[:, 0] + c * p[:, 1])
+    u, vis = target_truth(world.render(cam(X))["label"], world.camera)
+    H, W = world.camera.image_hw
+    centred = vis & (np.linalg.norm(u - [W / 2, H / 2], axis=1) < W / 4)
+    return len(X), float(vis.mean()) if len(X) else 0.0, float(centred.mean()) if len(X) else 0.0
+
+
 def upsample(mask_grid, image_hw):
     hf, wf = mask_grid.shape
     H, W = image_hw
@@ -66,15 +93,13 @@ def upsample_depth(depth_grid, image_hw):
 
 
 def run(method, world, model, cam, x0, goal, seed, steps, predictor=None, samples=64, anchor=True,
-        anchor_tol_m=0.03):
+        anchor_tol_m=0.03, tol_m=0.01):
     r_t = world.features[world.labels == TARGET][0]
     H, W = world.camera.image_hw
-    cost = WholeBodyCost(model, Goal(p=goal))
     vc = None
     if method != "C2":
         vc = JepaVisibilityCost(predictor, world.camera.image_hw, camera_pose=cam, K=world.camera.K,
                                 stride=predictor.stride)
-        cost.extra.append(vc)
     mppi = MPPI(model, MPPIConfig(samples=samples, horizon=16, refine_iters=1, seed=seed))
     sf = SafetyFilter(model)
     rng = np.random.default_rng(seed)
@@ -105,6 +130,12 @@ def run(method, world, model, cam, x0, goal, seed, steps, predictor=None, sample
         hist = (hist + [rr["Z"]])[-2:]
         if vc is not None:
             vc.set_context(np.stack(hist), r_t, u_now, p_world=p_world if anchor else None)
+        # a fresh cost per control step (as the node builds it): the secondary
+        # constraint's best goal error is per step
+        cost = WholeBodyCost(model, Goal(p=goal))
+        if vc is not None:
+            (cost.secondary if method.startswith("C3c") else cost.extra).append(vc)
+            cost.secondary_tol_m = tol_m
         uc = mppi.solve(x, cost, u_prev)
         rep = sf.project(x, uc, u_prev)
         x = model.rollout(x, rep.u[None, None])[0, 1]
@@ -134,6 +165,10 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=80)
     ap.add_argument("--goal", type=float, nargs=3, default=[0.70, 0.0, 0.45])
     ap.add_argument("--model", default="", help="TorchACPredictor checkpoint for C3-learned")
+    ap.add_argument("--samples", type=int, default=64, help="MPPI samples")
+    ap.add_argument("--tol", type=float, default=0.01, help="m of goal error the C3c visibility cost may cost")
+    ap.add_argument("--methods", default="C2,C3-oracle,C3c-oracle",
+                    help="of C2, C3-oracle, C3c-oracle, C3-learned, C3c-learned")
     ap.add_argument("--stride", type=int, default=0,
                     help="controller steps per predictor step (0: from --model's training interval, "
                          "2 if it has none; without --model 4)")
@@ -152,12 +187,18 @@ def main() -> None:
             print(warning)
         a.stride = a.stride or fit
     a.stride = a.stride or 4
-    methods = {"C2": None, "C3-oracle": OracleStatePredictor(world, cam, stride=a.stride)}
+    oracle = OracleStatePredictor(world, cam, stride=a.stride)
+    preds = {"C2": None, "C3-oracle": oracle, "C3c-oracle": oracle}
     if net is not None:
-        methods["C3-learned"] = StateConditionedPredictor(net, m.kin.tcp, a.stride)
+        preds["C3-learned"] = preds["C3c-learned"] = StateConditionedPredictor(net, m.kin.tcp, a.stride)
+    names = [n for n in a.methods.split(",") if n in preds]
+    n_goal, f_vis, f_centre = view_feasibility(world, m, cam, goal)
+    print(json.dumps({"feasibility": {"goal": list(goal), "goal_poses": n_goal, "flower_visible": round(f_vis, 3),
+                                      "flower_near_centre": round(f_centre, 3)}}), flush=True)
     for seed in range(a.seeds):
-        for name, pred in methods.items():
-            print(json.dumps(run(name, world, m, cam, x0, goal, seed, a.steps, pred)), flush=True)
+        for name in names:
+            print(json.dumps(run(name, world, m, cam, x0, goal, seed, a.steps, preds[name], samples=a.samples,
+                                 tol_m=a.tol)), flush=True)
 
 
 if __name__ == "__main__":

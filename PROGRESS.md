@@ -249,21 +249,21 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 
 ## Phase 2B — Safety-bounded local MPPI visual servo
 
-**Target start:** 2026-10-15  ·  **Target finish:** 2027-01-15  ·  **Status:** ☐ not started
+**Target start:** 2026-10-15  ·  **Target finish:** 2027-01-15  ·  **Status:** ◐ in progress — MPPI visual servo hardware-free (2026-10-10); GPU timing and robot runs open
 
 ### P2.1 — MPPI core
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P2.1.1 | CUDA MPPI sampler (512 traj × 20 step) on Orin | ☐ | |
-| P2.1.2 | Image-Jacobian linearization + fallback to online estimator | ☐ | |
-| P2.1.3 | Cost terms: image error, visibility, manipulability, joint barrier, force | ☐ | |
-| P2.1.4 | Soft cost from Phase 1 leaf SDF | ☐ | Couples to P1 |
+| P2.1.1 | CUDA MPPI sampler (512 traj × 20 step) on Orin | ◐ | 2026-10-10 — `scout_piper_whole_body_mpc/visual_servo.py`: arm-only MPPI (the whole-body MPPI, `arm_only`) with a torch twin of the cost, so `TorchMPPI` samples on CUDA; `benchmarks/visual_servo_timing.py`. CPU here: numpy ~50 ms at 256 samples, torch-CPU ~27 ms at 512 × 20; CUDA / Orin open (MODULE_TASKS.md A13, B7) |
+| P2.1.2 | Image-Jacobian linearization + fallback to online estimator | ◐ | 2026-10-10 — projective prediction (FK + link6 → camera + pinhole, measured-pixel bias absorbs calibration error) or `mode: jacobian` (model linearised at q0); without a metric target the online Broyden estimate (`ImageJacobianEstimator`) takes over. Simulated eye-in-hand loop: centring 45 → < 3 px, 8 mm hand-eye error absorbed, continues after depth loss (tests) |
+| P2.1.3 | Cost terms: image error, visibility, manipulability, joint barrier, force | ◐ | 2026-10-10 — image (pseudo-Huber toward the gripper-axis pixel), view barrier, joint barrier, manipulability, smoothness, contact force (above contact_threshold_n moving closer costs), approach distance; resolved-rate nominal seeds the sampling (without it the last centimetre of the approach stalled: 1 mm sideways ≈ 4 px near the stem); per-term costs in `/stem_grasp/servo_status`. Force needs a sensor or estimate on the Piper |
+| P2.1.4 | Soft cost from Phase 1 leaf SDF | ◐ | Couples to P1 2026-10-10 — `distance_fn` clearance term (semantic scene) in the cost and the safety filter; not wired in stem_grasp yet (needs the grasp-mode exclusion of the target stem) |
 
 ### P2.2 — Integration with moveit_servo
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P2.2.1 | Publish `JointJog` instead of TwistStamped | ☐ | More direct |
-| P2.2.2 | Latency budget validation (< 10 ms per cycle) | ☐ | |
+| P2.2.1 | Publish `JointJog` instead of TwistStamped | ◐ | More direct 2026-10-10 — stem_grasp `servo_controller: mppi` publishes `JointJog` (frame_id `stem_grasp`) on `/servo_node/delta_joint_cmds`; hardware-free `--servo mppi`: full grasp passes (approach 12 s, axis 0.02 cm from the stem centreline, close, release, retreat). Robot open (MODULE_TASKS.md C9) |
+| P2.2.2 | Latency budget validation (< 10 ms per cycle) | ◐ | 2026-10-10 — `visual_servo_timing.py` measures the cycle (cost, refinement, safety filter); 10 ms needs CUDA (A13, B7) |
 
 ### P2.3 — Benchmark
 | ID | Task | Status | Notes |

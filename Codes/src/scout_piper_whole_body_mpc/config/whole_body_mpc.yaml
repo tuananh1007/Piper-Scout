@@ -33,6 +33,7 @@ whole_body_mpc:
     field_topic: ""                           # /scene_repr/distance_field: CPU map or nvblox bridge
     field_max_voxel_age_s: 30.0               # older voxels of the field count as unknown
     field_max_age_s: 2.5                      # field_topic: stop when the newest field is older
+    secondary_tol_m: 0.01                     # goal error a secondary cost term (Piper-JEPA C3) may cost
     unknown_policy: "no_entry"                # robot spheres may move inside unknown space, not into it
     scene_grid_center: [0.6, 0.0, 0.6]
     scene_half_extent_m: 0.5

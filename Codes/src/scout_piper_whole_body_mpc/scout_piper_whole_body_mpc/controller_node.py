@@ -92,6 +92,7 @@ class WholeBodyMpcNode(Node):
             ("field_topic", ""),              # e.g. /scene_repr/distance_field ("" = off)
             ("field_max_voxel_age_s", 30.0),  # voxels older than this count as unknown
             ("field_max_age_s", 2.5),         # stop when the newest field is older (field_topic)
+            ("secondary_tol_m", 0.01),        # goal error a secondary term (Piper-JEPA) may cost
             ("unknown_policy", "no_entry"),   # no_entry | stop (see safety/projection.py)
             ("backend", "numpy"),             # numpy | torch (GPU when torch_device is cuda)
             ("torch_device", "auto"),         # auto (cuda if available) | cuda | cpu
@@ -124,6 +125,7 @@ class WholeBodyMpcNode(Node):
         self.field_snap = None
         self.field_max_age = float(p("field_max_voxel_age_s"))
         self.field_max_stale = float(p("field_max_age_s"))
+        self.secondary_tol = float(p("secondary_tol_m"))
         self._field_stamp = None
         # the planner keeps plan_margin_m more clearance than the safety filter enforces
         self.weights = CostWeights(base=float(p("w_base")), orient=float(p("w_orient")),
@@ -166,9 +168,12 @@ class WholeBodyMpcNode(Node):
         self.goal: Optional[Goal] = None
         self.u_prev = np.zeros(8)
         self._overruns = collections.deque(maxlen=20)   # solve > 90 % of the period
-        # extra cost terms (WholeBodyCost.extra), e.g. Piper-JEPA's visibility cost
-        # (scout_piper_jepa predictive_mpc_node subclasses this node)
+        # extra cost terms (WholeBodyCost.extra, additive) and secondary terms
+        # (WholeBodyCost.secondary: re-rank within secondary_tol_m of the best
+        # goal error), e.g. Piper-JEPA's visibility cost (scout_piper_jepa
+        # predictive_mpc_node subclasses this node)
         self.extra_terms: list = []
+        self.secondary_terms: list = []
 
         self.create_subscription(Odometry, "/odom", self._odom, 10)
         self.create_subscription(JointState, "/joint_states", self._js, 20)
@@ -280,7 +285,8 @@ class WholeBodyMpcNode(Node):
                 self._update_device_field()
         x = np.r_[self.base, self.q]
         cost = WholeBodyCost(self.model, self.goal, distance_fn=dist_fn,
-                             leaf_fn=leaf_fn, w=self.weights, extra=list(self.extra_terms))
+                             leaf_fn=leaf_fn, w=self.weights, extra=list(self.extra_terms),
+                             secondary=list(self.secondary_terms), secondary_tol_m=self.secondary_tol)
         safety = SafetyFilter(self.model, distance_fn=dist_fn, d_safe=self.d_safe,
                               max_state_age_s=self.max_state_age, max_geometry_age_s=geom_limit,
                               unknown_policy=self.unknown_policy)

@@ -131,7 +131,7 @@ If `python3 -m pytest` is missing in the container, install it first with
 **Pass** (counts on 2026-10-09; more tests may have been added since):
 `stem_grasp` 41, `scout_piper_bringup` 24, `scout_piper_scene_repr` 31,
 `plant_twin` 22, `scout_piper_jepa` 20 (+4 skipped without torch, 24 with
-torch), `scout_piper_whole_body_mpc` 28 (+7 skipped without torch, 35 with
+torch), `scout_piper_whole_body_mpc` 36 (+10 skipped without torch, 46 with
 torch) passed; no failures in `colcon test-result`.
 **Record:** the last line of each file.
 **If it fails:** `plant_twin` `test_jacobian.py` asserts a wall-clock
@@ -296,7 +296,7 @@ wrong: rerun `VPI_MAJOR=3 ./scripts/patch_upstream.sh` and build again.
 **Steps:** as W3, with `source install/setup.bash` in `Codes/`, saving to
 `$LOG/J5_<package>.txt`.
 **Pass:** the same counts as W3; with torch, `scout_piper_jepa` 24 and
-`scout_piper_whole_body_mpc` 35 passed.
+`scout_piper_whole_body_mpc` 46 passed.
 **Record:** the last line of each file and the MPC suite's run time (it is
 CPU-bound and shows how much slower the Orin is).
 

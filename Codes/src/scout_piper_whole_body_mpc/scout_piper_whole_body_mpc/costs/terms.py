@@ -9,6 +9,14 @@ which ``scene_adapter.semantic_distance_fn`` builds from the semantic-scene
 query; tests and early experiments use analytic fields. Piper-JEPA adds its
 visibility/identity terms through ``WholeBodyCost.extra`` without touching
 these.
+
+``WholeBodyCost.secondary`` holds terms that may only re-rank motions that are
+about as good at reaching the goal as the best one: a candidate whose terminal
+TCP error exceeds the smallest seen in this control step (this cost object)
+by more than ``secondary_tol_m`` pays ``secondary_penalty`` · excess², so a
+secondary term can buy at most ``secondary_tol_m`` of goal error. Additive
+``extra`` terms trade freely against the goal (P3B.7: the visibility cost
+gave up 3–17 cm of goal error that way).
 """
 
 from __future__ import annotations
@@ -91,6 +99,23 @@ class WholeBodyCost:
     leaf_fn: Optional[LeafFn] = None
     w: CostWeights = field(default_factory=CostWeights)
     extra: List[ExtraTerm] = field(default_factory=list)   # e.g. Piper-JEPA J_vis, J_id
+    secondary: List[ExtraTerm] = field(default_factory=list)   # re-rank only (see module doc)
+    secondary_tol_m: float = 0.01
+    secondary_penalty: float = 1e6
+
+    def __post_init__(self) -> None:
+        self._best_terminal = np.inf      # smallest terminal TCP error seen (monotone per control step)
+
+    def secondary_cost(self, X: np.ndarray, U: np.ndarray, terminal_err: np.ndarray) -> np.ndarray:
+        """Σ secondary terms plus the goal-error constraint (shared with the torch backend)."""
+        if not self.secondary:
+            return np.zeros(len(X))
+        self._best_terminal = min(self._best_terminal, float(np.min(terminal_err)))
+        excess = np.clip(terminal_err - (self._best_terminal + self.secondary_tol_m), 0, None)
+        J = self.secondary_penalty * excess ** 2
+        for term in self.secondary:
+            J = J + term(X, U)
+        return J
 
     def __call__(self, X: np.ndarray, U: np.ndarray, u_prev: Optional[np.ndarray] = None) -> np.ndarray:
         w, m = self.w, self.model
@@ -141,4 +166,5 @@ class WholeBodyCost:
             J += w.smooth * ((U[:, 0] - u_prev) ** 2).sum(-1)
         for term in self.extra:
             J += term(X, U)
+        J += self.secondary_cost(X, U, np.sqrt(dist2[:, -1]))
         return J

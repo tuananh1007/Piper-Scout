@@ -1501,7 +1501,7 @@ Results on 2026-10-09 (4-core x86_64, Python 3.11 with ROS Humble, numpy 1.26.4,
 | `scout_piper_scene_repr` | 31 passed | ~17–30 s |
 | `plant_twin` | 22 passed | ~5–20 s |
 | `scout_piper_jepa` | 20 passed, 4 skipped without torch; 24 passed with torch | ~6 s (~20–50 s with torch) |
-| `scout_piper_whole_body_mpc` | 28 passed, 7 skipped without torch; 35 passed with torch | ~55 s (~130 s with torch) |
+| `scout_piper_whole_body_mpc` | 36 passed, 10 skipped without torch; 46 passed with torch | ~60 s (~110–130 s with torch) |
 | `stem_grasp` (needs ROS) | 41 passed | ~1–7 s |
 
 `plant_twin`'s `test_jacobian.py::test_analytic_fit_matches_numeric_and_is_faster`

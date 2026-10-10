@@ -69,6 +69,18 @@ def test_cost_matches_numpy_term_by_term():
     assert np.allclose(cost_R(X, U), TorchCost(tm, cost_R)(tm.tensor(X), tm.tensor(U)).numpy(), rtol=1e-6)
 
 
+def test_secondary_terms_match_numpy():
+    m = WholeBodyModel()
+    tm = TorchModel(m, dtype=F64)
+    U = _random_controls(m)
+    X = m.rollout(X0, U)
+    goal = m.tcp_world(X[0, -1])[:3, 3]
+    term = lambda X, U: 3.0 * X[:, -1, 1]                  # noqa: E731
+    a = WholeBodyCost(m, Goal(p=goal), secondary=[term], secondary_tol_m=0.02)
+    b = WholeBodyCost(m, Goal(p=goal), secondary=[term], secondary_tol_m=0.02)
+    assert np.allclose(a(X, U), TorchCost(tm, b)(tm.tensor(X), tm.tensor(U)).numpy(), rtol=1e-6)
+
+
 def test_grid_field_matches_the_numpy_grid():
     dist = spheres_distance_fn([[0.6, 0.0, 0.4], [0.9, 0.3, 0.5]], [0.05, 0.08])
     g = gridded(dist, [0.2, -0.4, 0.0], [1.2, 0.6, 0.9], 0.02)

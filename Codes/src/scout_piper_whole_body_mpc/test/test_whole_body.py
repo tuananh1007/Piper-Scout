@@ -173,6 +173,26 @@ def test_obstacle_on_the_direct_path_is_avoided_and_the_goal_reached(seed):
     assert log.reasons.count("clearance") == 0                # no deadlock against the filter
 
 
+def test_secondary_terms_rerank_only_within_the_goal_tolerance():
+    """A secondary term (Piper-JEPA visibility) may buy at most secondary_tol_m of
+    goal error; an additive extra term trades it freely."""
+    m = WholeBodyModel()
+    x0 = np.r_[0.0, 0.0, 0.0, 0.0, 1.2, -1.0, 0.0, 0.5, 0.0]
+    U = np.zeros((3, 4, 8))
+    X = m.rollout(x0, U)
+    p_end = m.tcp_world(X[:, -1])[:, :3, 3]
+    goal = p_end[0]
+    X[1, -1, 0] += 0.005                       # terminal TCP 5 mm off (base moved 5 mm)
+    X[2, -1, 0] += 0.05                        # 5 cm off
+    likes_far = lambda X, U: 200.0 * (0.05 - (X[:, -1, 0] - x0[0]))   # noqa: E731 — 10, 9, 0
+    add = WholeBodyCost(m, Goal(p=goal), extra=[likes_far])
+    sec = WholeBodyCost(m, Goal(p=goal), secondary=[likes_far], secondary_tol_m=0.01)
+    assert int(np.argmin(add(X, U))) == 2                  # additive: the far one wins
+    J = sec(X, U)
+    assert int(np.argmin(J)) == 1                          # secondary: best within 1 cm of the goal error
+    assert sec(X[2:], U[2:])[0] > J[1]                     # the best goal error is remembered per step
+
+
 def test_solve_never_returns_worse_than_stopping():
     """Elitism: the zero ("stop") sequence is always scored, so the returned
     plan cannot cost more than holding still (the old weighted average often

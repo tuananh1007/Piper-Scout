@@ -145,6 +145,20 @@ class PipelineParams:
     servo_row_band_px: int = 12           # mask rows around the target row for the stem position
     target_point_max_age_sec: float = 0.5  # live /stem_grasp/target_point preferred when fresher
     servo_mask_max_age_sec: float = 0.3   # no servo command on an older mask (servo then halts)
+    # Phase 2B: "ibvs" (FullAdaptiveServoController, camera twists) or "mppi"
+    # (scout_piper_whole_body_mpc visual_servo: arm-only MPPI on joint velocities,
+    # JointJog on servo_joint_cmd_topic; the Scout stays still)
+    servo_controller: str = "ibvs"
+    servo_joint_cmd_topic: str = "/servo_node/delta_joint_cmds"
+    arm_joint_names: str = "piper_joint1,piper_joint2,piper_joint3,piper_joint4,piper_joint5,piper_joint6"
+    robot_base_frame: str = "base_link"   # the MPPI model's frame (Scout base_link)
+    mppi_samples: int = 256
+    mppi_horizon: int = 20
+    mppi_dt: float = 0.05                 # planning step (about one mask period)
+    mppi_backend: str = "numpy"           # numpy | torch (GPU with mppi_device cuda / auto)
+    mppi_device: str = "auto"
+    mppi_qd_max: float = 0.5              # rad/s near the stem
+    joint_state_max_age_sec: float = 0.2  # no MPPI command on older joint states
 
     # Iterative final approach (P0.4.13, approach.py): after the handoff, servo
     # and advance along the gripper axis in approach_step steps until the grasp
@@ -248,6 +262,8 @@ class StemGraspPipeline(Node):
 
         # Servo controller — built lazily once camera intrinsics arrive
         self.servo: Optional[core.FullAdaptiveServoController] = None
+        self.arm_q: Optional[np.ndarray] = None
+        self.arm_q_t: Optional[float] = None
 
         # MoveIt 2 wrapper — best-effort; if moveit_py unavailable the planner
         # plan_to_pose_with_diagnostics returns (None, success=False).
@@ -313,6 +329,15 @@ class StemGraspPipeline(Node):
         self.pub_servo_cmd = self.create_publisher(
             TwistStamped, self.params.servo_cmd_topic, 5
         )
+        self.mppi_servo = None                 # Phase 2B controller (servo_controller: mppi)
+        self._mppi_lock = threading.Lock()     # camera_info callbacks run concurrently
+        self.pub_joint_cmd = None
+        if self.params.servo_controller == "mppi":
+            from control_msgs.msg import JointJog  # noqa: PLC0415
+            self._JointJog = JointJog
+            self.pub_joint_cmd = self.create_publisher(JointJog, self.params.servo_joint_cmd_topic, 5)
+        elif self.params.servo_controller != "ibvs":
+            raise ValueError(f"servo_controller {self.params.servo_controller!r}: ibvs or mppi")
         self.pub_mpc_goal = self.create_publisher(
             PoseStamped, self.params.mpc_goal_pose_topic, 5
         )
@@ -428,6 +453,11 @@ class StemGraspPipeline(Node):
     def _on_camera_info(self, msg: CameraInfo) -> None:
         self.params.fx, self.params.fy = float(msg.k[0]), float(msg.k[4])
         self.params.cx, self.params.cy = float(msg.k[2]), float(msg.k[5])
+        self.image_hw = (int(msg.height), int(msg.width))
+        if self.params.servo_controller == "mppi" and self.mppi_servo is None:
+            with self._mppi_lock:
+                if self.mppi_servo is None:
+                    self.mppi_servo = self._make_mppi_servo()
         if self.servo is None:
             self.servo = self._make_servo()
             self.get_logger().info(
@@ -446,6 +476,19 @@ class StemGraspPipeline(Node):
             lambda_inf=float(self.params.servo_lambda_inf),
             rho=float(self.params.servo_rho),
         )
+
+    def _make_mppi_servo(self):
+        """Phase 2B arm-only MPPI visual servo (scout_piper_whole_body_mpc)."""
+        from scout_piper_whole_body_mpc.visual_servo import MppiVisualServo, VisualServoConfig  # noqa: PLC0415
+        p = self.params
+        servo = MppiVisualServo(VisualServoConfig(
+            dt=float(p.mppi_dt), horizon=int(p.mppi_horizon), samples=int(p.mppi_samples),
+            qd_max=float(p.mppi_qd_max), tcp_offset_m=float(p.tcp_offset_m),
+            approach_speed_mps=float(p.approach_speed_mps), backend=str(p.mppi_backend),
+            device=str(p.mppi_device)))
+        self.get_logger().info(f"MPPI visual servo: {p.mppi_samples} samples x {p.mppi_horizon} steps "
+                               f"of {p.mppi_dt} s on {p.mppi_backend}")
+        return servo
 
     def _approach_config(self) -> ApproachConfig:
         p = self.params
@@ -474,6 +517,10 @@ class StemGraspPipeline(Node):
         # gripper opening from the relay's finger joints (each half the opening)
         names = [n.strip() for n in self.params.gripper_finger_joints.split(",")]
         pos = dict(zip(msg.name, msg.position))
+        arm = [n.strip() for n in self.params.arm_joint_names.split(",")]
+        if all(n in pos for n in arm):
+            self.arm_q = np.array([pos[n] for n in arm], float)
+            self.arm_q_t = self._now()
         if len(names) == 2 and all(n in pos for n in names):
             self.gripper_width = float(pos[names[0]] - pos[names[1]])
             self.gripper_width_t = self._now()
@@ -685,6 +732,9 @@ class StemGraspPipeline(Node):
             if self.approach is not None:
                 self._approach_speed(float("inf"), distance, 0)   # holds; aborts if it persists
             return
+        if self.mppi_servo is not None:
+            self._mppi_servo_step(K, target_cam, raw, desired, distance, miss, depth_z)
+            return
         vel, diag = self.servo.step(
             raw_uv=raw,
             desired_uv=desired,
@@ -712,6 +762,47 @@ class StemGraspPipeline(Node):
                 "raw_uv": [float(v) for v in raw], "desired_uv": [float(v) for v in desired],
                 "vel_cam": [float(v) for v in vel], "lambda": diag["lambda"],
                 "sway_px_s": diag["sway_px_s"], "distance_m": distance, "axis_miss_m": miss,
+                **status})))
+
+    def _mppi_servo_step(self, K, target_cam, raw, desired, distance, miss, depth_z) -> None:
+        """Phase 2B: one arm-only MPPI step, JointJog out (servo_controller: mppi)."""
+        from scout_piper_whole_body_mpc.visual_servo import ServoTarget  # noqa: PLC0415
+        p = self.params
+        if self.arm_q is None or self._age(self.arm_q_t) > p.joint_state_max_age_sec:
+            return                                            # no fresh joints: no command (servo halts)
+        cam = p.camera_optical_frame
+        T_bc = self._lookup(p.robot_base_frame, cam)          # camera -> Scout base_link
+        T_fc = self._lookup(p.eef_frame, cam)                 # camera -> link6
+        if T_bc is None or T_fc is None:
+            return
+        error_px = float(np.linalg.norm(np.asarray(raw) - np.asarray(desired)))
+        desired_distance = distance                           # SERVOING: hold the distance
+        status = {}
+        if self.approach is not None:
+            speed = self._approach_speed(error_px, distance, int(np.count_nonzero(self.last_mask)))
+            if speed is None:                                 # approach ended; servo halts
+                return
+            desired_distance = distance - speed * p.mppi_horizon * p.mppi_dt
+            status = {"approach": self.approach.phase, "step": self.approach.steps}
+        target = ServoTarget(uv_meas=np.asarray(raw, float), K=K, image_hw=getattr(self, "image_hw", (480, 640)),
+                             T_flange_cam=T_fc, p_base=T_bc[:3, :3] @ target_cam + T_bc[:3, 3],
+                             force_n=float(self.current_force), desired_distance_m=float(desired_distance))
+        qd, diag = self.mppi_servo.step(self.arm_q, target)
+        msg = self._JointJog()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "stem_grasp"                   # tells these apart from the whole-body MPC's
+        msg.joint_names = [n.strip() for n in p.arm_joint_names.split(",")]
+        msg.velocities = [float(v) for v in qd]
+        self.pub_joint_cmd.publish(msg)
+        now = self._now()
+        if now - self._servo_status_t > 0.1:
+            self._servo_status_t = now
+            self.pub_servo_status.publish(String(data=json.dumps({
+                "controller": "mppi", "error_px": error_px, "depth_m": depth_z,
+                "raw_uv": [float(v) for v in raw], "desired_uv": [float(v) for v in desired],
+                "qd": [float(v) for v in qd], "solve_ms": diag["solve_ms"], "mode": diag["mode"],
+                "safety": diag["safety"], "distance_m": distance, "axis_miss_m": miss,
+                "plan_terms": diag.get("plan_terms", {}), "nominal_terms": diag.get("nominal_terms", {}),
                 **status})))
 
     def _approach_speed(self, error_px: float, distance_m: float, pixels: int) -> Optional[float]:
@@ -944,6 +1035,8 @@ class StemGraspPipeline(Node):
                 self.servo = self._make_servo()
                 self._servo_mask_stamp = None
                 self._servo_cam_prev = None
+            if new_state in servoing and self.mppi_servo is not None and self.state not in servoing:
+                self.mppi_servo.reset()
             self.approach = None
             if new_state == PipelineState.APPROACHING:
                 self.approach = IterativeApproach(self._approach_config(), start_t=self._now())

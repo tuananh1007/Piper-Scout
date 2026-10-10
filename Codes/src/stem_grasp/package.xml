@@ -21,6 +21,9 @@
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>image_transport</exec_depend>
   <exec_depend>moveit_msgs</exec_depend>
+  <exec_depend>control_msgs</exec_depend>
+  <!-- servo_controller: mppi (Phase 2B visual servo) -->
+  <exec_depend>scout_piper_whole_body_mpc</exec_depend>
   <exec_depend>moveit_ros_planning_interface</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-opencv</exec_depend>

@@ -41,6 +41,7 @@ needs R0–R8 of the same file.
 | Whole-body MPC | numpy MPPI + safety filter; **torch backend** (same model and cost on CUDA, `profile:=gpu` / `orin_gpu`); **W2 reactive QP** baseline; **30-scene plant benchmark** (W3 reaches 21/22 arm-unreachable targets: P3.3.2 gate passed, synthetic); **calibration tools** (slip, TCP pivot, hand-eye); semantic field from a topic; unknown-space policy `no_entry` | GPU / Orin timing (A2, B2), calibration on the robot (C2), runs on the robot (C3, C9) |
 | Semantic scene | CPU map + query + MoveIt plugin; **merged label image** from stem_grasp (P1.1.4); **`other` class** and **finger self-filter** in the demux / CPU map (P1.7.8); **nvblox ESDF bridge** → `/scene_repr/distance_field` (P1.3.1, P3.2.2); **target attractor** → `/scene_repr/target_goal` (P1.3.3); **RViz config** (P1.2.3); **semantic vs occupancy** benchmark, synthetic 18/20 vs 17/20 and an offline mode for recorded scenes (P1.4.2); `record_bag.sh scene` (P1.4.1) | first run of the per-class nvblox stack and the bridge (A4, B3), Orin rate (B3), recorded scenes (C5, D1), robot runs (C4) |
 | Piper-JEPA | Stage A memory, Stage B predictors, Stage C cost; **DINOv2 encoder** (T2); **E1 runner T0–T4** with the H1 go/no-go rule (P2A.6); **bag → episode export** with depth, poses, states, segmentation, labels; **annotation tool** (P2A.5, P3B.8); **training command** with GPU support (P3B.9); **latency benchmark** (P3B.10); **predictive MPC node C3** (P3B.11) | V-JEPA / DINOv2 inference (A6), GPU training and latency (A7, A8, B4), datasets (C6, C7), H1 decision (D2), E3 training (D3), C3 on the robot (C8) |
+| Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
 
 ---
 
@@ -257,6 +258,21 @@ kill %1
 **Pass:** `k_v` ≈ 0.9 and `k_omega` ≈ 0.75 (within 0.03): the fake base's
 odometry plays the external reference here. **Record:** the fitted values.
 
+### A13 — MPPI visual servo: cycle time and the hardware-free grasp (P2.1.1, P2.2.2)
+
+```bash
+python3 src/scout_piper_whole_body_mpc/benchmarks/visual_servo_timing.py --samples 256,512,1024 \
+  --out $LOG/A13_vs_timing.jsonl | tee $LOG/A13_vs_timing.txt
+./scripts/hardware_free_checks.sh --servo mppi 2>&1 | tee $LOG/A13_hwfree_mppi.txt
+```
+
+**Expect:** torch-CUDA median under 10 ms at 512 samples (CPU reference:
+numpy ~50 ms at 256, torch-CPU ~27 ms at 512); all grasp checks `PASS` with
+the MPPI servo. **Record:** the timing table; servo approach time and the
+"gripper axis through the stem" lines; with a GPU, rerun the grasp checks with
+`-p mppi_backend:=torch -p mppi_samples:=512` added to the pipeline (edit
+`hardware_free_checks.sh` or run `grasp_chain_check.py` by hand).
+
 ---
 
 ## Part B — Jetson AGX Orin
@@ -321,6 +337,13 @@ around it (pixel centre and radius from RViz):
 **Pass:** `cost_active: true` while the target is visible, MPC `solve_ms`
 under 90. (A model trained on `color_patch` features is needed for `-p jepa_model:=`;
 the A7 synthetic model has a different grid, so run without `jepa_model` here.)
+
+### B7 — MPPI visual servo cycle time on the Orin (P2.2.2)
+
+As A13 on the Orin: `visual_servo_timing.py --samples 256,512` and
+`hardware_free_checks.sh --profile orin --servo mppi`. **Pass:** torch-CUDA
+median under 10 ms at the chosen sample count. **Record:** the table; the
+`mppi_samples` / `mppi_backend` for the robot.
 
 ---
 
@@ -424,6 +447,20 @@ steps), tracker on the right flower at the end, goal error, per method.
 
 ---
 
+### C9 — MPPI visual servo vs IBVS on the robot (P2.3, first runs)
+
+After TEST_PROCEDURE.md R-steps for the grasp (servo and approach validated
+with the IBVS): the same stems, `servo_controller:=ibvs` and
+`servo_controller:=mppi` (`mppi_backend`, `mppi_samples` from B7), servo only
+first (`approach_enabled:=false`), then the stepwise approach. Hand on the
+E-stop; `mppi_qd_max` 0.3 for the first runs. **Record:** per run, image error
+over time (`/stem_grasp/servo_status`), approach time, final axis miss and
+distance, aborts; contact or leaf displacement by eye (the Piper has no force
+sensor). The P2.3 exit numbers (≥ 20 % success, ≥ 30 % force) need the 50-trial
+protocol and a force estimate.
+
+---
+
 ## Part D — Analysis on the PC (recorded data)
 
 ### D1 — Semantic vs occupancy on the recorded scenes (P1.4.2)
@@ -491,11 +528,13 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | A10 E1 pilot | | | table, annotation time |
 | A11 plant benchmarks | | | W0–W3, semantic vs occupancy |
 | A12 slip on the fake base | | | k_v, k_omega |
+| A13 MPPI servo timing + grasp | | | median ms per backend, approach s |
 | B2 MPC timing Orin | | | chosen profile, samples |
 | B3 nvblox on the Orin | | | integration ms per class, RAM |
 | B4 predictor latency Orin | | | samples |
 | B5 encoder on the Orin | | | ms per frame |
 | B6 C3 node hardware-free | | | cost active, solve ms |
+| B7 MPPI servo on the Orin | | | median ms, chosen samples |
 | C1 self-filter | | | boxes, filtered px |
 | C2 calibration | | | tcp offset, hand-eye origin, k_v, k_omega |
 | C3 MPC with profile | | | time, error |
@@ -504,6 +543,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | C6 E1 recorded | | | episodes, frames |
 | C7 E3 recorded | | | episodes, frames |
 | C8 C3 vs C2 on robot | | | in view, tracker, goal error |
+| C9 MPPI servo vs IBVS | | | error vs time, approach s, axis miss |
 | D1 semantic vs occupancy (real) | | | failures per representation |
 | D2 E1 + H1 | | | go / no-go |
 | D3 E3 training | | | E_target@4 per method |
