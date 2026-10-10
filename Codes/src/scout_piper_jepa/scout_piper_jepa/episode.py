@@ -9,6 +9,8 @@ Episode file (``.npz``):
   K            (3, 3) colour intrinsics — optional
   T_world_cam  (T, 4, 4) camera optical frame in world_frame (NaN: no TF) — optional
   states       (T, 9) whole-body state [x, y, θ, q1..q6] (NaN: missing) — E3
+  gripper      (T,) gripper opening in metres, finger joint 7 − joint 8 (NaN: missing) — optional,
+               the Δg of the action embedding
   seg_masks    (T, H, W) bool framewise segmentation from the bag (E1 baseline T0) — optional
   labels       (T, H, W) uint8 merged semantic labels (/stem_grasp/semantic_label) — optional,
                for building the semantic map offline (scout_piper_scene_repr offline.py)
@@ -80,10 +82,13 @@ class EpisodeAssembler:
     def __init__(self, rgb_topic: str, depth_topic: str = "", info_topic: str = "", odom_topic: str = "/odom",
                  joints_topic: str = "/joint_states", seg_topic: str = "", label_topic: str = "",
                  joint_names=tuple(f"piper_joint{i}" for i in range(1, 7)), world_frame: str = "odom",
-                 camera_frame: str = "", tf_lookup=None, stride: int = 1, max_dt: float = 0.05):
+                 camera_frame: str = "", tf_lookup=None, stride: int = 1, max_dt: float = 0.05,
+                 finger_joints=("piper_joint7", "piper_joint8")):
         self.t = dict(rgb=rgb_topic, depth=depth_topic, info=info_topic, odom=odom_topic,
                       joints=joints_topic, seg=seg_topic, label=label_topic)
         self.joint_names, self.world, self.cam_frame = list(joint_names), world_frame, camera_frame
+        self.finger_joints = list(finger_joints)
+        self.gripper = np.nan
         self.tf_lookup, self.stride, self.max_dt = tf_lookup, stride, max_dt
         self.K = None
         self.base = self.q = self.depth = self.seg = self.label = None
@@ -110,6 +115,9 @@ class EpisodeAssembler:
             idx = {n: i for i, n in enumerate(msg.name)}
             if all(n in idx for n in self.joint_names):
                 self.q = np.array([msg.position[idx[n]] for n in self.joint_names])
+            if len(self.finger_joints) == 2 and all(n in idx for n in self.finger_joints):
+                # each finger moves half the opening (stem_grasp convention)
+                self.gripper = float(msg.position[idx[self.finger_joints[0]]] - msg.position[idx[self.finger_joints[1]]])
         elif topic == t["rgb"]:
             if self.k % self.stride == 0:
                 self._frame(msg)
@@ -133,7 +141,7 @@ class EpisodeAssembler:
         if self.tf_lookup is not None:
             T = self.tf_lookup(self.world, self.cam_frame or msg.header.frame_id, ts)
         state = np.r_[self.base, self.q] if self.base is not None and self.q is not None else np.full(9, np.nan)
-        row = dict(frame=np.ascontiguousarray(img), stamp=ts, T=T, state=state,
+        row = dict(frame=np.ascontiguousarray(img), stamp=ts, T=T, state=state, gripper=self.gripper,
                    depth=None, seg=None, label=None, dt={"depth": np.inf, "seg": np.inf, "label": np.inf})
         for key in ("depth", "seg", "label"):                # the latest one received before the frame
             item = getattr(self, key)
@@ -150,6 +158,9 @@ class EpisodeAssembler:
         out = {"frames": frames, "stamps": np.array([r["stamp"] for r in self.rows]),
                "target_masks": np.zeros((Tn, H, W), bool),
                "states": np.stack([r["state"] for r in self.rows])}
+        g = np.array([r["gripper"] for r in self.rows], float)
+        if np.isfinite(g).any():
+            out["gripper"] = g
         if any(r["depth"] is not None for r in self.rows):
             out["depth"] = np.stack([r["depth"] if r["depth"] is not None and r["depth"].shape == (H, W)
                                      else np.full((H, W), np.nan, np.float32) for r in self.rows]).astype(np.float16)

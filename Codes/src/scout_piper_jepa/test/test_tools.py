@@ -41,12 +41,12 @@ def test_assembler_synchronises_depth_state_pose_and_segmentation():
 
     asm = EpisodeAssembler("/rgb", "/depth", "/info", seg_topic="/seg", tf_lookup=tf, stride=2)
     asm.add("/info", SimpleNamespace(k=[500.0, 0, 32, 0, 500.0, 24, 0, 0, 1]))
-    names = [f"piper_joint{i}" for i in range(1, 7)]
+    names = [f"piper_joint{i}" for i in range(1, 9)]
     for k in range(6):
         t = 1.0 + 0.1 * k
         asm.add("/odom", SimpleNamespace(pose=SimpleNamespace(pose=SimpleNamespace(
             position=SimpleNamespace(x=0.1 * k, y=0.0, z=0.0), orientation=_q(0.2)))))
-        asm.add("/joint_states", SimpleNamespace(name=names, position=[0.01 * k] * 6))
+        asm.add("/joint_states", SimpleNamespace(name=names, position=[0.01 * k] * 6 + [0.005 * k, -0.005 * k]))
         asm.add("/depth", _img(np.full((48, 64), 500 + k, np.uint16), "16UC1", t))
         asm.add("/seg", _img(np.full((48, 64), 255, np.uint8), "mono8", t + (0.01 if k == 2 else 0.2)))
         asm.add("/rgb", _img(np.full((48, 64, 3), k, np.uint8), "bgr8", t))
@@ -57,6 +57,7 @@ def test_assembler_synchronises_depth_state_pose_and_segmentation():
     assert np.allclose(ep["depth"][2], 0.504, atol=1e-3)                    # mm -> m, same frame
     assert list(ep["seg_masks"].reshape(3, -1).all(1)) == [False, True, True]    # within 50 ms, also late
     assert np.allclose(ep["T_world_cam"][:, 0, 3], [1.0, 1.2, 1.4])
+    assert np.allclose(ep["gripper"], [0.0, 0.02, 0.04])                    # opening = joint7 − joint8
     assert ep["K"][0, 0] == 500.0 and calls[0][:2] == ("odom", "camera_color_optical_frame")
     with pytest.raises(ValueError):
         EpisodeAssembler("/rgb").result()
@@ -140,12 +141,15 @@ def test_training_episodes_split_on_missing_states_and_score_persistence():
     states = np.tile(np.r_[0.0, 0.0, 0.0, 0.0, 1.2, -1.0, 0.0, 0.5, 0.0], (T, 1))
     states[:, 0] = np.linspace(0, 0.2, T)
     states[5] = np.nan
-    ep = {"frames": np.zeros((T, H, W, 3), np.uint8), "target_masks": tm, "states": states}
+    grip = np.linspace(0.06, 0.0, T)                                       # gripper closing
+    ep = {"frames": np.zeros((T, H, W, 3), np.uint8), "target_masks": tm, "states": states, "gripper": grip}
     fk = lambda q: np.broadcast_to(np.eye(4), np.shape(q)[:-1] + (4, 4))       # noqa: E731
     eps = training_episodes(ep, Z, fk, min_len=4)
     assert [len(e["Z"]) for e in eps] == [5, 6]
     e = eps[1]
     assert e["A"].shape == (5, 9) and e["target"].shape == (6, hf, wf) and e["visible"].all()
     assert np.allclose(e["u"][0], [28.0, 20.0])                              # target centre in pixels
+    assert np.allclose(e["A"][:, 8], np.diff(grip)[6:11])                    # Δg from the recorded opening
+    assert np.allclose(e["S"], states[6:12, 3:9])
     s = evaluate(PersistencePredictor(), eps, K=1, H=2, every=1)
     assert s["n_windows"] > 0 and s["E_target@1"] >= 0.0

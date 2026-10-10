@@ -212,4 +212,4 @@ active in 216 of 216 cycles once grounded; persistence predictor).
 - Stage B/C run only on the synthetic world: no recorded E3 episodes (P3B.8),
   no V-JEPA features, no GPU timing (P3B.10), and the closed-loop C3 result
   above is inconclusive (P3B.11).
-- Gripper state Δg is not wired (always 0).
+- Δg comes from the recorded finger joints (`gripper` in the episode, joint 7 − joint 8) for training; in MPC rollouts it is 0, since the whole-body MPC does not move the gripper.

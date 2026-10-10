@@ -10,8 +10,9 @@
 Per episode the dense features are computed once and cached next to it
 (``<episode>.feat_<encoder>_<entry>.npz``). Actions Γ come from consecutive
 whole-body states (``action.action_from_states`` with the Piper FK of
-scout_piper_whole_body_mpc); target / plant masks are reduced to the feature
-grid. Episodes are split (not windows) into training and test sets
+scout_piper_whole_body_mpc), Δg from the recorded gripper opening (the fingers
+enter the view when it closes); target / plant masks are reduced to the
+feature grid. Episodes are split (not windows) into training and test sets
 (``--test-frac``). Each method is saved as ``<out-dir>/<method>.pt``
 (``TorchACPredictor.load``) and scored against persistence with the E3
 metrics; ``results.json`` holds everything.
@@ -91,13 +92,15 @@ def training_episodes(ep: dict, Z: np.ndarray, fk, min_len: int) -> List[dict]:
     pm = ep.get("plant_masks", ep.get("seg_masks"))
     plant = np.stack([mask_to_grid(m, grid) >= 0.3 for m in pm]) if pm is not None else np.zeros_like(tgt)
     centers = cell_centers_px(grid, (H, W)).reshape(-1, 2)
+    grip = np.asarray(ep["gripper"], float) if "gripper" in ep else np.full(T, np.nan)
     out = []
     for sl in _segments(np.isfinite(states).all(1), min_len):
         t = tgt[sl]
         n = t.reshape(len(t), -1).sum(1)
         u = (t.reshape(len(t), -1, 1) * centers[None]).sum(1) / np.maximum(n, 1)[:, None]
         X = states[sl]
-        out.append({"Z": Z[sl].astype(np.float32), "A": action_from_states(X[:-1], X[1:], fk), "S": X[:, 3:9],
+        dg = np.nan_to_num(np.diff(grip[sl]))                         # gripper opening change (0 if unknown)
+        out.append({"Z": Z[sl].astype(np.float32), "A": action_from_states(X[:-1], X[1:], fk, dg=dg), "S": X[:, 3:9],
                     "target": t, "plant": plant[sl] | t,
                     "label": np.where(t, TARGET, np.where(plant[sl], STEM, BACKGROUND)),
                     "u": u, "visible": n > 0, "image_hw": (H, W)})

@@ -15,6 +15,8 @@
 The MPC plans in whole-body states, the predictor consumes action embeddings;
 ``StateConditionedPredictor`` converts state rollouts into actions with
 ``action_from_states`` at the predictor's step (``stride`` control steps).
+Δg is 0 there: the whole-body MPC does not move the gripper (training data
+carry the recorded Δg).
 """
 
 from __future__ import annotations
