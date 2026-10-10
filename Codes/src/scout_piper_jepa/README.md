@@ -105,24 +105,38 @@ fixed-threshold F1. P3 is the only predictor that beats persistence on every
 target metric, at every horizon. Caveats: synthetic features, one seed, a
 small CPU model; P1 (V-JEPA 2-AC) is not in the comparison.
 
-**Closed loop (C2 vs C3 with the oracle predictor), `benchmarks/visibility_mpc.py`:
-inconclusive.** Pre-grasp goal between the flower and its twin, 2 seeds,
-60 steps, MPPI with 64 samples:
+**Closed loop (C2 vs C3 with the oracle predictor), `benchmarks/visibility_mpc.py`.**
+First run (2026-10-07, 2 seeds, 60 steps, 64 samples): inconclusive. C3 kept
+the flower in view no more than C2 (75–87 % vs 90–93 %) and gave up 3–17 cm of
+goal error, because the visibility cost was added to the goal cost.
 
-| Method | Flower in view | Tracker ends on | Goal error |
-|---|---|---|---|
-| C2 geometry-only | 90–93 % | twin (2/2) | 0.3–1.0 cm |
-| C3-oracle, sequential read-out | 75–87 % | twin (2/2) | 3.2–4.4 cm |
-| C3-oracle, anchor refreshed by the tracker | 25–87 % | flower 1/2, twin 1/2 | 3.6–4.7 cm |
-| C3-oracle, anchor from grounding | 72–78 % | twin / elsewhere | 8.7–17 cm |
+Rerun (2026-10-10, 80 steps, CPU), with three changes:
+- a feasibility check: 52 % of 2885 sampled whole-body poses on the goal see
+  the flower (25 % near the image centre), so a view-preserving end pose exists;
+- `C3c`: the visibility cost as a `WholeBodyCost.secondary` term, allowed to
+  cost at most 1 cm of terminal goal error per control step;
+- `--hard`: start poses where geometry-only motion loses the flower (C2 run
+  from 30 random starts that see the flower; the 3 with the lowest visible
+  fraction kept).
 
-The cost does what it is built to do on candidate rankings (unit tests), but
-in closed loop it trades goal accuracy against a view of the flower that this
-pre-grasp pose may not offer at all, and 64 samples do not find a better
-compromise. Before claiming H4 this needs: a check that a view-preserving
-reachable path exists in the test scene, visibility as a near-goal constraint
-or a scheduled weight instead of a constant cost, more samples (GPU), and the
-learned predictor in the loop (P3B.11).
+| Start | Method | Flower in view | Tracker ends on flower | Goal error after 8 s |
+|---|---|---|---|---|
+| default, 3 seeds × 64 and 128 samples | C2 | 81–95 % | 2 of 6 | 0.1–1.0 cm |
+| | C3 (additive) | 36–94 % | 3 of 6 | 2.6–15.4 cm |
+| | C3c (secondary) | 51–94 % | 1 of 6 | 1.3–4.5 cm |
+| hard, 3 starts × 64 samples | C2 | 22–31 % | 0 of 3 | 0.2–0.9 cm |
+| | C3 (additive) | 89–100 % | 2 of 3 | 1.6–5.3 cm |
+| | C3c (secondary) | 80–95 % | 3 of 3 | 1.1–10.8 cm |
+
+Where geometry alone already keeps the flower in view (the default start)
+the visibility cost has nothing to add. Where it loses the view (hard starts),
+the oracle visibility cost keeps the flower in view 3–4 times as long and
+the tracker on it (5 of 6 C3 runs vs 0 of 3 for C2). The price is time: C3c
+gives up at most 1 cm of goal error per step but may slow down; two of the
+hard C3c runs were still 8–11 cm away when the 80 steps ended (longer runs
+below). Caveats: oracle predictor (the upper bound), synthetic world, three
+hard starts, a CPU sample count; the learned predictor in the loop is A9 /
+P3B.11.
 
 ## ROS interface
 
