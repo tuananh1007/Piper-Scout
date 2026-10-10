@@ -110,33 +110,39 @@ First run (2026-10-07, 2 seeds, 60 steps, 64 samples): inconclusive. C3 kept
 the flower in view no more than C2 (75–87 % vs 90–93 %) and gave up 3–17 cm of
 goal error, because the visibility cost was added to the goal cost.
 
-Rerun (2026-10-10, 80 steps, CPU), with three changes:
+Rerun (2026-10-10, CPU, 64 / 128 samples), with three changes:
 - a feasibility check: 52 % of 2885 sampled whole-body poses on the goal see
   the flower (25 % near the image centre), so a view-preserving end pose exists;
-- `C3c`: the visibility cost as a `WholeBodyCost.secondary` term, allowed to
-  cost at most 1 cm of terminal goal error per control step;
+- `C3c`: the visibility cost as a `WholeBodyCost.secondary` term: it may raise
+  the horizon-mean goal error by at most 1 cm over the best candidate, and by
+  at most 20 % of the remaining distance near the goal;
 - `--hard`: start poses where geometry-only motion loses the flower (C2 run
   from 30 random starts that see the flower; the 3 with the lowest visible
   fraction kept).
 
-| Start | Method | Flower in view | Tracker ends on flower | Goal error after 8 s |
-|---|---|---|---|---|
-| default, 3 seeds × 64 and 128 samples | C2 | 81–95 % | 2 of 6 | 0.1–1.0 cm |
-| | C3 (additive) | 36–94 % | 3 of 6 | 2.6–15.4 cm |
-| | C3c (secondary) | 51–94 % | 1 of 6 | 1.3–4.5 cm |
-| hard, 3 starts × 64 samples | C2 | 22–31 % | 0 of 3 | 0.2–0.9 cm |
-| | C3 (additive) | 89–100 % | 2 of 3 | 1.6–5.3 cm |
-| | C3c (secondary) | 80–95 % | 3 of 3 | 1.1–10.8 cm |
+| Start | Method | Flower in view | Tracker ends on flower | Goal error | Steps |
+|---|---|---|---|---|---|
+| default, 3 seeds | C2 | 81–95 % | 2 of 6 | 0.1–1.0 cm | 35–80 |
+| | C3 (additive) | 36–94 % | 3 of 6 | 2.6–15.4 cm | 80 (limit) |
+| | C3c (secondary) | 67–74 % | 0 of 3 | 0.8–1.0 cm | 18–31 |
+| hard, 3 starts | C2 | 17–31 % | 0 of 3 | 0.1–0.9 cm | 45–120 |
+| | C3 (additive) | 89–100 % | 2 of 3 | 1.6–5.3 cm | 80 (limit) |
+| | C3c (secondary) | 55–79 % | 1 of 3 | 0.4–1.0 cm | 14–22 |
 
-Where geometry alone already keeps the flower in view (the default start)
-the visibility cost has nothing to add. Where it loses the view (hard starts),
-the oracle visibility cost keeps the flower in view 3–4 times as long and
-the tracker on it (5 of 6 C3 runs vs 0 of 3 for C2). The price is time: C3c
-gives up at most 1 cm of goal error per step but may slow down; two of the
-hard C3c runs were still 8–11 cm away when the 80 steps ended (longer runs
-below). Caveats: oracle predictor (the upper bound), synthetic world, three
-hard starts, a CPU sample count; the learned predictor in the loop is A9 /
-P3B.11.
+The first C3c version tested only the plan's terminal error; a receding
+horizon then postponed progress (one hard start: flower in view for 16 s, 18 cm
+from the goal at the end), hence the horizon mean.
+
+Conclusion (oracle predictor, synthetic): the visibility cost no longer costs
+goal accuracy, and where geometry alone loses the flower it keeps it in view
+2.5–3.6 times as long during the approach. It does not decide what is seen at
+the end: near the goal the constraint hands control back to the goal cost, and
+from these approach directions the flower is hidden at the end pose C2 also
+reaches (in view at the end in 1 of 3 hard starts, as for C2). Identity at
+the grasp therefore needs the end pose itself chosen for the view (one of the
+52 % of goal poses that see the flower), not only a trajectory cost. Caveats:
+oracle predictor (the upper bound), three hard starts, CPU sample counts; the
+learned predictor in the loop is A9 / P3B.11.
 
 ## ROS interface
 
