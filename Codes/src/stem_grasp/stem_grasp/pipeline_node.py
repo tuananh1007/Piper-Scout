@@ -102,9 +102,14 @@ class PipelineParams:
     camera_optical_frame: str = "camera_color_optical_frame"
     move_group: str = "arm"
 
-    # Force / safety
+    # Force / safety. No wrist F/T sensor on the platform: force_topic carries
+    # the joint-effort estimate (scout_piper_whole_body_mpc effort_force_node),
+    # whose noise (its ~/status threshold_3sigma_n) both thresholds must clear.
     max_force_n: float = 2.0
     contact_threshold_n: float = 0.15
+    force_topic: str = "/ft_sensor/raw"
+    force_tare_service: str = ""          # e.g. /effort_force_estimator/tare: zeroed when servoing starts
+    force_max_age_sec: float = 0.5        # once a force has arrived, an older one stops the servo
 
     # Approach
     approach_target_distance: float = 0.25
@@ -225,6 +230,7 @@ class StemGraspPipeline(Node):
 
         # Latest observations
         self.current_force: float = 0.0
+        self.force_t: Optional[float] = None
         self.last_mask_centroid_uv: Optional[np.ndarray] = None
         self.last_mask: Optional[np.ndarray] = None
         self.last_mask_stamp: Optional[float] = None
@@ -257,6 +263,8 @@ class StemGraspPipeline(Node):
         # Components
         self.bridge = CvBridge()
         self.cb_group = ReentrantCallbackGroup()
+        self.tare_client = (self.create_client(Trigger, self.params.force_tare_service, callback_group=self.cb_group)
+                            if self.params.force_tare_service else None)
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
@@ -282,7 +290,7 @@ class StemGraspPipeline(Node):
 
         # ---------- subscribers ----------
         self.create_subscription(
-            WrenchStamped, "/ft_sensor/raw", self._on_wrench,
+            WrenchStamped, self.params.force_topic, self._on_wrench,
             qos_sensor, callback_group=self.cb_group,
         )
         self.create_subscription(
@@ -382,6 +390,16 @@ class StemGraspPipeline(Node):
     def _on_wrench(self, msg: WrenchStamped) -> None:
         f = msg.wrench.force
         self.current_force = float(np.sqrt(f.x * f.x + f.y * f.y + f.z * f.z))
+        self.force_t = self._now()
+
+    def _tare_force(self) -> None:
+        """Zero the force estimate before the servo moves toward the stem."""
+        if self.tare_client is None:
+            return
+        if not self.tare_client.service_is_ready():
+            self.get_logger().warn(f"{self.params.force_tare_service} not available: force not tared")
+            return
+        self.tare_client.call_async(Trigger.Request())
 
     def _on_stem_mask(self, msg: Image) -> None:
         try:
@@ -479,13 +497,15 @@ class StemGraspPipeline(Node):
 
     def _make_mppi_servo(self):
         """Phase 2B arm-only MPPI visual servo (scout_piper_whole_body_mpc)."""
-        from scout_piper_whole_body_mpc.visual_servo import MppiVisualServo, VisualServoConfig  # noqa: PLC0415
+        from scout_piper_whole_body_mpc.visual_servo import (MppiVisualServo, VisualServoConfig,  # noqa: PLC0415
+                                                              VisualServoWeights)
         p = self.params
         servo = MppiVisualServo(VisualServoConfig(
             dt=float(p.mppi_dt), horizon=int(p.mppi_horizon), samples=int(p.mppi_samples),
             qd_max=float(p.mppi_qd_max), tcp_offset_m=float(p.tcp_offset_m),
             approach_speed_mps=float(p.approach_speed_mps), backend=str(p.mppi_backend),
-            device=str(p.mppi_device)))
+            device=str(p.mppi_device)),
+            VisualServoWeights(contact_force_n=float(p.contact_threshold_n), max_force_n=float(p.max_force_n)))
         self.get_logger().info(f"MPPI visual servo: {p.mppi_samples} samples x {p.mppi_horizon} steps "
                                f"of {p.mppi_dt} s on {p.mppi_backend}")
         return servo
@@ -689,6 +709,13 @@ class StemGraspPipeline(Node):
         if self.current_force > self.params.max_force_n:
             self.get_logger().warn(
                 f"Force limit exceeded ({self.current_force:.3f} N) — back to SCANNING."
+            )
+            self._set_state(PipelineState.SCANNING)
+            return
+        if (self.force_t is not None and self.params.force_max_age_sec > 0
+                and self._age(self.force_t) > self.params.force_max_age_sec):
+            self.get_logger().warn(
+                f"no force on {self.params.force_topic} for {self.params.force_max_age_sec} s — back to SCANNING."
             )
             self._set_state(PipelineState.SCANNING)
             return
@@ -1037,6 +1064,8 @@ class StemGraspPipeline(Node):
                 self._servo_cam_prev = None
             if new_state in servoing and self.mppi_servo is not None and self.state not in servoing:
                 self.mppi_servo.reset()
+            if new_state in servoing and self.state not in servoing:
+                self._tare_force()
             self.approach = None
             if new_state == PipelineState.APPROACHING:
                 self.approach = IterativeApproach(self._approach_config(), start_t=self._now())

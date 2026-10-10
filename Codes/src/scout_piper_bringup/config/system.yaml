@@ -34,6 +34,16 @@ scout_driver:
     simulated_robot: false
 
 # ----------------------------------------------------------------------------
+# Contact force from joint efforts (bringup_force_estimate:=true; no F/T sensor)
+# ----------------------------------------------------------------------------
+effort_force_estimator:
+  ros__parameters:
+    tcp_offset_m: 0.14             # as stem_grasp_pipeline and the MPC
+    wrench_topic: "/ft_sensor/raw"
+    frame_id: "base_link"
+    filter_s: 0.1                  # s, low-pass on the joint-torque residual
+
+# ----------------------------------------------------------------------------
 # Stem-grasp pipeline (ports the dense ROS 1 launch arguments)
 # ----------------------------------------------------------------------------
 stem_grasp_pipeline:
@@ -57,7 +67,8 @@ stem_grasp_pipeline:
     # without a stem mask (>= approach_min_leaf_pixels) for approach_mask_wait_sec,
     # or after approach_timeout_sec. approach_goal_orientation_tolerance (a ROS 1
     # MoveIt tolerance) is unused. Off by default: it moves the gripper onto the
-    # stem, and the Piper has no force sensor for contact_threshold_n.
+    # stem, and the Piper has no force sensor; contact_threshold_n then relies on
+    # the joint-effort estimate (bringup_force_estimate:=true, see Force below).
     approach_enabled: false
     approach_target_distance: 0.25
     approach_step: 0.05
@@ -114,8 +125,16 @@ stem_grasp_pipeline:
     # capture_min_viewpoint_separation_deg: 20.0
 
     # --- Force / safety ---
+    # No wrist F/T sensor: with bringup_force_estimate:=true, effort_force_node
+    # publishes the joint-effort force estimate on force_topic and is tared
+    # through force_tare_service when servoing starts. Both thresholds must exceed
+    # the estimate's 3-sigma noise (calibrate_effort report, ~/status
+    # threshold_3sigma_n); 0.15 N is a wrist-sensor value, far below it.
     max_force_n: 2.0
     contact_threshold_n: 0.15
+    force_topic: "/ft_sensor/raw"
+    force_tare_service: "/effort_force_estimator/tare"
+    force_max_age_sec: 0.5
 
     # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
     servo_cmd_topic: "/servo_node/delta_twist_cmds"

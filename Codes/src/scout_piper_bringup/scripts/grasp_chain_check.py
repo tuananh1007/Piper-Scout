@@ -16,6 +16,12 @@ gripper opened for the approach and closed on the stem. ``--release`` then
 calls the pipeline's ``~/release`` and checks RELEASING -> RETREATING -> IDLE:
 the gripper opens and the gripper backs out along its axis.
 
+``--push-force N`` (servo only, with effort_force_node from
+bringup_force_estimate:=true): after ``--push-after`` s of servoing it applies
+N newtons at the fake arm's TCP (the fake driver's ``external_force_n``) and
+checks that the estimate stayed below the pipeline's max_force_n while
+servoing and that the pipeline then aborts to SCANNING within a second.
+
 Publishes a synthetic stem (a 4 mm vertical cylinder, z 0.25-0.60 m in odom):
 its robot-facing half as a point cloud on /stem_grasp/filtered_cloud, and, as
 a synthetic eye-in-hand camera, its mask on /stem_grasp/mask rendered from
@@ -67,13 +73,15 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--servo-seconds", type=float, default=15.0, help="servo time after the handoff")
     ap.add_argument("--release", action="store_true", help="after the grasp, release and retreat")
+    ap.add_argument("--push-force", type=float, default=0.0, help="N at the TCP while servoing (force abort)")
+    ap.add_argument("--push-after", type=float, default=4.0, help="servo seconds before the push")
     a = ap.parse_args()
 
     import numpy as np  # noqa: PLC0415
     import rclpy  # noqa: PLC0415
     import tf2_ros  # noqa: PLC0415
     from control_msgs.msg import JointJog  # noqa: PLC0415
-    from geometry_msgs.msg import PoseStamped  # noqa: PLC0415
+    from geometry_msgs.msg import PoseStamped, WrenchStamped  # noqa: PLC0415
     from nav_msgs.msg import Odometry  # noqa: PLC0415
     from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue  # noqa: PLC0415
     from rcl_interfaces.srv import GetParameters, SetParameters  # noqa: PLC0415
@@ -101,6 +109,9 @@ def main() -> int:
     n.create_subscription(JointJog, "/servo_node/delta_joint_cmds",
                           lambda m: m.header.frame_id != "stem_grasp" and jogs.append(time.time()), 50)
     n.create_subscription(Int8, "/servo_node/status", lambda m: servo.append(m.data), 100)
+    forces = []
+    n.create_subscription(WrenchStamped, "/ft_sensor/raw", lambda m: forces.append((time.time(), float(np.linalg.norm(
+        [m.wrench.force.x, m.wrench.force.y, m.wrench.force.z])))), 100)
     ibvs = []
     n.create_subscription(String, "/stem_grasp/servo_status",
                           lambda m: ibvs.append((time.time(), json.loads(m.data))), 50)
@@ -198,6 +209,44 @@ def main() -> int:
     if grasp:
         set_object_width(stem_width)
 
+    def set_force(f):
+        v = ParameterValue(type=ParameterType.PARAMETER_DOUBLE_ARRAY, double_array_value=[float(x) for x in f])
+        call(SetParameters, "/piper_ctrl_single_node/set_parameters",
+             SetParameters.Request(parameters=[Parameter(name="external_force_n", value=v)]))
+
+    if a.push_force and (approach or param("/effort_force_estimator", "wrench_topic") is None):
+        print("REFUSED: --push-force needs servo only (no approach) and bringup_force_estimate:=true", flush=True)
+        return 2
+
+    def push_force_check() -> int:
+        """Servo, push N at the TCP, expect the force abort (``--push-force``)."""
+        t_servo = next((t for t, s in states if s == servo_state), None)
+        spin(a.push_after)
+        max_force = param("/stem_grasp_pipeline", "max_force_n").double_value
+        before = [f for t, f in forces if t_servo is not None and t > t_servo]
+        t_push = time.time()
+        set_force([0.0, 0.0, -a.push_force])
+        while time.time() - t_push < 3.0 and states[-1][1] == servo_state:
+            spin(0.05)
+        t_abort = next((t for t, s in states if s == "SCANNING" and t > t_push), None)
+        set_force([0.0, 0.0, 0.0])
+        call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
+        seq = [s for _, s in states]
+        ok = []
+        for name, cond, detail in (
+                ("stem_grasp went REACHING -> " + servo_state, t_servo is not None, " -> ".join(seq)),
+                ("force estimate below max_force_n while servoing", before and max(before) < max_force,
+                 f"max {max(before or [float('nan')]):.2f} N over {len(before)} estimates "
+                 f"(max_force_n {max_force} N)"),
+                (f"{a.push_force} N at the TCP aborts to SCANNING", t_abort is not None and t_abort - t_push < 1.0,
+                 f"after {t_abort - t_push:.2f} s" if t_abort else "no abort: " + " -> ".join(seq))):
+            ok.append(bool(cond))
+            print(("PASS " if cond else "FAIL ") + f"{name}: {detail}", flush=True)
+        print("GRASP CHAIN", "OK" if all(ok) else "FAILED", flush=True)
+        n.destroy_node()
+        rclpy.shutdown()
+        return 0 if all(ok) else 1
+
     def link6():
         try:
             return tf_buffer.lookup_transform("odom", "piper_link6", rclpy.time.Time())
@@ -232,6 +281,8 @@ def main() -> int:
             while time.time() - t_release < 30.0 and states[-1][1] not in ("IDLE", "ABORTED"):
                 spin(0.2)
             released = (reply, link6(), t_release)
+    elif a.push_force:
+        return push_force_check()
     else:
         spin(a.servo_seconds)
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))

@@ -83,7 +83,7 @@ ros2 launch plant_twin plant_twin.launch.py
 | in | `/stem_grasp/filtered_cloud` | PointCloud2 | stem points |
 | in | `/stem_grasp/target_mask` | Image mono8 | leaf mask → outline + holes |
 | in | `/camera/aligned_depth_to_color/image_raw`, `/camera/color/camera_info` | Image, CameraInfo | back-project the mask contour (depth must be aligned to colour) |
-| in | `/ft_sensor/raw` | WrenchStamped | \|F\| > `contact_threshold_n` ⇒ touching |
+| in | `/ft_sensor/raw` | WrenchStamped | \|F\| > `contact_threshold_n` ⇒ touching; no F/T sensor on the platform: the joint-effort estimate (INSTALL.md 10.14), so the threshold must exceed its 3-σ noise |
 | in | `/joint_states` | JointState | `piper_joint7` < `gripper_closed_m` ⇒ grasped |
 | in (TF) | `piper_base_link → piper_link7` | | fingertip = contact point |
 | out | `/plant_twin/markers` | MarkerArray | TRIANGLE_LIST leaf, LINE_STRIP stem (RViz) |

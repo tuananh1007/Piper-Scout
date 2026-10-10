@@ -1175,8 +1175,11 @@ stops) on any of these:
 - no usable stem mask for `approach_mask_wait_sec`;
 - `approach_timeout_sec` passes.
 
-A force above `contact_threshold_n` also ends the approach, but the Piper has no
-force sensor (`/ft_sensor/raw`), so on the robot only the geometry stops it.
+A force above `contact_threshold_n` also ends the approach, and one above
+`max_force_n` sends any servo phase back to SCANNING. The Piper has no force
+sensor: `/ft_sensor/raw` then comes from the joint-effort estimate (10.14),
+whose noise both thresholds must clear; without it only the geometry stops the
+approach.
 
 **Grasp (`grasp_close_gripper: true`, off by default).** With the approach on,
 the pipeline opens the gripper to `grasp_open_width_m` (6 cm) before it
@@ -1354,7 +1357,7 @@ so with YOLO or `hsv_green` the node never initialises.
 **Check:** `ros2 topic echo /plant_twin/leaf_tip` and the `/plant_twin/markers`
 MarkerArray in RViz. Untested on hardware.
 
-- Nothing publishes `/ft_sensor/raw`: the platform has no wrist force/torque sensor ([research platform facts](research/README.md)). Without it `plant_twin` never sees a pull force, and force-based gates stay inactive until a sensor or a joint-effort estimate is added.
+- The platform has no wrist force/torque sensor ([research platform facts](research/README.md)); `/ft_sensor/raw` comes from the joint-effort estimate (10.14) when it runs, otherwise from nothing, and `plant_twin` never sees a pull force. Its `contact_threshold_n` (0.15 N, a wrist-sensor value) must be raised above the estimate's 3-σ noise.
 
 ### 10.12 Piper-JEPA target state node
 
@@ -1454,6 +1457,68 @@ outright (`kill -9`, a crash) cannot do that: keep the physical stops in reach.
 > only while servo is started and the bridge enabled. Start with a goal the
 > arm reaches without base motion, the wheels off the ground for the first
 > base motion.
+
+### 10.14 Contact force from joint efforts
+
+The platform has no wrist force/torque sensor. `effort_force_node`
+(`scout_piper_whole_body_mpc`) estimates the force on the TCP from the Piper's
+joint efforts and publishes it where a sensor would, `/ft_sensor/raw`
+(WrenchStamped, base_link; stem_grasp `force_topic`, plant_twin). Model
+(`dynamics/effort.py`): each joint effort is a gain times (gravity torque from
+the URDF masses − Jᵀ F) plus offset and friction; a calibration on free motion
+fits gain, offset and friction per joint, and the residual gives F by weighted
+least squares. Gravity loads neither joint 1 nor joint 6, so their gains are
+not identifiable and take the others' median (the driver is assumed to report
+all joints in one unit and sign). The model is quasi-static (no inertia; the
+servo moves at a few cm/s) and assumes contact at the TCP.
+`piper_joint_state_relay` passes the driver's efforts of joint1..6 on to
+`/joint_states`; whether the real driver fills them, and in what unit, is
+checked in the calibration (MODULE_TASKS.md C2 step 4). The fake driver
+simulates them (gravity, friction, noise, and a force at the TCP set by its
+`external_force_n` parameter).
+
+**Calibrate** (nothing touching the arm; servo started and the bridge enabled,
+as for the MPC):
+
+```bash
+ros2 run scout_piper_whole_body_mpc calibrate_effort --center 0,0.8,-1.2,0,0.45,0     # checks only
+ros2 run scout_piper_whole_body_mpc calibrate_effort --execute --center 0,0.8,-1.2,0,0.45,0 \
+    --payload-kg <camera + mount kg> --out ~/effort_calibration.json
+```
+
+It moves the arm to `--center` on a straight joint path, then through a slow
+multi-sine (120 s, ≤ 0.3 rad/s) and back, after checking that the arm stays
+5 cm above the Scout's top plate and 0.15 rad inside its joint limits (servo
+halts at 0.1). It stops the arm at the end, on Ctrl-C and when the arm stops
+following. The report gives the gains (`a`, same sign on all joints), the
+residual per joint, a held-out residual on the last quarter, and
+`threshold_3sigma_n`: the 3-σ force noise at the servo pose.
+
+**Run:**
+
+```bash
+ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true ... \
+    bringup_force_estimate:=true effort_calibration:=$HOME/effort_calibration.json
+ros2 topic echo /effort_force_estimator/status       # calibrated, noise_n, threshold_3sigma_n
+```
+
+stem_grasp tares the estimate through `force_tare_service`
+(`/effort_force_estimator/tare`, system.yaml) when a servo phase starts, and
+stops the servo when `force_topic` falls silent for `force_max_age_sec`
+after it has been seen. Set `contact_threshold_n` and `max_force_n` (system.yaml;
+stem_grasp passes both to the MPPI servo's force cost) and plant_twin's
+`contact_threshold_n` above `threshold_3sigma_n`; 0.15 N is a wrist-sensor
+value. Without `effort_calibration` the node warns and uses gain 1 and no
+friction: usable only at rest after a tare.
+
+**Hardware-free check:** `./scripts/hardware_free_checks.sh --only 'effort|force'`
+(both run in the full set, not with `--quick`). `effort_chain` tares the
+estimate on the fake arm at rest, applies 3 N and (2, −1, 0.5) N at the TCP
+(here within 0.04 N), then runs `calibrate_effort --execute` for 60 s (gains
+1.00, held-out residual 0.02 N·m, 3-σ 0.32 N at the fake's 0.02 N·m noise);
+`grasp_force_abort` servos on the synthetic stem with that calibration (the
+estimate stayed ≤ 0.08 N while the arm moved), applies 3 N and expects
+SCANNING within 1 s (0.2 s here).
 
 ## Research quick start without ROS (path D)
 

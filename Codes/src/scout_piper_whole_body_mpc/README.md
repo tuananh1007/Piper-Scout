@@ -22,7 +22,8 @@ arm-only (W0) and sequential base-then-arm (W1) comparators live alongside it.
 | `scenes.py` | synthetic cluttered-plant rows for P3.3 (capsule stems / branches, pots, disc leaves, targets at peduncles, pre-grasp goals) |
 | `torch_backend.py` | the same model, cost and MPPI in torch (CUDA on the RTX 3060 / Orin, or CPU); `TorchGridField` puts the semantic field on the device; autograd refinement; a cost with a `torch_cost` twin (the visual servo) runs on the device too |
 | `visual_servo.py` | Phase 2B MPPI visual servo (P2.1–P2.2): arm-only MPPI over the Piper joint velocities with image error (pseudo-Huber, toward the gripper-axis pixel), view barrier, joint barrier, manipulability, clearance, smoothness, contact-force and approach-distance costs; projective image prediction with a measured-pixel bias, or the linearised image Jacobian / online Broyden estimate when depth is gone; resolved-rate nominal as the sampling seed; every command through `SafetyFilter`; numpy and torch (`MppiVisualServo`, used by stem_grasp `servo_controller: mppi`) |
-| `calibration.py`, `calibration_nodes.py` | slip identification from an excitation plan and an external pose reference, TCP pivot calibration, eye-in-hand calibration (Park–Martin); ROS recorders `calibrate_slip`, `calibrate_tcp`, `calibrate_hand_eye` |
+| `calibration.py`, `calibration_nodes.py` | slip identification from an excitation plan and an external pose reference, TCP pivot calibration, eye-in-hand calibration (Park–Martin); ROS recorders `calibrate_slip`, `calibrate_tcp`, `calibrate_hand_eye`, `calibrate_effort` |
+| `dynamics/effort.py`, `effort_force_node.py` | contact force on the TCP from the Piper's joint efforts (no F/T sensor): gravity torques from the URDF inertials, per-joint gain / offset / friction fitted on free motion, weighted least-squares force, tare, per-axis noise; the calibration motion and its clearance check; ROS node publishing `/ft_sensor/raw` (INSTALL.md 10.14) |
 | `sim.py`, `benchmarks/` | closed-loop offline runs: `reachability.py` (R1–R3, O1), `plant_scenes.py` (W0–W3 on 30 plant scenes), `semantic_vs_occupancy.py` (P1.4.2, synthetic or recorded scenes), `timing.py` (numpy / torch / CUDA solve time), `visual_servo_timing.py` (Phase 2B cycle time vs the 10 ms budget) |
 | `controller_node.py` | ROS 2 node; **dry run by default**; `backend: torch` for the GPU; `extra_terms` hook (Piper-JEPA's predictive node) |
 
@@ -181,6 +182,13 @@ recorded scenes instead (scout_piper_scene_repr `offline.py`).
   orientation spreads below 20°.
 - `calibrate_hand_eye --aruco --marker-length <m>` (or `--board-topic`):
   flange and board poses → link6 → camera transform as a URDF `<origin>`.
+- `calibrate_effort --execute --center q1,..,q6` (2026-10-10): moves the arm
+  to the centre and through a slow multi-sine by JointJog (clearance above the
+  top plate and from the joint limits checked first), records the joint
+  efforts, fits the effort model of `effort_force_node` (joints 1 and 6 take
+  the median gain: gravity does not load them) and reports a held-out residual
+  and the 3-σ force threshold at the servo pose. On the fake arm: gains 1.00,
+  0.02 N·m held-out residual, 3-σ 0.32 N.
 
 ## Measured (offline, synthetic, 4-core x86 dev CPU)
 

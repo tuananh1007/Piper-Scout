@@ -30,6 +30,7 @@
   <!-- Our own packages -->
   <exec_depend>scout_piper_description</exec_depend>
   <exec_depend>stem_grasp</exec_depend>
+  <exec_depend>scout_piper_whole_body_mpc</exec_depend>   <!-- effort_force_node; fake driver efforts -->
 
   <!-- Upstream (pulled in via vcs import from repos.yaml) -->
   <exec_depend>piper</exec_depend>

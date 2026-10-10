@@ -26,5 +26,7 @@ setup(
         "calibrate_slip = scout_piper_whole_body_mpc.calibration_nodes:slip_main",
         "calibrate_tcp = scout_piper_whole_body_mpc.calibration_nodes:tcp_main",
         "calibrate_hand_eye = scout_piper_whole_body_mpc.calibration_nodes:hand_eye_main",
+        "calibrate_effort = scout_piper_whole_body_mpc.calibration_nodes:effort_main",
+        "effort_force_node = scout_piper_whole_body_mpc.effort_force_node:main",
     ]},
 )

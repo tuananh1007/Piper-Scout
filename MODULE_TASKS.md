@@ -41,6 +41,7 @@ needs R0–R8 of the same file.
 | Whole-body MPC | numpy MPPI + safety filter; **torch backend** (same model and cost on CUDA, `profile:=gpu` / `orin_gpu`); **W2 reactive QP** baseline; **30-scene plant benchmark** (W3 reaches 21/22 arm-unreachable targets: P3.3.2 gate passed, synthetic); **calibration tools** (slip, TCP pivot, hand-eye); semantic field from a topic; unknown-space policy `no_entry` | GPU / Orin timing (A2, B2), calibration on the robot (C2), runs on the robot (C3, C9) |
 | Semantic scene | CPU map + query + MoveIt plugin; **merged label image** from stem_grasp (P1.1.4); **`other` class** and **finger self-filter** in the demux / CPU map (P1.7.8); **nvblox ESDF bridge** → `/scene_repr/distance_field` (P1.3.1, P3.2.2); **target attractor** → `/scene_repr/target_goal` (P1.3.3); **RViz config** (P1.2.3); **semantic vs occupancy** benchmark, synthetic 18/20 vs 17/20 and an offline mode for recorded scenes (P1.4.2); `record_bag.sh scene` (P1.4.1) | first run of the per-class nvblox stack and the bridge (A4, B3), Orin rate (B3), recorded scenes (C5, D1), robot runs (C4) |
 | Piper-JEPA | Stage A memory, Stage B predictors, Stage C cost; **DINOv2 encoder** (T2); **E1 runner T0–T4** with the H1 go/no-go rule (P2A.6); **bag → episode export** with depth, poses, states, segmentation, labels; **annotation tool** (P2A.5, P3B.8); **training command** with GPU support (P3B.9); **latency benchmark** (P3B.10); **predictive MPC node C3** (P3B.11) | V-JEPA / DINOv2 inference (A6), GPU training and latency (A7, A8, B4), datasets (C6, C7), H1 decision (D2), E3 training (D3), C3 on the robot (C8) |
+| Contact force | no F/T sensor: **joint-effort force estimate** (`dynamics/effort.py`, `effort_force_node` on `/ft_sensor/raw`, `~/tare`), **`calibrate_effort`** (move to a checked centre, multi-sine, fit, held-out residual, 3-σ threshold); relay passes driver efforts; fake driver simulates efforts and a TCP force; stem_grasp `force_topic`, tare on servo start, stale-force stop, thresholds into the MPPI servo; hardware-free: 0.04 N error on 3 N, calibration gains 1.00, 3 N push aborts the servo in 0.2 s | real driver efforts and noise, calibration on the robot (C2 step 4) |
 | Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
 
 ---
@@ -266,6 +267,16 @@ kill %1
 **Pass:** `k_v` ≈ 0.9 and `k_omega` ≈ 0.75 (within 0.03): the fake base's
 odometry plays the external reference here. **Record:** the fitted values.
 
+Joint-effort calibration and the force estimate on the fake arm (INSTALL.md 10.14):
+
+```bash
+./scripts/hardware_free_checks.sh --only 'effort|force' --log-dir $LOG/A12_force | tee $LOG/A12_force.txt
+```
+
+**Pass:** `PASS  effort_chain` and `PASS  grasp_force_abort_0.95_0.15`.
+**Record:** the estimate errors, the calibration's gains, held-out residual and
+3-σ threshold, the abort delay.
+
 ### A13 — MPPI visual servo: cycle time and the hardware-free grasp (P2.1.1, P2.2.2)
 
 ```bash
@@ -395,8 +406,24 @@ link8 frames) until the finger voxels disappear; record the final values.
    `ros2 run scout_piper_whole_body_mpc calibrate_slip --execute --pose-topic <topic> --pose-type pose --out $LOG/C2_slip.json`.
    Put `k_v`, `k_omega` into `whole_body_mpc.yaml`. With `/odom` only the fit
    is ≈ 1 and says nothing (the tool warns).
+4. **Joint efforts → contact force** (INSTALL.md 10.14): first check that the
+   driver reports efforts, `ros2 topic echo /joint_states_single --field effort --once`
+   (seven numbers, changing when the arm is pushed lightly by hand with the
+   bridge disabled). Nothing near the arm, gripper free, servo started and the
+   bridge enabled; dry run, then
+   `ros2 run scout_piper_whole_body_mpc calibrate_effort --execute --center 0,0.8,-1.2,0,0.45,0 --payload-kg <camera + mount> --out $LOG/C2_effort.json`.
+   Expect joints 2–5 identified with gains of one sign, held-out residual close
+   to the in-sample one (a much larger one means the model misses something:
+   cable forces, a payload, inertia), and `threshold_3sigma_n`. Then launch
+   with `bringup_force_estimate:=true effort_calibration:=$LOG/C2_effort.json`,
+   tare (`ros2 service call /effort_force_estimator/tare std_srvs/srv/Trigger`)
+   and hang a known mass from the gripper (e.g. 200 g ≈ 1.96 N): the estimate's
+   z in `/ft_sensor/raw` should read about −1.96 N. Set stem_grasp
+   `contact_threshold_n`, `max_force_n` and plant_twin `contact_threshold_n`
+   above `threshold_3sigma_n`.
 
-**Record:** all three results and the residuals.
+**Record:** all four results and the residuals; for the force, the 3-σ
+threshold and the known-mass reading.
 
 ### C3 — MPC with the chosen profile on the robot
 
@@ -463,9 +490,10 @@ with the IBVS): the same stems, `servo_controller:=ibvs` and
 first (`approach_enabled:=false`), then the stepwise approach. Hand on the
 E-stop; `mppi_qd_max` 0.3 for the first runs. **Record:** per run, image error
 over time (`/stem_grasp/servo_status`), approach time, final axis miss and
-distance, aborts; contact or leaf displacement by eye (the Piper has no force
-sensor). The P2.3 exit numbers (≥ 20 % success, ≥ 30 % force) need the 50-trial
-protocol and a force estimate.
+distance, aborts; contact or leaf displacement by eye, and the joint-effort
+force (`/ft_sensor/raw`) once C2 step 4 has calibrated it (no F/T sensor). The
+P2.3 exit numbers (≥ 20 % success, ≥ 30 % force) need the 50-trial protocol and
+that calibrated force estimate.
 
 ---
 
@@ -536,6 +564,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | A10 E1 pilot | | | table, annotation time |
 | A11 plant benchmarks | | | W0–W3, semantic vs occupancy |
 | A12 slip on the fake base | | | k_v, k_omega |
+| A12 force estimate (fake arm) | | | estimate error, gains, 3-σ, abort s |
 | A13 MPPI servo timing + grasp | | | median ms per backend, approach s |
 | B2 MPC timing Orin | | | chosen profile, samples |
 | B3 nvblox on the Orin | | | integration ms per class, RAM |
@@ -544,7 +573,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | B6 C3 node hardware-free | | | cost active, solve ms |
 | B7 MPPI servo on the Orin | | | median ms, chosen samples |
 | C1 self-filter | | | boxes, filtered px |
-| C2 calibration | | | tcp offset, hand-eye origin, k_v, k_omega |
+| C2 calibration | | | tcp offset, hand-eye origin, k_v, k_omega, effort σ, 3-σ force, known-mass reading |
 | C3 MPC with profile | | | time, error |
 | C4 semantic scene on robot | | | bridge rates, clearances |
 | C5 20 scenes recorded | | | bag names |

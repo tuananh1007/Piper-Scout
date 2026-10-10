@@ -58,6 +58,16 @@ def test_relay_handles_order_missing_velocity_and_incomplete_messages():
     assert relay.relay_joint_state(["joint1", "joint2"], [0.0, 0.0], []) is None
 
 
+def test_relay_passes_arm_efforts_and_zeroes_the_fingers():
+    eff = [0.1, -2.0, 1.5, 0.2, 0.3, 0.01, 4.0]             # 7 names, 7 efforts (gripper last)
+    names, _, _ = relay.relay_joint_state(DRIVER_NAMES, [0.0] * 6 + [0.02], [])
+    assert relay.relay_effort(DRIVER_NAMES, eff, len(names)) == eff[:6] + [0.0, 0.0]
+    assert relay.relay_effort(DRIVER_NAMES, [], 8) == []              # none sent: none relayed
+    assert relay.relay_effort(DRIVER_NAMES, eff[:6], 8) == []         # not one per name: ambiguous
+    rev = list(reversed(DRIVER_NAMES[:6]))
+    assert relay.relay_effort(rev, [6, 5, 4, 3, 2, 1], 6) == [1, 2, 3, 4, 5, 6]
+
+
 def test_relay_refuses_to_publish_on_the_command_topic():
     assert relay._same_topic("/piper/joint_cmd", "piper/joint_cmd")
     assert not relay._same_topic("/joint_states", "/piper/joint_cmd")
@@ -200,6 +210,52 @@ def test_fake_gripper_stops_at_an_object_between_the_fingers():
     assert fake.gripper_step(0.008, 0.03, 0.001, object_width=0.008) == pytest.approx(0.009)  # opens
     assert fake.gripper_step(0.005, 0.0, 0.001, object_width=0.008) == pytest.approx(0.004)  # no object inside
     assert fake.gripper_step(0.03, 0.0, 0.001) == pytest.approx(0.029)
+
+
+def _effort_model():
+    """scout_piper_whole_body_mpc from the install, else from the source tree."""
+    import sys  # noqa: PLC0415
+    src = os.path.join(PKG, "..", "scout_piper_whole_body_mpc")
+    if src not in sys.path:
+        sys.path.append(src)
+    return pytest.importorskip("scout_piper_whole_body_mpc.dynamics.effort")
+
+
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_fake_efforts_calibrate_and_recover_an_injected_force(sign):
+    """Fake driver efforts -> relay -> calibration fit -> estimator, as on the robot."""
+    eff = _effort_model()
+    from scout_piper_whole_body_mpc.dynamics.piper import PiperKinematics  # noqa: PLC0415
+    import numpy as np  # noqa: PLC0415
+    kin = PiperKinematics()
+    rng = np.random.default_rng(0)
+    q0 = np.array([0.0, 0.8, -1.2, 0.0, 0.45, 0.0])
+    Q, QD, TAU = [], [], []
+    for t in np.arange(0.0, 120.0, 0.1):
+        q, qd = eff.effort_excitation(q0, t, 120.0)
+        tau = np.array(fake.simulated_effort(q, qd, sign=sign)) + rng.normal(0, 0.02, 6)
+        names, pos, vel = relay.relay_joint_state(DRIVER_NAMES, list(q) + [0.02], list(qd))
+        relayed = relay.relay_effort(DRIVER_NAMES, list(tau) + [0.0], len(names))
+        Q.append(pos[:6]), QD.append(vel[:6]), TAU.append(relayed[:6])
+    model = eff.fit_effort_model(kin, Q, QD, TAU)
+    assert np.allclose(model.a, sign, atol=0.05)
+    est = eff.ContactForceEstimator(kin, model, filter_s=0.0)
+    q = np.array([0.0, 1.2, -1.0, 0.0, 0.6, 0.0])
+    F = np.array([0.0, 0.0, -3.0])                           # 3 N pushing the gripper down
+    est.update(q, np.zeros(6), fake.simulated_effort(q, np.zeros(6), sign=sign), 0.01)
+    est.tare()
+    got = est.update(q, np.zeros(6), fake.simulated_effort(q, np.zeros(6), F, sign=sign), 0.01).force
+    assert np.allclose(got, F, atol=0.1), got
+
+
+def test_force_estimate_starts_only_with_the_arm():
+    _, ctx, actions = _setup(bringup_arm="true", fake_arm="true", bringup_force_estimate="true")
+    (node,) = _nodes(actions, "scout_piper_whole_body_mpc")
+    assert node.node_executable == "effort_force_node"
+    _, _, off = _setup(bringup_force_estimate="true")         # no arm: no efforts to read
+    assert _nodes(off, "scout_piper_whole_body_mpc") == []
+    _, _, default = _setup(bringup_arm="true")
+    assert _nodes(default, "scout_piper_whole_body_mpc") == []
 
 
 def test_servo_and_bridge_start_together_on_the_command_topic():

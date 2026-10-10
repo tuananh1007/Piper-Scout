@@ -143,6 +143,19 @@ def _declare_args():
                         "real driver (no CAN, no hardware).",
         ),
         DeclareLaunchArgument(
+            "bringup_force_estimate",
+            default_value="false",
+            description="With bringup_arm:=true, start effort_force_node: the contact force "
+                        "estimated from the Piper's joint efforts, on /ft_sensor/raw (there is "
+                        "no wrist F/T sensor). Trusted only with effort_calibration.",
+        ),
+        DeclareLaunchArgument(
+            "effort_calibration",
+            default_value="",
+            description="EffortModel JSON from calibrate_effort for bringup_force_estimate "
+                        "(empty: uncalibrated defaults).",
+        ),
+        DeclareLaunchArgument(
             "fake_base",
             default_value="false",
             description="With bringup_base:=true, start fake_scout_base.py instead of the "
@@ -247,6 +260,23 @@ def _launch_setup(context, *args, **kwargs):
         }],
         condition=IfCondition(LaunchConfiguration("bringup_arm")),
     )
+
+    # Contact force from the joint efforts the relay passes on (no F/T sensor).
+    force_estimate = []
+    if _is_true(context, "bringup_force_estimate") and arm_on:
+        force_estimate = [Node(
+            package="scout_piper_whole_body_mpc",
+            executable="effort_force_node",
+            name="effort_force_estimator",
+            output="screen",
+            parameters=[system_params, {
+                "calibration_file": LaunchConfiguration("effort_calibration"),
+                "use_sim_time": use_sim,
+            }],
+            additional_env={"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
+        )]
+    elif _is_true(context, "bringup_force_estimate"):
+        force_estimate = [LogInfo(msg="bringup_force_estimate ignored: it needs bringup_arm:=true")]
 
     # moveit_servo + the bridge that is its only way to the arm. Servo waits for
     # /servo_node/start_servo; the bridge waits for /piper_servo_bridge/enable.
@@ -437,7 +467,7 @@ def _launch_setup(context, *args, **kwargs):
         pointcloud,
         pipeline,
         rviz,
-    ] + gui
+    ] + force_estimate + gui
 
 
 def generate_launch_description():

@@ -4,6 +4,7 @@
     ros2 run scout_piper_whole_body_mpc calibrate_tcp
     ros2 run scout_piper_whole_body_mpc calibrate_hand_eye --board-topic /board_pose
     ros2 run scout_piper_whole_body_mpc calibrate_hand_eye --aruco --marker-length 0.08
+    ros2 run scout_piper_whole_body_mpc calibrate_effort [--execute | --record-only] [--center q1,..,q6]
 
 ``calibrate_slip`` drives the Scout through ``calibration.excitation_plan``
 (straight runs, arcs, turns on the spot; about 50 s; it ends near the start)
@@ -21,6 +22,21 @@ either from a detector that publishes geometry_msgs/PoseStamped
 (``--board-topic``) or from the built-in single ArUco marker detection
 (``--aruco``, needs OpenCV with the aruco module). Results are printed and
 saved as JSON (``--out``).
+
+``calibrate_effort`` fits the joint-effort model of the contact-force
+estimate (dynamics/effort.py, effort_force_node) on free motion: nothing may
+touch the arm or the gripper. With ``--execute`` it moves the arm through
+``effort_excitation`` (a slow multi-sine, about 0.3 rad/s at most, starting and
+ending at its centre) by JointJog on moveit_servo (``--jog-topic``; servo
+started and piper_servo_bridge enabled, as for the MPC), after checking the
+motion's clearance above the Scout's top plate. The centre is the current
+pose, or ``--center``, which the arm first moves to on a straight joint path
+(checked as well). It stops the arm at the end, on Ctrl-C and when the arm
+stops following. ``--record-only`` records while another tool moves the arm.
+Without either it only checks the motion around ``--center``. The fit uses the samples slower than ``--max-speed`` and
+reports a held-out residual (last quarter of the run) and the force noise
+at the start pose and at the servo pose; ``--out`` is the
+effort_force_node ``calibration_file``.
 """
 
 from __future__ import annotations
@@ -36,6 +52,9 @@ from typing import List, Optional
 import numpy as np
 
 from .calibration import excitation_plan, hand_eye, identify_slip, pivot_calibration, rpy_from_matrix
+
+SERVO_POSE = (0.0, 1.2, -1.0, 0.0, 0.6, 0.0)          # typical pose while servoing on a stem
+EFFORT_CENTER = (0.0, 0.8, -1.2, 0.0, 0.45, 0.0)      # clears the top plate and the joint limits
 
 
 def _quat_T(t, q) -> np.ndarray:
@@ -139,6 +158,212 @@ def slip_main(argv=None) -> None:
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=1)
     _stop(rclpy, node, executor, spin)
+
+
+# ------------------------------------------------------------------ effort
+def _parse_q(text: str) -> np.ndarray:
+    q = np.array([float(v) for v in text.split(",")])
+    if q.shape != (6,):
+        raise ValueError(f"need 6 joint values, got {text!r}")
+    return q
+
+
+def _clearance_problem(chk: dict, min_clearance: float) -> Optional[str]:
+    if not chk["within_limits"]:
+        return f"comes within {chk['min_limit_margin_rad']:.2f} rad of a joint limit (servo halts at 0.1)"
+    if chk["min_deck_clearance_m"] < min_clearance:
+        return (f"comes within {100 * chk['min_deck_clearance_m']:.1f} cm of the top plate "
+                f"(< {100 * min_clearance:.0f} cm)")
+    return None
+
+
+def _check_effort_motion(q0: np.ndarray, duration: float, kin, min_clearance: float,
+                         q_start: Optional[np.ndarray] = None, speed: float = 0.15) -> Optional[str]:
+    """Problem with the calibration motion around q0 (and the move there from
+    ``q_start``), or None."""
+    from .dynamics.effort import excitation_check, joint_move, motion_clearance  # noqa: PLC0415
+    if q_start is not None:
+        T = joint_move(q_start, q0, 0.0, speed)[2]
+        path = motion_clearance([joint_move(q_start, q0, t, speed)[0] for t in np.linspace(0.0, T, 50)], kin)
+        print(f"move from q = {np.round(q_start, 3).tolist()} ({T:.0f} s): {json.dumps(path)}")
+        why = _clearance_problem(path, min_clearance)
+        if why:
+            return "move to the centre " + why
+    chk = excitation_check(q0, duration, kin)
+    print(f"motion around q = {np.round(q0, 3).tolist()}: {json.dumps(chk)}")
+    return _clearance_problem(chk, min_clearance)
+
+
+def fit_effort_report(kin, Q, QD, TAU, payload_kg: float = 0.0, holdout: float = 0.25):
+    """Fit on all samples; refit without the last ``holdout`` fraction to
+    report the residual on unseen poses; force noise at the servo pose."""
+    from .dynamics.effort import ContactForceEstimator, fit_effort_model  # noqa: PLC0415
+    model = fit_effort_model(kin, Q, QD, TAU, payload_kg=payload_kg)
+    n = int(len(Q) * (1.0 - holdout))
+    rep = {"samples": int(len(Q)), "identified": model.identified, "a": np.round(model.a, 4).tolist(),
+           "sigma_nm": np.round(model.sigma, 4).tolist()}
+    if n >= 50 and len(Q) - n >= 20:
+        train = fit_effort_model(kin, Q[:n], QD[:n], TAU[:n], payload_kg=payload_kg)
+        res = TAU[n:] - train.free_torque(kin, Q[n:], QD[n:])
+        rep["holdout_sigma_nm"] = np.round(np.std(res, axis=0), 4).tolist()
+        rep["holdout_bias_nm"] = np.round(np.mean(res, axis=0), 4).tolist()
+    noise = ContactForceEstimator(kin, model).force_noise(np.array(SERVO_POSE))
+    rep["force_noise_servo_pose_n"] = np.round(noise, 3).tolist()
+    rep["threshold_3sigma_n"] = round(3.0 * float(np.linalg.norm(noise)), 3)
+    return model, rep
+
+
+def effort_main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Joint-effort model for the contact-force estimate")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--execute", action="store_true", help="move the arm (moveit_servo JointJog)")
+    mode.add_argument("--record-only", action="store_true", help="record while another tool moves the arm")
+    ap.add_argument("--center", default=None,
+                    help="q1,..,q6 centre of the motion (default: the current pose; without --execute "
+                         + ",".join(str(v) for v in EFFORT_CENTER) + ")")
+    ap.add_argument("--duration", type=float, default=120.0, help="seconds")
+    ap.add_argument("--joint-topic", default="/joint_states")
+    ap.add_argument("--joint-names", default=",".join(f"piper_joint{i}" for i in range(1, 7)))
+    ap.add_argument("--jog-topic", default="/servo_node/delta_joint_cmds")
+    ap.add_argument("--rate", type=float, default=50.0, help="command rate Hz")
+    ap.add_argument("--gain", type=float, default=2.0, help="1/s, feedback onto the motion")
+    ap.add_argument("--qd-max", type=float, default=0.3, help="rad/s per joint")
+    ap.add_argument("--move-speed", type=float, default=0.15, help="rad/s peak for the move to --center")
+    ap.add_argument("--max-tracking-error", type=float, default=0.25, help="rad before aborting")
+    ap.add_argument("--min-clearance", type=float, default=0.05, help="m above the top plate")
+    ap.add_argument("--max-speed", type=float, default=0.5, help="rad/s; faster samples are not fitted")
+    ap.add_argument("--tcp-offset", type=float, default=0.14)
+    ap.add_argument("--payload-kg", type=float, default=0.0,
+                    help="mass on link6 that the URDF inertials lack (camera, mount)")
+    ap.add_argument("--out", default="effort_calibration.json")
+    a = ap.parse_args(argv)
+    from .dynamics.effort import effort_excitation, joint_move  # noqa: PLC0415
+    from .dynamics.piper import PiperKinematics  # noqa: PLC0415
+    kin = PiperKinematics(tcp_offset_m=a.tcp_offset)
+    center = _parse_q(a.center) if a.center else None
+    if not (a.execute or a.record_only):
+        why = _check_effort_motion(center if center is not None else np.array(EFFORT_CENTER), a.duration, kin,
+                                   a.min_clearance)
+        print(f"not safe from this pose: {why}" if why else "clear from this pose")
+        print("dry run: --execute moves the arm (nothing near it, stop in reach)")
+        return 1 if why else 0
+
+    import rclpy  # noqa: PLC0415
+    from control_msgs.msg import JointJog  # noqa: PLC0415
+    from sensor_msgs.msg import JointState  # noqa: PLC0415
+
+    names = [n.strip() for n in a.joint_names.split(",")]
+    rclpy.init()
+    node = rclpy.create_node("calibrate_effort")
+    pub = node.create_publisher(JointJog, a.jog_topic, 10)
+    rows: List[tuple] = []
+    no_effort = []
+
+    def on_joints(msg) -> None:
+        idx = {n: i for i, n in enumerate(msg.name)}
+        if not all(n in idx for n in names):
+            return
+        if len(msg.effort) != len(msg.name):
+            no_effort.append(1)
+            return
+        sel = [idx[n] for n in names]
+        vel = [msg.velocity[i] for i in sel] if len(msg.velocity) == len(msg.name) else [0.0] * 6
+        rows.append((time.monotonic(), [msg.position[i] for i in sel], vel, [msg.effort[i] for i in sel]))
+
+    node.create_subscription(JointState, a.joint_topic, on_joints, 100)
+    executor, spin = _spin_in_thread(rclpy, node)
+
+    def send(qd) -> None:
+        jog = JointJog()
+        jog.header.stamp = node.get_clock().now().to_msg()
+        jog.header.frame_id = "calibrate_effort"
+        jog.joint_names = names
+        jog.velocities = [float(v) for v in qd]
+        pub.publish(jog)
+
+    aborted = None
+    i0 = 0
+    try:
+        t_wait = time.monotonic() + 5.0
+        while not rows and time.monotonic() < t_wait:
+            time.sleep(0.05)
+        if not rows:
+            raise RuntimeError(f"no joint states with effort on {a.joint_topic}"
+                               + (" (messages carry no effort)" if no_effort else ""))
+        q_now = np.array(rows[-1][1])
+        q0 = q_now if center is None else center
+        if a.execute:
+            why = _check_effort_motion(q0, a.duration, kin, a.min_clearance,
+                                       None if center is None else q_now, a.move_speed)
+            if why:
+                raise RuntimeError(f"motion {why}; choose another --center (e.g. "
+                                   + ",".join(str(v) for v in EFFORT_CENTER) + ")")
+
+        def follow(path, duration: float) -> Optional[str]:
+            """Track path(t) -> (q, q̇) by JointJog with position feedback."""
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < duration:
+                if time.monotonic() - rows[-1][0] > 0.5:
+                    return f"no joint states on {a.joint_topic} for 0.5 s"
+                q_des, qd_des = path(time.monotonic() - t0)
+                err = q_des - np.array(rows[-1][1])
+                if time.monotonic() - t0 > 5.0 and np.abs(err).max() > a.max_tracking_error:
+                    return (f"arm {np.abs(err).max():.2f} rad off the motion: not following "
+                            "(servo started, bridge enabled?)")
+                send(np.clip(qd_des + a.gain * err, -a.qd_max, a.qd_max))
+                time.sleep(1.0 / a.rate)
+            return None
+
+        if a.execute and center is not None:
+            T = joint_move(q_now, q0, 0.0, a.move_speed)[2]
+            print(f"moving to the centre ({T:.0f} s; Ctrl-C stops the arm)")
+            aborted = follow(lambda t: joint_move(q_now, q0, t, a.move_speed)[:2], T + 1.0)
+        i0 = len(rows)
+        if aborted is None and a.execute:
+            print(f"calibration motion for {a.duration:.0f} s (Ctrl-C stops the arm)")
+            aborted = follow(lambda t: effort_excitation(q0, t, a.duration), a.duration)
+        elif aborted is None:
+            print(f"recording for {a.duration:.0f} s: move the arm slowly through its range, nothing touching it")
+            time.sleep(a.duration)
+    except KeyboardInterrupt:
+        aborted = "interrupted"
+    except RuntimeError as exc:
+        aborted = str(exc)
+    finally:
+        if a.execute:
+            for _ in range(5):
+                send(np.zeros(6))
+                time.sleep(0.05)
+    _stop(rclpy, node, executor, spin)
+    result = {"aborted": aborted, "joint_topic": a.joint_topic, "duration_s": a.duration}
+    rows = rows[i0:]                                  # the calibration motion only
+    if rows:
+        T = np.array([r[0] for r in rows])
+        Q, QD, TAU = (np.array([r[k] for r in rows], float) for k in (1, 2, 3))
+        np.savez(a.out.replace(".json", "") + "_raw.npz", t=T, q=Q, qd=QD, effort=TAU)
+        slow = np.max(np.abs(QD), axis=1) <= a.max_speed
+        try:
+            model, rep = fit_effort_report(kin, Q[slow], QD[slow], TAU[slow], a.payload_kg)
+            result.update(rep)
+            if aborted is None:
+                model.save(a.out)
+                with open(a.out, encoding="utf-8") as f:
+                    saved = json.load(f)
+                saved["report"] = result
+                with open(a.out, "w", encoding="utf-8") as f:
+                    json.dump(saved, f, indent=1)
+                print(json.dumps(result, indent=1))
+                print(f"\nsaved {a.out}: effort_force_node calibration_file; set stem_grasp contact_threshold_n "
+                      f"and max_force_n above {rep['threshold_3sigma_n']} N (3-σ at the servo pose)")
+                return 0
+        except (ValueError, np.linalg.LinAlgError) as exc:
+            result["error"] = str(exc)
+    failed = a.out.replace(".json", "") + "_failed.json"
+    print(json.dumps(result, indent=1))
+    print(f"not calibrated ({aborted or result.get('error', 'no samples')}): report in {failed}")
+    with open(failed, "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=1)
+    return 1
 
 
 def _spin_in_thread(rclpy, node):

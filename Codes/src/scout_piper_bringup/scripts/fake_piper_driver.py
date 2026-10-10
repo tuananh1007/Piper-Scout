@@ -19,12 +19,24 @@ max_joint_speed`` and publishes ``joint_states_single`` (joint1..6, gripper).
 It is a kinematic stand-in, not a model of the Piper's dynamics. An object
 between the fingers can be simulated with the ``object_width_m`` parameter
 (settable at run time): a closing gripper stops at that width.
+
+Joint efforts (N·m) are simulated as the torque that holds the arm against
+gravity (URDF masses, scout_piper_whole_body_mpc.dynamics.effort), plus
+friction, ``effort_noise_nm`` of noise and the torque of a force at the TCP,
+``external_force_n`` [fx, fy, fz] in base_link (settable at run time), so the
+joint-effort force estimate (effort_force_node) can be tested.
+``effort_sign`` -1 mimics a driver with the opposite sign convention.
 """
 
+import random
 import signal
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+# friction of the simulated joints (offset, Coulomb, viscous), N·m and N·m·s/rad
+FAKE_FRICTION = {"b": [0.05, -0.1, 0.05, 0.0, 0.02, 0.0], "c": [0.3, 0.4, 0.2, 0.05, 0.05, 0.02],
+                 "d": [0.3, 0.5, 0.3, 0.1, 0.1, 0.05]}
+_EFFORT = {}
 
 
 def interpret_command(names: Sequence[str], position: Sequence[float], velocity: Sequence[float]
@@ -52,6 +64,23 @@ def gripper_step(width: float, target: float, max_delta: float, object_width: fl
     return new
 
 
+def simulated_effort(q: Sequence[float], qd: Sequence[float], force: Sequence[float] = (0.0, 0.0, 0.0),
+                     sign: float = 1.0, tcp_offset_m: float = 0.14) -> Optional[List[float]]:
+    """Noise-free efforts of joint1..6, or None without scout_piper_whole_body_mpc."""
+    key = (float(sign), float(tcp_offset_m))
+    if key not in _EFFORT:
+        try:
+            from scout_piper_whole_body_mpc.dynamics.effort import EffortModel  # noqa: PLC0415
+            from scout_piper_whole_body_mpc.dynamics.piper import PiperKinematics  # noqa: PLC0415
+        except ImportError:
+            return None
+        _EFFORT[key] = (PiperKinematics(tcp_offset_m=tcp_offset_m),
+                        EffortModel(a=[float(sign)] * 6, **{k: [float(sign) * x for x in v]
+                                                            for k, v in FAKE_FRICTION.items()}))
+    kin, model = _EFFORT[key]
+    return [float(v) for v in model.torque(kin, q, qd, force)]
+
+
 def _interrupt(signum, frame) -> None:
     raise KeyboardInterrupt
 
@@ -74,6 +103,15 @@ def main() -> None:
             self.gripper_vmax = float(p("max_gripper_speed", 0.05).value)  # m/s at 100 %
             self.dt = 1.0 / float(p("rate_hz", 100.0).value)
             p("object_width_m", 0.0)                 # read every tick: settable at run time
+            p("external_force_n", [0.0, 0.0, 0.0])   # read every tick: settable at run time
+            self.effort_on = bool(p("simulate_effort", True).value)
+            self.effort_noise = float(p("effort_noise_nm", 0.02).value)
+            self.effort_sign = float(p("effort_sign", 1.0).value)
+            self.tcp_offset = float(p("tcp_offset_m", 0.14).value)
+            self.rng = random.Random(0)
+            if self.effort_on and simulated_effort(self.q, [0.0] * 6) is None:
+                self.get_logger().warn("scout_piper_whole_body_mpc not found: no joint efforts published")
+                self.effort_on = False
             self.target, self.gripper_target, self.speed = list(self.q), self.gripper, 100.0
             self.pub = self.create_publisher(JointState, "joint_states_single", 10)
             self.create_subscription(JointState, "joint_ctrl_single", self._cmd, 10)
@@ -96,6 +134,11 @@ def main() -> None:
             out.name = list(JOINTS) + ["gripper"]
             out.position = self.q + [self.gripper]
             out.velocity = [(a - b) / self.dt for a, b in zip(self.q, q_old)]
+            if self.effort_on:
+                force = list(self.get_parameter("external_force_n").value)
+                force = force if len(force) == 3 else [0.0, 0.0, 0.0]
+                tau = simulated_effort(self.q, out.velocity, force, self.effort_sign, self.tcp_offset)
+                out.effort = [t + self.rng.gauss(0.0, self.effort_noise) for t in tau] + [0.0]
             self.pub.publish(out)
 
     # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler

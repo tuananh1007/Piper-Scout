@@ -6,7 +6,9 @@ on ``/joint_states_single`` with names ``joint1``..``joint6`` plus ``gripper``
 (total opening in metres). The unified URDF, robot_state_publisher, the
 whole-body MPC and plant_twin read ``/joint_states`` with ``piper_joint1``..
 ``piper_joint6`` and the two mirrored finger joints ``piper_joint7`` (0..0.035 m)
-and ``piper_joint8`` (-0.035..0 m). This node bridges the two.
+and ``piper_joint8`` (-0.035..0 m). This node bridges the two. Joint efforts of joint1..joint6 are passed on
+unchanged (the finger joints get 0); effort_force_node estimates the contact
+force from them.
 
 Safety: the upstream launch file makes the driver execute ``/joint_states`` as
 joint commands. full_system.launch.py starts the driver with its command input
@@ -34,7 +36,7 @@ def relay_joint_state(names: Sequence[str], position: Sequence[float], velocity:
 
     Returns None unless all six arm joints are present. The gripper opening is
     split evenly between the two fingers; the driver reports no finger
-    velocity, so finger velocities are 0. Effort is not relayed.
+    velocity, so finger velocities are 0. Efforts: ``relay_effort``.
     """
     pos = dict(zip(names, position))
     if len(velocity) == len(names):
@@ -54,6 +56,17 @@ def relay_joint_state(names: Sequence[str], position: Sequence[float], velocity:
         out_pos += [half, -half]
         out_vel += [0.0, 0.0]
     return out_names, out_pos, out_vel
+
+
+def relay_effort(names: Sequence[str], effort: Sequence[float], n_out: int) -> List[float]:
+    """Efforts for the relayed joints: joint1..joint6 as given, 0 for the
+    fingers; [] when the driver sends none (or not one per name)."""
+    if len(effort) != len(names):
+        return []
+    eff = dict(zip(names, effort))
+    if not all(j in eff for j in ARM_JOINTS):
+        return []
+    return [float(eff[j]) for j in ARM_JOINTS] + [0.0] * (n_out - len(ARM_JOINTS))
 
 
 def _same_topic(a: str, b: str) -> bool:
@@ -100,6 +113,7 @@ def main() -> None:
             out = JointState()
             out.header = msg.header
             out.name, out.position, out.velocity = r
+            out.effort = relay_effort(msg.name, msg.effort, len(out.name))
             self.pub.publish(out)
 
     # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler

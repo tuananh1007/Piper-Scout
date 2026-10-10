@@ -7,19 +7,21 @@
 #   ./scripts/hardware_free_checks.sh                    # all checks, default MPC profile
 #   ./scripts/hardware_free_checks.sh --profile orin     # on the Jetson AGX Orin
 #   ./scripts/hardware_free_checks.sh --quick            # servo, MPC and one full grasp only
+#   ./scripts/hardware_free_checks.sh --only 'effort|force'   # the force-estimate checks only
 #
 # Options: --profile default|orin   MPC profile (whole_body_mpc.launch.py profile:=)
 #          --servo ibvs|mppi        stem_grasp servo controller for the grasp checks (Phase 2B)
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
-#          --quick                  skip the extra stem positions
+#          --quick                  skip the extra stem positions and the force-estimate checks
+#          --only REGEX             run only the checks whose name matches (bash regex)
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 10 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 13 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
-profile=default quick=0 servo=ibvs
+profile=default quick=0 servo=ibvs only=""
 log_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test_logs/hwfree_$(date +%Y%m%d_%H%M%S)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,6 +29,7 @@ while [[ $# -gt 0 ]]; do
     --log-dir) log_dir="$2"; shift 2 ;;
     --quick)   quick=1; shift ;;
     --servo)   servo="$2"; shift 2 ;;
+    --only)    only="$2"; shift 2 ;;
     -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -61,13 +64,16 @@ stop_all() {
 trap 'stop_all; exit 130' INT TERM
 
 results=()
+bringup_extra=()   # extra full_system.launch.py arguments for the next checks
 run_check() {   # run_check <name> <with_base 0|1> <with_mpc 0|1> <pipeline args or -> <checker command...>
   local name="$1" base="$2" mpc="$3" pipe="$4"; shift 4
+  [[ -n "$only" && ! "$name" =~ $only ]] && return
   local dir="$log_dir/$name"
   mkdir -p "$dir"
   echo "== $name"
   local bringup=(ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true fake_arm:=true
-                 bringup_servo:=true bringup_rviz:=false bringup_pipeline:=false)
+                 bringup_servo:=true bringup_rviz:=false bringup_pipeline:=false
+                 ${bringup_extra[@]+"${bringup_extra[@]}"})
   (( base )) && bringup+=(bringup_base:=true fake_base:=true)
   start "$dir/bringup.log" "${bringup[@]}"
   (( mpc )) && start "$dir/mpc.log" ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py \
@@ -97,6 +103,15 @@ if (( ! quick )); then
     ros2 run scout_piper_bringup grasp_chain_check.py 1.1 -0.1
   run_check grasp_full_1.25_0.0 1 1 "-p approach_enabled:=true -p grasp_close_gripper:=true" \
     ros2 run scout_piper_bringup grasp_chain_check.py 1.25 0.0 --release
+  # Contact force from the fake arm's joint efforts: estimate, calibration, then the
+  # pipeline's force abort with that calibration (no F/T sensor on the platform)
+  cal="$log_dir/effort_calibration.json"
+  bringup_extra=(bringup_force_estimate:=true)
+  run_check effort_chain 0 0 - ros2 run scout_piper_bringup effort_chain_check.py --calibrate "$cal"
+  bringup_extra=(bringup_force_estimate:=true effort_calibration:="$cal")
+  run_check grasp_force_abort_0.95_0.15 1 1 "-p force_tare_service:=/effort_force_estimator/tare" \
+    ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15 --push-force 3.0
+  bringup_extra=()
 fi
 ros2 daemon stop > /dev/null 2>&1
 
