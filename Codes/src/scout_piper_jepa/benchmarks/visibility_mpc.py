@@ -14,7 +14,10 @@ first checks that the scene allows a view-preserving end pose: of the sampled
 whole-body poses that put the TCP on the goal, the fraction that see the
 flower. C3 runs with the visibility cost additive (``C3-*``, the P3B.7 setup)
 and secondary (``C3c-*``: it may cost at most ``--tol`` of goal error,
-``WholeBodyCost.secondary``). Reported per run:
+``WholeBodyCost.secondary``). ``--hard N`` first runs C2 (cheap) from N
+random start poses that see the flower and keeps the ``--hard-k`` where C2
+loses the view most: only there can a visibility cost show a gain. Reported
+per run:
   visible_frac   fraction of control steps with the flower truly in view
   centre_px      mean distance of the flower from the image centre when visible
   final_visible  flower in view at the end
@@ -78,6 +81,17 @@ def view_feasibility(world, model, cam, goal, n=200_000, z_tol=0.01, seed=0):
     H, W = world.camera.image_hw
     centred = vis & (np.linalg.norm(u - [W / 2, H / 2], axis=1) < W / 4)
     return len(X), float(vis.mean()) if len(X) else 0.0, float(centred.mean()) if len(X) else 0.0
+
+
+def candidate_starts(world, model, cam, n, rng, min_dist=0.25, pool=40000):
+    """n start states (base at the origin) whose camera sees the flower, TCP
+    farther than ``min_dist`` from it, otherwise random."""
+    cand = np.concatenate([np.zeros((pool, 3)), rng.uniform(model.kin.lower, model.kin.upper, (pool, 6))], 1)
+    far = np.linalg.norm(model.tcp_world(cand)[:, :3, 3] - world.target_position(), axis=1) > min_dist
+    cand = cand[far]
+    _, vis = target_truth(world.render(cam(cand))["label"], world.camera)
+    cand = cand[vis]
+    return cand[rng.choice(len(cand), min(n, len(cand)), replace=False)]
 
 
 def upsample(mask_grid, image_hw):
@@ -169,6 +183,8 @@ def main() -> None:
     ap.add_argument("--tol", type=float, default=0.01, help="m of goal error the C3c visibility cost may cost")
     ap.add_argument("--methods", default="C2,C3-oracle,C3c-oracle",
                     help="of C2, C3-oracle, C3c-oracle, C3-learned, C3c-learned")
+    ap.add_argument("--hard", type=int, default=0, help="screen N random starts with C2, keep the worst")
+    ap.add_argument("--hard-k", type=int, default=3)
     ap.add_argument("--stride", type=int, default=0,
                     help="controller steps per predictor step (0: from --model's training interval, "
                          "2 if it has none; without --model 4)")
@@ -195,6 +211,19 @@ def main() -> None:
     n_goal, f_vis, f_centre = view_feasibility(world, m, cam, goal)
     print(json.dumps({"feasibility": {"goal": list(goal), "goal_poses": n_goal, "flower_visible": round(f_vis, 3),
                                       "flower_near_centre": round(f_centre, 3)}}), flush=True)
+    if a.hard:
+        starts = candidate_starts(world, m, cam, a.hard, np.random.default_rng(1))
+        screen = []
+        for i, xs in enumerate(starts):
+            r = run("C2", world, m, cam, xs, goal, 0, a.steps, None, samples=a.samples)
+            screen.append((r["visible_frac"], i))
+            print(json.dumps({"screen": i, **r}), flush=True)
+        worst = [i for _, i in sorted(screen)[:a.hard_k]]
+        for i in worst:
+            for name in names:
+                r = run(name, world, m, cam, starts[i], goal, 0, a.steps, preds[name], samples=a.samples, tol_m=a.tol)
+                print(json.dumps({"start": i, **r}), flush=True)
+        return
     for seed in range(a.seeds):
         for name in names:
             print(json.dumps(run(name, world, m, cam, x0, goal, seed, a.steps, preds[name], samples=a.samples,

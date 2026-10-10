@@ -203,14 +203,22 @@ predictive MPC; whether raw V-JEPA features fit at all (if not, D3 needs
 ### A9 — Closed loop C2 vs C3 on the synthetic world (P3B.7 rerun)
 
 ```bash
-python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --seeds 3 \
-  --model $LOG/A7_e3_synthetic/P3.pt 2>&1 | tee $LOG/A9_c2_c3.txt
+python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --seeds 3 --samples 256 \
+  --methods C2,C3-oracle,C3c-oracle,C3c-learned --model $LOG/A7_e3_synthetic/P3.pt 2>&1 | tee $LOG/A9_c2_c3.txt
+# starts where geometry-only motion loses the flower (C2 screened on 30 random starts)
+python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --hard 30 --hard-k 5 --samples 256 \
+  --methods C2,C3c-oracle,C3c-learned --model $LOG/A7_e3_synthetic/P3.pt 2>&1 | tee $LOG/A9_c2_c3_hard.txt
 ```
 
-**Expect:** rows for C2, C3-oracle and C3-learned. The question (inconclusive
-on the CPU with 64 samples): does C3 keep the flower in view more often
-without a larger goal error. **Record:** visible fraction, tracker end state
-and goal error per method and seed.
+**Expect:** the feasibility line (share of goal poses that see the flower),
+then rows per method. `C3-*` adds the visibility cost to the goal cost (the
+2026-10-07 setup, which gave up 3–15 cm of goal error); `C3c-*` lets it cost
+at most 1 cm (`--tol`). The question: does C3c keep the flower in view more
+often, and the tracker on it, without a larger goal error, above all on the
+hard starts. CPU reference (64 / 128 samples, default start): C3c keeps the
+goal error at 1.3–1.8 cm but does not see the flower more than C2 (C2 already
+keeps it in view 81–95 % there). **Record:** visible fraction, tracker end
+state and goal error per method and start; samples.
 
 ### A10 — E1 pilot with a hand-held camera (P2A.5 / P2A.6 rehearsal)
 
