@@ -30,15 +30,21 @@ from .action import FK, action_from_states
 class DensePredictor(Protocol):
     history: int        # frames of context K
 
-    def rollout(self, Z_hist: np.ndarray, actions: np.ndarray) -> np.ndarray:
-        """Z_hist (B, K, Hf, Wf, C), actions (B, H, 9) -> (B, H, Hf, Wf, C)."""
+    def rollout(self, Z_hist: np.ndarray, actions: np.ndarray, states=None) -> np.ndarray:
+        """Z_hist (B, K, Hf, Wf, C), actions (B, H, 9), states (B, H, 6) joint
+        angles at the start of each step or None -> (B, H, Hf, Wf, C)."""
+
+
+def joint_states(ep: dict) -> np.ndarray:
+    """Joint angles (T, 6) of an episode: ``S``, else the arm part of ``states`` (T, 9)."""
+    return np.asarray(ep["S"]) if "S" in ep else np.asarray(ep["states"])[:, 3:9]
 
 
 @dataclass
 class PersistencePredictor:
     history: int = 1
 
-    def rollout(self, Z_hist: np.ndarray, actions: np.ndarray) -> np.ndarray:
+    def rollout(self, Z_hist: np.ndarray, actions: np.ndarray, states=None) -> np.ndarray:
         Z = np.asarray(Z_hist)[:, -1]
         return np.repeat(Z[:, None], np.shape(actions)[1], axis=1)
 
@@ -65,7 +71,12 @@ class StateConditionedPredictor:
         Xs = _strided(np.asarray(X, float), self.stride)
         A = action_from_states(Xs[:, :-1], Xs[:, 1:], self.fk)
         Zh = np.broadcast_to(np.asarray(Z_hist)[None], (len(Xs),) + np.shape(Z_hist))
-        return self.predictor.rollout(Zh, A)
+        return self.predictor.rollout(Zh, A, states=Xs[:, :-1, 3:9])
+
+    def descriptor(self, r: np.ndarray) -> np.ndarray:
+        """The target descriptor in the predictor's feature space (projected models)."""
+        f = getattr(self.predictor, "descriptor", None)
+        return f(r) if f is not None else np.asarray(r)
 
 
 @dataclass

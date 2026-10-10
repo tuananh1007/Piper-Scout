@@ -103,8 +103,8 @@ def test_state_predictor_uses_strided_actions():
     class Rec:
         history = 1
 
-        def rollout(self, Z_hist, actions):
-            self.actions = actions
+        def rollout(self, Z_hist, actions, states=None):
+            self.actions, self.states = actions, states
             return np.repeat(Z_hist[:, -1:], actions.shape[1], 1)
 
     rec = Rec()
@@ -112,8 +112,10 @@ def test_state_predictor_uses_strided_actions():
     X = np.zeros((3, 9, 9))
     X[:, :, 0] = np.arange(9) * 0.01                          # base moves 1 cm per control step
     Z = np.zeros((1, 12, 16, 4))
+    X[:, :, 3] = np.arange(9) * 0.1                          # joint 1 at the start of each step
     out = sp.predict(Z, X)
     assert out.shape == (3, 4, 12, 16, 4) and np.allclose(rec.actions[..., 0], 0.02)
+    assert rec.states.shape == (3, 4, 6) and np.allclose(rec.states[0, :, 0], [0.0, 0.2, 0.4, 0.6])
 
 
 # ---------------------------------------------------------------- metrics
@@ -266,3 +268,74 @@ def test_trained_predictor_uses_the_action():
     persistence = l1(Zh[:, -1])
     assert l1(p2.rollout(Zh, A)[:, 0]) < 0.85 * persistence
     assert l1(p2.rollout(Zh, A)[:, 0]) < l1(p0.rollout(Zh, A)[:, 0])
+
+
+def _state_episodes(n, seed, T=8, hw=(6, 8), C=8):
+    """The grid shifts by the sign of joint 1 (−1, 0 or +1 cell per step) with no
+    action: predictable from the joint state, not from the (zero) actions."""
+    rng = np.random.default_rng(seed)
+    eps = []
+    for _ in range(n):
+        Z = rng.normal(size=hw + (C,))
+        Z /= np.linalg.norm(Z, axis=-1, keepdims=True)
+        S = np.zeros((T, 6))
+        S[:, 0] = rng.choice([-0.5, 0.0, 0.5], T)
+        Zs = [Z]
+        for k in range(T - 1):
+            Zs.append(np.roll(Zs[-1], int(np.sign(S[k, 0])), axis=1))
+        none = np.zeros((T,) + hw, bool)
+        eps.append({"Z": np.array(Zs, np.float32), "A": np.zeros((T - 1, 9)), "S": S, "target": none, "plant": none})
+    return eps
+
+
+def test_joint_state_input_is_used_and_required():
+    """P_φ(Z, a, s): the state-conditioned predictor learns what the actions do not carry."""
+    _need_torch()
+    from scout_piper_jepa.torch_predictor import ACPredictorConfig, train_predictor
+    train, test = _state_episodes(48, 0), _state_episodes(16, 1)
+    Zh = np.stack([e["Z"][t - 1:t + 1] for e in test for t in range(1, 6)])
+    A = np.zeros((len(Zh), 1, 9))
+    S = np.stack([e["S"][t:t + 1] for e in test for t in range(1, 6)])
+    Zn = np.stack([e["Z"][t + 1] for e in test for t in range(1, 6)])
+
+    def l1(P):
+        return float(np.abs(P - Zn).sum(-1).mean())
+
+    kw = dict(grid_hw=(6, 8), feat_dim=8, history=2, horizon=2, d_model=32, layers=2, heads=2,
+              steps=200, batch=16, lr=2e-3)
+    with_s = train_predictor(train, ACPredictorConfig.p2(use_state=True, **kw))
+    without = train_predictor(train, ACPredictorConfig.p2(**kw))
+    assert with_s.cfg.state_std[0] == pytest.approx(np.sqrt(2 / 3) * 0.5, abs=0.05)
+    assert l1(with_s.rollout(Zh, A, states=S)[:, 0]) < 0.85 * l1(without.rollout(Zh, A)[:, 0])
+    with pytest.raises(ValueError):
+        with_s.rollout(Zh, A)
+    assert not ACPredictorConfig.p0(use_state=True).use_state         # P0 stays action- and state-free
+
+
+def test_feature_projection_and_shared_context(tmp_path):
+    _need_torch()
+    from scout_piper_jepa.torch_predictor import (ACPredictorConfig, TorchACPredictor, fit_projection,
+                                                  project_features)
+    rng = np.random.default_rng(0)
+    basis = np.linalg.qr(rng.normal(size=(64, 4)))[0]                    # features in a 4-D subspace
+    Z = rng.normal(size=(3, 6, 8, 4)) @ basis.T
+    Z /= np.linalg.norm(Z, axis=-1, keepdims=True)
+    W, energy = fit_projection([Z], 4)
+    assert W.shape == (64, 4) and energy == pytest.approx(1.0, abs=1e-6)
+    a, b = Z[0, 0, 0], Z[1, 2, 3]
+    pa, pb = project_features(a, W), project_features(b, W)
+    assert float(pa @ pb) == pytest.approx(float(a @ b), abs=1e-5)       # cosine kept inside the subspace
+    cfg = ACPredictorConfig(grid_hw=(6, 8), feat_dim=4, input_dim=64, history=2, d_model=16, layers=1, heads=2)
+    model = TorchACPredictor(cfg, proj=W)
+    shared = np.broadcast_to(Z[:2][None].astype(np.float32), (5, 2, 6, 8, 64))
+    A = rng.normal(0, 0.1, (5, 3, 9))
+    out = model.rollout(shared, A)
+    assert out.shape == (5, 3, 6, 8, 4)
+    assert np.allclose(out, model.rollout(np.ascontiguousarray(shared), A), atol=1e-6)
+    assert np.allclose(out[:, 0], project_features(Z[1], W), atol=1e-5)     # untrained = persistence
+    assert np.allclose(model.descriptor(a), pa)
+    with pytest.raises(ValueError):
+        model.rollout(shared[..., :4], A)                                 # projected models take raw features
+    model.save(str(tmp_path / "proj.pt"))
+    again = TorchACPredictor.load(str(tmp_path / "proj.pt"))
+    assert np.allclose(again.proj, W) and np.allclose(again.rollout(shared, A), out, atol=1e-6)

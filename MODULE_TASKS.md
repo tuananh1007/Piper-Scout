@@ -182,14 +182,22 @@ for persistence). **Record:** the table and the training time per model.
 ```bash
 python3 -m scout_piper_jepa.latency --device cuda --samples 32,64,128,256,512 --out $LOG/A8_latency.jsonl | tee $LOG/A8_latency.txt
 python3 -m scout_piper_jepa.latency --device cuda --fp16 --samples 64,256 | tee -a $LOG/A8_latency.txt
+# V-JEPA-sized features (ViT-L at 256 px: 16 x 16 x 1024), raw and projected to 64 channels (D3 --proj-dim 64)
+python3 -m scout_piper_jepa.latency --device cuda --grid 16 16 --feat-dim 1024 --state --samples 32,64,128,256 \
+  --out $LOG/A8_latency.jsonl | tee -a $LOG/A8_latency.txt
+python3 -m scout_piper_jepa.latency --device cuda --grid 16 16 --input-dim 1024 --feat-dim 64 --state \
+  --samples 32,64,128,256,512 --out $LOG/A8_latency.jsonl | tee -a $LOG/A8_latency.txt
 ```
 
 **Expect:** the largest sample count whose `cost` p95 stays under ~40 ms
 (two MPPI iterations per 100 ms step). The rollouts cover the 20-step MPC
 horizon at a predictor step of 2 MPC steps (10 predictor steps; with
 `--model`, the stride comes from its training frame interval). CPU reference:
-64 samples × 4 predictor steps took 250 ms.
-**Record:** the table; the chosen `samples` for the predictive MPC.
+64 samples × 4 predictor steps took 250 ms; 32 samples × 10 steps of
+16 × 16 features took 1270 ms with 1024 channels, 440 ms projected to 64.
+**Record:** the table per feature size; the chosen `samples` for the
+predictive MPC; whether raw V-JEPA features fit at all (if not, D3 needs
+`--proj-dim`).
 
 ### A9 — Closed loop C2 vs C3 on the synthetic world (P3B.7 rerun)
 
@@ -286,8 +294,9 @@ GPU load from `tegrastats`, number of classes that fit.
 ### B4 — Predictor latency on the Orin (P3B.10)
 
 As A8 with `--device cuda` on the Orin, with the A7 model
-(`--model .../P3.pt`). **Record:** the table; the sample count for C3 on the
-Orin (cost p95 under ~40 ms).
+(`--model .../P3.pt`) and the two V-JEPA-sized runs (raw and projected); later
+with the D3 model. **Record:** the table; the sample count for C3 on the
+Orin (cost p95 under ~40 ms) per feature size.
 
 ### B5 — Encoder speed on the Orin
 
@@ -444,12 +453,17 @@ recovery without lower retention.
 
 ```bash
 python3 -m scout_piper_jepa.train e3_episodes/*.npz --encoder vjepa --hub-entry <A6 entry> \
-  --image-size 256 --device cuda --steps 3000 --out-dir $LOG/D3_e3_vjepa | tee $LOG/D3_train.txt
+  --image-size 256 --device cuda --steps 3000 --proj-dim 64 --out-dir $LOG/D3_e3_vjepa | tee $LOG/D3_train.txt
 ```
+
+`--proj-dim 64` keeps the predicted features small enough for the control
+loop (A8); omit it, or try 128, if A8 shows raw features fit. P2 / P3 also take
+the joint angles as input (`--no-state` for the ablation).
 
 Features are cached next to each episode (first run is the slow one).
 **Record:** the E3 table (persistence / P0 / P2 / P3), training time, and
-`setup.step_s` from `results.json` (0.2 s with the C7 export stride); keep
+`setup.step_s` from `results.json` (0.2 s with the C7 export stride) and
+`setup.proj_energy` (the feature energy the projection keeps); keep
 `P3.pt` for C8 and B4.
 
 ### D4 — Update PROGRESS.md

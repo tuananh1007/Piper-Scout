@@ -22,6 +22,13 @@ step of the MPC must span the same time: the predictive MPC node derives
 ``jepa_stride`` from it (``jepa_stride / rate_hz`` = ``step_s``), so export
 the episodes with ``--stride`` giving a multiple of the MPC period (camera
 at 30 fps, MPC at 10 Hz: ``--stride 6`` → 0.2 s, ``jepa_stride`` 2).
+
+P2 / P3 condition on the joint angles (P_φ(Z, a, s), research plan §10;
+``--no-state`` ablates it); P0 uses neither actions nor state.
+``--proj-dim N`` projects the encoder features onto their top N principal
+directions (fitted on the training episodes, stored in the checkpoint) before
+training and scoring: V-JEPA features have 768–1024 channels, too many for
+predicting hundreds of rollouts per control step (``latency.py``).
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from .action import action_from_states
-from .predictor import PersistencePredictor
+from .predictor import PersistencePredictor, joint_states
 from .prediction_metrics import score_predictions
 from .synthetic import BACKGROUND, STEM, TARGET
 from .target_memory import cell_centers_px, mask_to_grid
@@ -90,7 +97,7 @@ def training_episodes(ep: dict, Z: np.ndarray, fk, min_len: int) -> List[dict]:
         n = t.reshape(len(t), -1).sum(1)
         u = (t.reshape(len(t), -1, 1) * centers[None]).sum(1) / np.maximum(n, 1)[:, None]
         X = states[sl]
-        out.append({"Z": Z[sl].astype(np.float32), "A": action_from_states(X[:-1], X[1:], fk),
+        out.append({"Z": Z[sl].astype(np.float32), "A": action_from_states(X[:-1], X[1:], fk), "S": X[:, 3:9],
                     "target": t, "plant": plant[sl] | t,
                     "label": np.where(t, TARGET, np.where(plant[sl], STEM, BACKGROUND)),
                     "u": u, "visible": n > 0, "image_hw": (H, W)})
@@ -109,7 +116,9 @@ def target_descriptor(ep: dict) -> Optional[np.ndarray]:
 # ----------------------------------------------------------- evaluation
 def evaluate(pred, episodes: Sequence[dict], K: int, H: int, every: int = 3,
              r_fixed: Optional[np.ndarray] = None) -> Dict[str, float]:
-    """E3 scores, averaged over episodes weighted by their number of windows."""
+    """E3 scores, averaged over episodes weighted by their number of windows.
+    With ``--proj-dim`` the episodes hold projected features already."""
+    kw = {"projected": True} if getattr(pred, "proj", None) is not None else {}
     acc, total = {}, 0
     for ep in episodes:
         r = r_fixed if r_fixed is not None else target_descriptor(ep)
@@ -119,7 +128,8 @@ def evaluate(pred, episodes: Sequence[dict], K: int, H: int, every: int = 3,
         for t0 in range(K - 1, len(ep["Z"]) - H, every):
             if not ep["visible"][t0]:
                 continue
-            Zp.append(pred.rollout(ep["Z"][None, t0 - K + 1:t0 + 1], ep["A"][None, t0:t0 + H])[0])
+            Zp.append(pred.rollout(ep["Z"][None, t0 - K + 1:t0 + 1], ep["A"][None, t0:t0 + H],
+                                   states=joint_states(ep)[None, t0:t0 + H], **kw)[0])
             sl = slice(t0 + 1, t0 + H + 1)
             Zt.append(ep["Z"][sl]); Lt.append(ep["label"][sl]); Ut.append(ep["u"][sl])
             Vt.append(ep["visible"][sl]); U0.append(ep["u"][t0])
@@ -187,7 +197,7 @@ def recorded_split(paths: Sequence[str], encoder, tag: str, test_frac: float, mi
 
 def main(argv=None) -> None:
     from .encoder import make_encoder  # noqa: PLC0415
-    from .torch_predictor import ACPredictorConfig, train_predictor  # noqa: PLC0415
+    from .torch_predictor import ACPredictorConfig, fit_projection, project_features, train_predictor  # noqa: PLC0415
 
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("episodes", nargs="*")
@@ -202,6 +212,9 @@ def main(argv=None) -> None:
     ap.add_argument("--horizon", type=int, default=8, help="evaluation horizon (predictor steps)")
     ap.add_argument("--test-frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--proj-dim", type=int, default=0,
+                    help="project the features onto their top N principal directions (0 = keep all)")
+    ap.add_argument("--no-state", action="store_true", help="P2 / P3 without the joint-angle input")
     ap.add_argument("--out-dir", default="runs/e3")
     a = ap.parse_args(argv)
     os.makedirs(a.out_dir, exist_ok=True)
@@ -221,11 +234,21 @@ def main(argv=None) -> None:
                                                 a.seed)
     if not train:
         raise SystemExit("no usable training episodes")
+    proj, energy, input_dim = None, None, 0
+    if a.proj_dim and a.proj_dim < train[0]["Z"].shape[-1]:
+        input_dim = int(train[0]["Z"].shape[-1])
+        proj, energy = fit_projection([e["Z"] for e in train], a.proj_dim, seed=a.seed)
+        seen = {id(e) for e in train}
+        for e in train + [e for e in test if id(e) not in seen]:     # test may be the training list
+            e["Z"] = project_features(e["Z"], proj)
+        r = None if r is None else project_features(r, proj)
     grid, C = train[0]["Z"].shape[1:3], train[0]["Z"].shape[-1]
     res = {"setup": {"train_episodes": len(train), "test_episodes": len(test), "grid_hw": list(grid),
                      "feat_dim": int(C), "encoder": "synthetic" if a.synthetic else a.encoder,
                      "hub_entry": a.hub_entry, "steps": a.steps, "device": a.device,
-                     "step_s": round(step_s, 4),
+                     "step_s": round(step_s, 4), "input_dim": input_dim or int(C),
+                     "proj_energy": None if energy is None else round(energy, 4),
+                     "joint_state_input": not a.no_state,
                      "data_s": round(time.perf_counter() - t0, 1)}}
     K, H = a.history, a.horizon
     res["persistence"] = evaluate(PersistencePredictor(), test, K, H, r_fixed=r)
@@ -233,9 +256,9 @@ def main(argv=None) -> None:
     makers = {"P0": ACPredictorConfig.p0, "P2": ACPredictorConfig.p2, "P3": ACPredictorConfig.p3}
     for name in a.methods.split(","):
         cfg = makers[name](grid_hw=tuple(grid), feat_dim=int(C), history=K, steps=a.steps, seed=a.seed,
-                           device=a.device, step_s=step_s)
+                           device=a.device, step_s=step_s, input_dim=input_dim, use_state=not a.no_state)
         t = time.perf_counter()
-        model = train_predictor(train, cfg)
+        model = train_predictor(train, cfg, proj=proj)
         model.save(os.path.join(a.out_dir, f"{name}.pt"))
         res[name] = {**evaluate(model, test, K, H, r_fixed=r), "train_s": round(time.perf_counter() - t, 1),
                      "final_loss": round(float(np.mean(model.loss_history[-50:])), 4)}

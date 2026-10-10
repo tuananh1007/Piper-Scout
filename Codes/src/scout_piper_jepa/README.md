@@ -12,20 +12,20 @@ turns those predictions into a cost for the whole-body MPC. Research plan:
 | Module | Role |
 |---|---|
 | `encoder.py` | `DenseEncoder` interface. `VJepaEncoder` (V-JEPA 2/2.1 via `torch.hub`, lazy torch import), `DinoV2Encoder` (DINOv2 patch tokens, the E1 baseline T2) and `ColorPatchEncoder` (numpy reference used by the tests; **not** a V-JEPA result) |
-| `target_memory.py` | descriptor from the init mask; per frame: cosine similarity → gated softmax → image mean/covariance, entropy, confidence, `tracking`/`occluded`/`lost`; 3-D estimate from aligned depth when valid |
+| `target_memory.py` | descriptor from the init mask; per frame: cosine similarity → gated softmax → image mean/covariance, entropy, confidence, `tracking`/`occluded`/`lost`; 3-D world estimate from aligned depth when valid and the camera pose is known |
 | `metrics.py` | E1 metrics: ID retention, false-switch rate, centre error, jitter, occlusion recovery |
 | `action.py` | action embedding Γ = [Δs_b, Δθ_b, Δp_ee, Δr_ee, Δg] in the base frame at t, from a command (`action_embedding`) or, batched, from two whole-body states (`action_from_states`, used for training data and MPC rollouts) |
 | `readout.py` | §12 read-outs from (predicted) features: similarity, gated softmax, location û, entropy, identity cos(r̂, r), visibility; `readout_sequence` gates each predicted step around the previous one |
 | `predictor.py` | `DensePredictor` interface, `PersistencePredictor`, `StateConditionedPredictor` (MPC state rollouts → Γ → predictor), `OracleStatePredictor` (synthetic upper bound) |
-| `torch_predictor.py` | learned predictor (lazy torch): patch tokens + action token, pre-norm transformer, residual head (zero-initialised = persistence); P0 action-free, P2 unweighted, P3 target-weighted (§11) by configuration; `train_predictor` with L_TF + λ_R L_roll |
+| `torch_predictor.py` | learned predictor (lazy torch): patch tokens + one token for the action and the joint angles (P_φ(Z, a, s), §10), pre-norm transformer, residual head (zero-initialised = persistence); P0 action- and state-free, P2 unweighted, P3 target-weighted (§11) by configuration; optional projection of the encoder features onto their top principal directions (stored in the checkpoint); `train_predictor` with L_TF + λ_R L_roll |
 | `prediction_metrics.py` | E3 metrics per horizon: target error, visibility F1 and AUROC, identity accuracy / switch rate, target-region vs global latent error |
 | `predictive_cost.py` | Stage C `JepaVisibilityCost`, an `ExtraTerm` for the whole-body MPC: J_vis (centring, entropy, FoV barrier, soft loss of visibility) + J_id, with a geometry anchor (below) |
 | `synthetic.py` | synthetic dense-feature world: z-buffered surfel renderer for an eye-in-hand camera, flower + identical twin + occluding leaf + stems + wall, random-motion episodes |
 | `episode.py` | rosbag2 → `.npz` export (frames, aligned depth, intrinsics, camera poses from the bag's TF, whole-body states from `/odom` + `/joint_states`, framewise masks, merged labels; two passes, TF first) and offline evaluation (`jepa_episode eval …`) |
 | `annotate.py` | target / distractor / plant masks: PNG import from any tool, keyframe polygons with vertex interpolation (OpenCV window), `info` (`jepa_annotate`) |
 | `e1.py` | E1 comparison T0 (framewise segmentation), T1 (Lucas–Kanade), T2 (DINOv2 + memory), T3 / T4 (V-JEPA 2 / 2.1 + memory) from `config/e1_methods.yaml`, and the H1 go/no-go rule (`jepa_e1`) |
-| `train.py` | P3B.9: features per episode (cached), Γ from states, masks to the grid, P0 / P2 / P3 training on CUDA, E3 scores vs persistence, checkpoints (`jepa_train`; `--synthetic N` for a check without data) |
-| `latency.py` | P3B.10: predictor rollout and predictive-cost time per sample count, fp16 option (`jepa_latency`) |
+| `train.py` | P3B.9: features per episode (cached), Γ and joint angles from states, masks to the grid, optional feature projection (`--proj-dim`), P0 / P2 / P3 training on CUDA, E3 scores vs persistence, checkpoints with the training frame interval (`jepa_train`; `--synthetic N` for a check without data) |
+| `latency.py` | P3B.10: predictor rollout and predictive-cost time per sample count over the MPC horizon, fp16 option, untrained models of any feature size (`--grid`, `--feat-dim`, `--input-dim`) (`jepa_latency`) |
 | `predictive_mpc_node.py` | C3 (P3B.11): the whole-body MPC node with the target memory, the learned predictor and the visibility cost in one process |
 | `ground.py` | publish a target mask (PNG, box or circle) on `/piper_jepa/init_mask` (`jepa_ground`) |
 | `image_codec.py` | `sensor_msgs/Image` ↔ numpy without cv_bridge; shared by the node and the bag exporter |
@@ -182,6 +182,18 @@ episodes with a frame interval that is a multiple of the MPC period: with the
 colour stream at 30 fps and the MPC at 10 Hz, `--stride 6` gives 0.2 s
 (`jepa_stride` 2); the default `--stride 1` (0.033 s) matches no MPC step and
 the node warns.
+
+**Feature size.** The cost predicts samples × predictor steps × cells ×
+channels features every MPPI iteration: with V-JEPA 2 ViT-L at 256 px (16 × 16
+cells, 1024 channels), 256 samples and 10 steps that is 2.7 GB. `jepa_train
+--proj-dim 64` projects the features onto their 64 main directions (fitted on
+the training episodes, uncentred so cosines inside the subspace are kept,
+stored in the checkpoint; the node, the cost and the target descriptor use it
+automatically). `results.json` reports the energy kept (`proj_energy`).
+On the development CPU, 32 samples × 10 steps took 1270 ms with 1024 channels
+and 440 ms projected to 64 (`jepa_latency --grid 16 16 --feat-dim 1024 --state`
+vs `--input-dim 1024 --feat-dim 64 --state`); MODULE_TASKS.md A8 / B4 measure
+the GPU.
 
 Checked here without a GPU: the export on a bag recorded from the fake robot
 (37 frames, states for 34, camera poses for 35), annotation and E1 runner on

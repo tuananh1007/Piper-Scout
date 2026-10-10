@@ -117,8 +117,10 @@ def test_target_3d_from_depth():
     u = s.u_mean
     assert abs(s.p_world[0] - (1.0 + (u[0] - W / 2) * 0.5 / 300)) < 0.02
     # no valid depth -> no metric estimate, not a hallucinated one
-    s2 = mem.update(enc.encode(frames[1:3]), depth=np.full((H, W), np.nan), K=K)
+    s2 = mem.update(enc.encode(frames[1:3]), depth=np.full((H, W), np.nan), K=K, T_world_cam=T)
     assert s2.p_world is None
+    # no camera pose (TF gap) -> no world position, not a camera-frame one
+    assert mem.update(enc.encode(frames[1:3]), depth=depth, K=K).p_world is None
 
 
 def test_action_embedding_base_and_arm():

@@ -76,7 +76,7 @@ class TargetState:
     confidence: float              # [0, 1]
     peak_similarity: float
     visible: bool
-    p_world: Optional[np.ndarray] = None   # (3,) metres, when depth is valid
+    p_world: Optional[np.ndarray] = None   # (3,) metres in the world, with valid depth and camera pose
     p_cov: Optional[np.ndarray] = None     # (3, 3)
     prob: Optional[np.ndarray] = None      # (Hf, Wf) for debugging
 
@@ -209,7 +209,9 @@ class TargetMemory:
             peak_similarity=peak, visible=visible,
             prob=P if keep_prob else None,
         )
-        if visible and depth is not None and K is not None:
+        # metric position only with the camera pose: a camera-frame point must not
+        # pass for a world point (a TF gap is routine)
+        if visible and depth is not None and K is not None and T_world_cam is not None:
             p, pc = self._target_3d(P, centers, depth, K, T_world_cam)
             state.p_world, state.p_cov = p, pc
         return state
@@ -235,8 +237,7 @@ class TargetMemory:
         fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
         pts = np.column_stack([(uv[ok, 0] - cx) * z[ok] / fx,
                                (uv[ok, 1] - cy) * z[ok] / fy, z[ok]])
-        if T_world_cam is not None:
-            pts = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
+        pts = pts @ T_world_cam[:3, :3].T + T_world_cam[:3, 3]
         ww = w[ok] / w[ok].sum()
         mean = (ww[:, None] * pts).sum(0)
         dd = pts - mean

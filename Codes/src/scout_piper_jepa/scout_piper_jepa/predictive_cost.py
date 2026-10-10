@@ -78,9 +78,11 @@ class JepaVisibilityCost:
     def set_context(self, Z_hist: np.ndarray, r: np.ndarray, u_now: np.ndarray,
                     p_world: Optional[np.ndarray] = None) -> None:
         """Z_hist (K, Hf, Wf, C) newest last; r (C,) target descriptor; u_now (2,)
-        px; p_world (3,) metric target position when depth was valid."""
+        px; p_world (3,) metric target position when depth was valid. r is
+        mapped into the predictor's feature space (projected models)."""
         self.Z_hist = np.asarray(Z_hist)
-        self.r = np.asarray(r)
+        to_pred = getattr(self.predictor, "descriptor", None)
+        self.r = np.asarray(to_pred(r) if to_pred is not None else r)
         self.u_now = np.asarray(u_now, float)
         self.p_world = None if p_world is None else np.asarray(p_world, float)
 

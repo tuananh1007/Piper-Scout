@@ -104,13 +104,16 @@ class PredictiveMpcNode(WholeBodyMpcNode):
             elif net.cfg.step_s > 0 and stride != fit:
                 self.get_logger().warn(f"jepa_stride {stride} x {self.model.dt:.3f} s does not match the "
                                        f"training frame interval {net.cfg.step_s:.3f} s (jepa_stride {fit})")
-            self.get_logger().info(f"predictor step: {stride} MPC steps ({stride * self.model.dt:.2f} s)")
+            self.get_logger().info(f"predictor step: {stride} MPC steps ({stride * self.model.dt:.2f} s)"
+                                   + (f"; features projected {net.cfg.input_dim} -> {net.cfg.feat_dim}"
+                                      if net.proj is not None else ""))
             self.history = net.history
             self.grid_hw = tuple(net.cfg.grid_hw)
+            self.channels = net.cfg.input_dim if net.proj is not None else net.cfg.feat_dim
             predictor = StateConditionedPredictor(net, self.model.kin.tcp, stride)
         else:
             self.get_logger().warn("jepa_model empty: persistence predictor (the cost sees no prediction)")
-            self.history, self.grid_hw = 1, None
+            self.history, self.grid_hw, self.channels = 1, None, None
             stride = stride if stride > 0 else 2
             predictor = _PersistenceStates(stride)
         self.memory = TargetMemory(TargetMemoryConfig())
@@ -170,8 +173,8 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         rgb = rgb[..., ::-1] if msg.encoding == "bgr8" else rgb
         self.clip.append(np.ascontiguousarray(rgb))
         Z = self.encoder.encode(list(self.clip))
-        if self.grid_hw is not None and tuple(Z.shape[:2]) != self.grid_hw:
-            self.get_logger().error(f"encoder grid {Z.shape[:2]} != predictor grid {self.grid_hw}: "
+        if self.grid_hw is not None and (tuple(Z.shape[:2]) != self.grid_hw or Z.shape[-1] != self.channels):
+            self.get_logger().error(f"encoder features {Z.shape} != predictor input {self.grid_hw + (self.channels,)}: "
                                     "train the predictor on this encoder", throttle_duration_sec=10.0)
             return
         if self.pending_mask is not None:

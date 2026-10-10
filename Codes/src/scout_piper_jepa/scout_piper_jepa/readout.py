@@ -16,7 +16,8 @@ each predicted step around the previous predicted location, the same rule the
 Stage A memory uses frame to frame.
 
 Everything is batched over leading dimensions so the predictive MPC cost can
-read out (samples × horizon) predictions at once.
+read out (samples × horizon) predictions at once, in float32 (the predicted
+features of one control step can be hundreds of MB).
 """
 
 from __future__ import annotations
@@ -55,9 +56,10 @@ def readout(Z: np.ndarray, r: np.ndarray, image_hw: Tuple[int, int],
             cfg: ReadoutConfig = ReadoutConfig(),
             prior_u: Optional[np.ndarray] = None) -> Readout:
     """Z (..., Hf, Wf, C); prior_u (..., 2) or None."""
-    Z = _unit(np.asarray(Z, np.float64))
+    Z = _unit(np.asarray(Z, np.float32))
+    r = _unit(np.asarray(r, np.float32))
     lead, (hf, wf) = Z.shape[:-3], Z.shape[-3:-1]
-    sim = Z @ _unit(np.asarray(r, np.float64))                       # (..., Hf, Wf)
+    sim = Z @ r                                                      # (..., Hf, Wf)
     logits = sim / cfg.temperature
     gate = np.ones(sim.shape, bool)
     if prior_u is not None and cfg.prior_sigma_px is not None:
@@ -81,8 +83,8 @@ def readout(Z: np.ndarray, r: np.ndarray, image_hw: Tuple[int, int],
     Pf = P.reshape(lead + (-1,))
     H = -(Pf * np.log(Pf + 1e-12)).sum(-1) / np.log(hf * wf)
     peak = np.where(gate, sim, -np.inf).reshape(lead + (-1,)).max(-1)
-    r_hat = _unit((P[..., None] * Z).sum((-3, -2)))
-    ident = r_hat @ _unit(np.asarray(r, np.float64))
+    r_hat = _unit(np.einsum("...hw,...hwc->...c", P, Z))
+    ident = r_hat @ r
     return Readout(u=u, entropy=H, peak=peak, visible=peak >= cfg.visible_similarity,
                    identity=ident, prob=P)
 
