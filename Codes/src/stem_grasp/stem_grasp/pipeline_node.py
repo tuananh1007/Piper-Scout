@@ -61,7 +61,8 @@ from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from stem_grasp import core
-from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor
+from stem_grasp.approach import (ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor,
+                                 ServoGates, servo_gate)
 from stem_grasp.moveit_planner import MoveItPlanner
 from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
@@ -107,9 +108,18 @@ class PipelineParams:
     # whose noise (its ~/status threshold_3sigma_n) both thresholds must clear.
     max_force_n: float = 2.0
     contact_threshold_n: float = 0.15
+    contact_hold_sec: float = 0.1         # contact only when the force stays above the threshold this long
     force_topic: str = "/ft_sensor/raw"
     force_tare_service: str = ""          # e.g. /effort_force_estimator/tare: zeroed when servoing starts
     force_max_age_sec: float = 0.5        # once a force has arrived, an older one stops the servo
+    # Phase 2B hard gates in SERVOING / APPROACHING: above max_force_n the
+    # gripper backs out force_retract_m along its axis (0: stop where it is),
+    # then ABORTED; a silent force source stops (ABORTED); a target lost for
+    # servo_lost_target_sec while servoing re-grounds (SCANNING); with the MPPI
+    # servo and scene_field_topic, a hard semantic-clearance violation stops.
+    force_retract_m: float = 0.05
+    servo_lost_target_sec: float = 2.0
+    stop_on_clearance_violation: bool = True
 
     # Approach
     approach_target_distance: float = 0.25
@@ -383,6 +393,7 @@ class StemGraspPipeline(Node):
         self.pub_gripper = self.create_publisher(Float64, self.params.grasp_gripper_topic, 5)
         self.release_t: Optional[float] = None
         self.retreat: Optional[RetreatMonitor] = None
+        self.retreat_then = PipelineState.IDLE       # state after the retreat (release: IDLE; force: ABORTED)
         self._retreat_pub_t = 0.0
         self.create_service(Trigger, "~/release", self._release_srv, callback_group=self.cb_group)
         self.create_service(Trigger, "~/scan", self._scan_srv, callback_group=self.cb_group)
@@ -438,6 +449,43 @@ class StemGraspPipeline(Node):
         if T_fb is None:
             return None
         return self.grasp_field.distance_fn(snap, T_fb, p_base, self._now()), age
+
+    def _servo_gate_tripped(self, action: str, reason: str) -> None:
+        """Act on a Phase 2B hard gate (approach.servo_gate)."""
+        self._stop_servo_commands()
+        if action == "reground":
+            self.get_logger().warn(f"{reason}: re-grounding (SCANNING)")
+            self._set_state(PipelineState.SCANNING)
+            return
+        if action == "retract" and self.params.force_retract_m > 0:
+            tcp = self._tcp_world()
+            if tcp is not None:
+                self.get_logger().warn(f"{reason}: backing out {100 * self.params.force_retract_m:.0f} cm, "
+                                       "then ABORTED")
+                self._start_retreat(tcp, float(self.params.force_retract_m), PipelineState.ABORTED)
+                return
+            reason += "; no TF for the TCP, not retracting"
+        self.get_logger().warn(f"{reason}: stopped (ABORTED)")
+        self._set_state(PipelineState.ABORTED)
+
+    def _stop_servo_commands(self) -> None:
+        """One zero command on the servo controller's output (moveit_servo also halts on its timeout)."""
+        if self.params.servo_controller == "mppi" and self.pub_joint_cmd is not None:
+            msg = self._JointJog()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "stem_grasp"
+            msg.joint_names = [n.strip() for n in self.params.arm_joint_names.split(",")]
+            msg.velocities = [0.0] * len(msg.joint_names)
+            self.pub_joint_cmd.publish(msg)
+        else:
+            self._publish_twist(np.zeros(3), self.params.camera_optical_frame)
+
+    def _start_retreat(self, tcp, distance_m: float, then: "PipelineState") -> None:
+        """Back the gripper straight out along its axis (RETREATING), then ``then``."""
+        self.retreat = RetreatMonitor(start_t=self._now(), start_tcp=tcp[0], axis=tcp[1],
+                                      distance_m=distance_m, timeout_s=float(self.params.release_timeout_sec))
+        self.retreat_then = then
+        self._set_state(PipelineState.RETREATING)
 
     def _tare_force(self) -> None:
         """Zero the force estimate before the servo moves toward the stem."""
@@ -568,7 +616,7 @@ class StemGraspPipeline(Node):
             min_mask_pixels=int(p.approach_min_leaf_pixels),
             align_tolerance_px=float(p.approach_align_tolerance_px),
             speed_mps=float(p.approach_speed_mps), timeout_s=float(p.approach_timeout_sec),
-            contact_force_n=float(p.contact_threshold_n))
+            contact_force_n=float(p.contact_threshold_n), contact_hold_s=float(p.contact_hold_sec))
 
     def _on_mpc_status(self, msg: String) -> None:
         try:
@@ -753,18 +801,14 @@ class StemGraspPipeline(Node):
     def _servo_step(self) -> None:
         if self.state not in (PipelineState.SERVOING, PipelineState.APPROACHING):
             return
-        if self.current_force > self.params.max_force_n:
-            self.get_logger().warn(
-                f"Force limit exceeded ({self.current_force:.3f} N) — back to SCANNING."
-            )
-            self._set_state(PipelineState.SCANNING)
-            return
-        if (self.force_t is not None and self.params.force_max_age_sec > 0
-                and self._age(self.force_t) > self.params.force_max_age_sec):
-            self.get_logger().warn(
-                f"no force on {self.params.force_topic} for {self.params.force_max_age_sec} s — back to SCANNING."
-            )
-            self._set_state(PipelineState.SCANNING)
+        p = self.params
+        gate = servo_gate(
+            ServoGates(max_force_n=float(p.max_force_n), force_max_age_s=float(p.force_max_age_sec),
+                       lost_target_s=float(p.servo_lost_target_sec)),
+            self.state == PipelineState.APPROACHING, self.current_force,
+            None if self.force_t is None else self._age(self.force_t), self._age(self.last_mask_stamp))
+        if gate is not None:
+            self._servo_gate_tripped(*gate)
             return
         if self.servo is None or self.last_mask is None:
             return
@@ -866,6 +910,11 @@ class StemGraspPipeline(Node):
                              T_flange_cam=T_fc, p_base=p_base,
                              force_n=float(self.current_force), desired_distance_m=float(desired_distance))
         qd, diag = self.mppi_servo.step(self.arm_q, target, distance_fn=field[0], geometry_age_s=field[1])
+        clearance = _finite(diag.get("min_clearance_m"))
+        if self.grasp_field is not None and p.stop_on_clearance_violation and clearance is not None \
+                and clearance < 0.0:
+            self._servo_gate_tripped("stop", f"hard semantic-clearance violation ({100 * clearance:.1f} cm)")
+            return
         msg = self._JointJog()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "stem_grasp"                   # tells these apart from the whole-body MPC's
@@ -936,13 +985,9 @@ class StemGraspPipeline(Node):
                 self.get_logger().warn("release: no TF for the TCP; not retreating")
                 self._set_state(PipelineState.ABORTED)
                 return
-            self.retreat = RetreatMonitor(
-                start_t=self._now(), start_tcp=tcp[0], axis=tcp[1],
-                distance_m=float(self.params.release_retreat_m),
-                timeout_s=float(self.params.release_timeout_sec))
             self.get_logger().info(f"gripper open ({1000 * width:.1f} mm); retreating "
                                    f"{100 * self.params.release_retreat_m:.0f} cm")
-            self._set_state(PipelineState.RETREATING)
+            self._start_retreat(tcp, float(self.params.release_retreat_m), PipelineState.IDLE)
         elif self._age(self.release_t) > self.params.release_open_timeout_sec:
             # never pull away with the stem still held
             self.get_logger().warn("release: the gripper did not open; not retreating")
@@ -962,13 +1007,21 @@ class StemGraspPipeline(Node):
         self._retreat_pub_t = now
         tcp = self._tcp_world()
         decision = self.retreat.update(now, None if tcp is None else tcp[0])
+        if decision == "wait" and self.current_force > 2.0 * self.params.max_force_n:
+            decision = "force"                       # backing out makes it worse: snagged
         if decision != "wait":
             self._publish_twist(np.zeros(3), self.params.camera_optical_frame)
             moved = self.retreat.moved
             self.retreat = None
             if decision == "done":
-                self.get_logger().info(f"retreated {100 * moved:.1f} cm; IDLE (call ~/scan to start again)")
-                self._set_state(PipelineState.IDLE)
+                then = self.retreat_then
+                self.get_logger().info(f"retreated {100 * moved:.1f} cm; {then.name}"
+                                       + (" (call ~/scan to start again)" if then != PipelineState.SCANNING else ""))
+                self._set_state(then)
+            elif decision == "force":
+                self.get_logger().warn(f"force {self.current_force:.2f} N rising while retreating: stopped "
+                                       f"after {100 * moved:.1f} cm")
+                self._set_state(PipelineState.ABORTED)
             else:
                 self.get_logger().warn(f"retreat timed out after {100 * moved:.1f} cm")
                 self._set_state(PipelineState.ABORTED)

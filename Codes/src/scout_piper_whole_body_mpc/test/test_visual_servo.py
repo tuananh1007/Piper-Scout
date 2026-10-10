@@ -52,9 +52,10 @@ def _run(servo, q, p, steps, T_true, T_assumed=None, depth_lost_after=None, forc
         lost = depth_lost_after is not None and k >= depth_lost_after
         if lost and uv_d_fixed is None:
             uv_d_fixed = uv_d
+        dd = desired_distance(d) if callable(desired_distance) else desired_distance
         tg = ServoTarget(uv_meas=uv, K=K, image_hw=HW, T_flange_cam=T_assumed,
                          p_base=None if lost else p, uv_desired=uv_d_fixed if lost else None,
-                         force_n=force, desired_distance_m=desired_distance)
+                         force_n=force, desired_distance_m=dd)
         qd, diag = servo.step(q, tg, distance_fn=distance_fn(q) if distance_fn else None)
         if diags is not None:
             diags.append(diag)
@@ -166,6 +167,34 @@ def test_approach_onto_a_stem_in_the_semantic_field_needs_the_target_excluded(q5
     assert min(d["min_clearance_m"] for d in d_ex) > 0.0      # never into the rest of the field
     assert dist_blk[-1] > 0.03, dist_blk[::10]               # the stem itself held the gripper off
     assert any(d["safety"] == "clearance" for d in d_blk) or d_blk[-1]["plan_terms"].get("clearance", 0) > 0
+
+
+def test_final_approach_with_a_hand_eye_translation_error():
+    """A hand-eye translation error shifts the image by an amount that changes
+    with depth; with the target anchored on the measured pixel's ray the final
+    approach keeps going (without it the simulated trials stalled:
+    stem_grasp benchmarks/servo_trials.py)."""
+    s = _servo()
+    p = _target_in_front(s, Q0, side=(0.0, 0.0))
+    T_true = T_flange_cam()
+    T_true[:3, 3] += [0.0, 0.005, -0.003]                  # the camera sits 5 mm / 3 mm off the URDF's
+    # as stem_grasp: 2 cm ahead of the current distance (approach speed x horizon)
+    own = []
+    _, d, _ = _run(s, Q0.copy(), p, 60, T_true, T_assumed=T_flange_cam(), desired_distance=lambda d: d - 0.02,
+                   own_error=own)
+    assert d[0] - d[-1] > 0.03, d[::10]                    # advanced at ~2 cm/s over 3 s
+    assert max(own[-10:]) < 3.0                            # and kept its image error small
+
+
+def test_image_anchored_point_is_on_the_measured_ray_at_the_estimated_depth():
+    from scout_piper_whole_body_mpc.visual_servo import image_anchored_point  # noqa: PLC0415
+    s = _servo()
+    p = _target_in_front(s, Q0)
+    uv = camera_geometry(s.model, np.r_[0, 0, 0, Q0], T_flange_cam(), K, p)[0] + [12.0, -7.0]
+    a = image_anchored_point(s.model, Q0, T_flange_cam(), K, p, uv)
+    uv_a, z_a, _, _ = camera_geometry(s.model, np.r_[0, 0, 0, Q0], T_flange_cam(), K, a)
+    _, z_p, _, _ = camera_geometry(s.model, np.r_[0, 0, 0, Q0], T_flange_cam(), K, p)
+    assert np.allclose(uv_a, uv, atol=1e-6) and z_a == pytest.approx(z_p)
 
 
 def test_broyden_estimator_learns_a_linear_map():

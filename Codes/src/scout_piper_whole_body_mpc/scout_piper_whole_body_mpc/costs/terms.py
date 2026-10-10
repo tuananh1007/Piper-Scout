@@ -32,6 +32,11 @@ import numpy as np
 
 from ..dynamics.whole_body import WholeBodyModel
 
+# Joint-limit barrier margin (rad) of the MPC and the MPPI servo: wider than
+# moveit_servo's joint_limit_margin (0.1, servo.yaml), which halts every command
+# that moves a joint inside it; the arm then could not even retreat.
+JOINT_LIMIT_MARGIN = 0.15
+
 DistanceFn = Callable[[np.ndarray], Tuple[np.ndarray, np.ndarray]]
 LeafFn = Callable[[np.ndarray], np.ndarray]
 ExtraTerm = Callable[[np.ndarray, np.ndarray], np.ndarray]
@@ -107,17 +112,29 @@ class WholeBodyCost:
     secondary_tol_m: float = 0.01
     secondary_tol_frac: float = 0.2
     secondary_penalty: float = 1e6
+    secondary_axis_m_per_rad: float = 0.1   # approach-axis error counted as goal error (0.1 m per rad)
 
     def __post_init__(self) -> None:
         self._best_err = np.inf           # smallest horizon-mean TCP error seen (monotone per control step)
 
     def secondary_cost(self, X: np.ndarray, U: np.ndarray, mean_err: np.ndarray) -> np.ndarray:
         """Σ secondary terms plus the goal-error constraint (shared with the torch backend);
-        ``mean_err`` (B,) is the TCP error averaged over the planned states."""
+        ``mean_err`` (B,) is the TCP error averaged over the planned states. With
+        an approach axis in the goal its angle error counts too
+        (``secondary_axis_m_per_rad``): otherwise a secondary term trades the
+        axis away for free (a visibility term held a view-chosen axis 30-40 deg off)."""
         if not self.secondary:
             return np.zeros(len(X))
+        X = np.asarray(X)
+        T0 = self.model.tcp_world(X[0, 0])
+        e_now = float(np.linalg.norm(T0[:3, 3] - self.goal.p))
+        mean_err = np.asarray(mean_err, float)
+        ax = self.goal.approach_axis
+        if ax is not None and self.secondary_axis_m_per_rad > 0:
+            Z = self.model.tcp_world(X[:, 1:])[..., :3, 2]
+            mean_err = mean_err + self.secondary_axis_m_per_rad * np.arccos(np.clip(Z @ ax, -1.0, 1.0)).mean(1)
+            e_now += self.secondary_axis_m_per_rad * float(np.arccos(np.clip(T0[:3, 2] @ ax, -1.0, 1.0)))
         self._best_err = min(self._best_err, float(np.min(mean_err)))
-        e_now = float(np.linalg.norm(self.model.tcp_world(np.asarray(X)[0, 0])[:3, 3] - self.goal.p))
         tol = min(self.secondary_tol_m, self.secondary_tol_frac * e_now)
         excess = np.clip(mean_err - (self._best_err + tol), 0, None)
         J = self.secondary_penalty * excess ** 2
@@ -157,7 +174,7 @@ class WholeBodyCost:
 
         q = Xk[..., 3:]
         J += w.manip * (1.0 / (m.kin.manipulability(q) + 1e-3)).mean(1)
-        margin = 0.05
+        margin = JOINT_LIMIT_MARGIN
         lim = np.clip(m.kin.lower + margin - q, 0, None) + np.clip(q - (m.kin.upper - margin), 0, None)
         J += w.joint_limit * (lim ** 2).sum((1, 2))
         if w.reach > 0:

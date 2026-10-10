@@ -13,13 +13,13 @@
 #          --servo ibvs|mppi        stem_grasp servo controller for the grasp checks (Phase 2B)
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
-#          --quick                  skip the extra stem positions, the semantic-field and the
+#          --quick                  skip the extra stem positions, the semantic-field, gate and
 #                                   force-estimate checks
 #          --only REGEX             run only the checks whose name matches (bash regex)
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 14 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 16 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
 profile=default quick=0 servo=ibvs only=""
@@ -107,6 +107,11 @@ if (( ! quick )); then
   # MPPI servo with the semantic field (synthetic stems): target stem released, neighbour kept
   run_check grasp_scene_field_0.95_0.15 1 1 "-p servo_controller:=mppi -p scene_field_topic:=/scene_repr/distance_field -p approach_enabled:=true -p grasp_close_gripper:=true" \
     ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15 --scene-field
+  # Phase 2B hard gates: target lost -> re-ground; obstacle at the TCP -> stop
+  run_check grasp_lost_target_0.95_0.15 1 1 "" \
+    ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15 --lose-target
+  run_check grasp_clearance_stop_0.95_0.15 1 1 "-p servo_controller:=mppi -p scene_field_topic:=/scene_repr/distance_field" \
+    ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15 --scene-field --intrude
   # Contact force from the fake arm's joint efforts: estimate, calibration, then the
   # pipeline's force abort with that calibration (no F/T sensor on the platform)
   cal="$log_dir/effort_calibration.json"

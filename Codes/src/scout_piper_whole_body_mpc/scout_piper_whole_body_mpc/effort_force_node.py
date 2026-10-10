@@ -60,6 +60,9 @@ class EffortForceNode(Node):
         self.frame_id = str(p("frame_id"))
         self.max_speed = float(p("max_joint_speed"))
         path = os.path.expanduser(str(p("calibration_file")))
+        if path and not os.path.isfile(path):
+            self.get_logger().fatal(f"calibration_file {path} not found (run calibrate_effort, or leave it empty)")
+            raise RuntimeError(f"calibration_file {path} not found")
         if path:
             model = EffortModel.load(path)
             self.get_logger().info(f"effort model {path}: {model.samples} samples, "

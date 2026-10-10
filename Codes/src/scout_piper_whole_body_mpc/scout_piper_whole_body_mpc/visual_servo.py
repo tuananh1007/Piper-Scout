@@ -13,7 +13,8 @@ velocities, with the Phase 2B costs
              vanish near the goal as a squared normalised error does
   view       quadratic barrier inside ``fov_margin_px`` of the image border and
              a large cost for the target behind the camera (visibility)
-  joints     quadratic barrier within 0.05 rad of the joint limits
+  joints     quadratic barrier within JOINT_LIMIT_MARGIN (0.15 rad) of the joint
+             limits, outside moveit_servo's halting margin
   manip      1 / manipulability (Yoshikawa, translational)
   clearance  optional ``distance_fn`` (semantic scene) on the arm's collision
              spheres, as WholeBodyCost; for a servo onto a stem the target's
@@ -31,7 +32,16 @@ Image prediction (P2.1.2), ``mode``:
               projected into the camera of every planned state (FK, link6 →
               camera transform, pinhole); the measured pixel minus the predicted
               pixel at the current state is kept as a bias over the horizon
-              (calibration and target-estimate error)
+              (calibration and target-estimate error). With ``anchor_to_image``
+              (default) the target is first moved onto the measured pixel's ray
+              at its estimated depth (``image_anchored_point``): the image fixes
+              where it is sideways, the estimate only how far. A hand-eye
+              translation error shifts the image by an amount that changes with
+              depth, which a constant pixel bias misrepresents as the camera
+              advances; with the metric point 5 mm off the image's, the nominal
+              pulled the axis onto the metric point, its image cost rejected
+              it, and the final approach stalled (simulated trials,
+              stem_grasp benchmarks/servo_trials.py)
   jacobian    ŝ_k = s_meas + J_s (q_k − q_0): J_s (2 × 6) is the projective model
               linearised at q_0 (finite differences), or, without a metric
               target, the online Broyden estimate (``ImageJacobianEstimator``)
@@ -58,12 +68,12 @@ measures the cycle time against the 10 ms budget (P2.2.2).
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from .costs.terms import DistanceFn, ExtraTerm
+from .costs.terms import JOINT_LIMIT_MARGIN, DistanceFn, ExtraTerm
 from .dynamics.piper import PiperKinematics
 from .dynamics.whole_body import ArmParams, WholeBodyModel
 from .safety.projection import SafetyFilter
@@ -136,6 +146,19 @@ def camera_geometry(model: WholeBodyModel, X: np.ndarray, T_fc: np.ndarray, K: n
     uv_d, _ = _project(K, pd)
     dist = ((pc - tcp) * axis).sum(-1)
     return uv, z, uv_d, dist
+
+
+def image_anchored_point(model: WholeBodyModel, q: np.ndarray, T_fc: np.ndarray, K: np.ndarray,
+                         p_base: np.ndarray, uv: np.ndarray) -> np.ndarray:
+    """The point at ``p_base``'s depth (camera of q, assumed ``T_fc``) on the
+    ray of the measured pixel ``uv``: the target where the camera sees it."""
+    T = model.world_frames(np.r_[0.0, 0.0, 0.0, np.asarray(q, float)])[6] @ T_fc
+    R, t = T[:3, :3], T[:3, 3]
+    z = float((R.T @ (np.asarray(p_base, float) - t))[2])
+    if z <= 1e-3:
+        return np.asarray(p_base, float)
+    ray = np.array([(uv[0] - K[0, 2]) / K[0, 0], (uv[1] - K[1, 2]) / K[1, 1], 1.0])
+    return t + R @ (z * ray)
 
 
 def image_jacobian(model: WholeBodyModel, q: np.ndarray, T_fc: np.ndarray, K: np.ndarray, p_base: np.ndarray,
@@ -265,7 +288,8 @@ class VisualServoCost:
         if z is not None:
             out["view"] = out["view"] + w.behind * (z < 0.02).sum(1)
         q = Xk[..., 3:]
-        lim = np.clip(m.kin.lower + 0.05 - q, 0, None) + np.clip(q - (m.kin.upper - 0.05), 0, None)
+        mg = JOINT_LIMIT_MARGIN
+        lim = np.clip(m.kin.lower + mg - q, 0, None) + np.clip(q - (m.kin.upper - mg), 0, None)
         out["joints"] = w.joint_limit * (lim ** 2).sum((1, 2))
         out["manip"] = w.manip * (1.0 / (_manipulability(F) + 1e-3)).mean(1)
         if self.distance_fn is not None:                              # arm spheres (the base stays), from F
@@ -344,7 +368,8 @@ class VisualServoCost:
             J = J + w.fov * ((torch.clamp(mg - edge, min=0) / mg) ** 2).sum((1, 2))
             if z is not None:
                 J = J + w.behind * (z < 0.02).to(J.dtype).sum(1)
-            lim = torch.clamp(tm.lower + 0.05 - q, min=0) + torch.clamp(q - (tm.upper - 0.05), min=0)
+            lim = (torch.clamp(tm.lower + JOINT_LIMIT_MARGIN - q, min=0)
+                   + torch.clamp(q - (tm.upper - JOINT_LIMIT_MARGIN), min=0))
             J = J + w.joint_limit * (lim ** 2).sum((1, 2))
             if F is None:
                 Tb = tm.planar_T(Xk[..., :3])
@@ -400,6 +425,7 @@ class VisualServoConfig:
     backend: str = "numpy"              # numpy | torch
     device: str = "auto"
     seed: int = 0
+    anchor_to_image: bool = True        # projective target on the measured pixel's ray (module doc)
     unknown_policy: str = "no_entry"    # safety filter in unknown space (whole-body MPC default)
     max_geometry_age_s: float = 2.5     # safety filter stops on an older distance field
 
@@ -464,6 +490,10 @@ class MppiVisualServo:
         q = np.asarray(q, float)
         x0 = np.r_[0.0, 0.0, 0.0, q]
         mode, J_s = self.cfg.mode, None
+        if target.p_base is not None and self.cfg.anchor_to_image and mode == "projective":
+            target = replace(target, p_base=image_anchored_point(self.model, q, target.T_flange_cam,
+                                                                 np.asarray(target.K, float), target.p_base,
+                                                                 np.asarray(target.uv_meas, float)))
         if target.p_base is not None:
             # keep the online estimate seeded by the model while a metric target exists
             if self.jac.J is None or mode == "projective":

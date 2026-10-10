@@ -144,6 +144,39 @@ the grasp therefore needs the end pose itself chosen for the view (one of the
 oracle predictor (the upper bound), three hard starts, CPU sample counts; the
 learned predictor in the loop is A9 / P3B.11.
 
+**End pose chosen for the view (2026-10-10, `view_pose.py`).** The end pose is
+now picked first: whole-body poses that put the TCP on the goal are sampled,
+those whose eye-in-hand camera has a free line of sight to the flower kept
+(leaf, twin and stems as occluders; on the robot the semantic field and the
+memory's `p_world`), the best by angle off the optical axis, move from the
+current state, turn of the approach axis and manipulability; the MPC gets its
+approach axis as a pose goal (orientation weight 30). The line-of-sight test is
+conservative: of the poses it calls visible, 90 % show the flower when
+rendered (it finds 57 % of them). CPU, 64 samples, 120 steps:
+
+| Start | Method | Flower in view | At the end: visible / tracker on flower | Goal error | Axis error |
+|---|---|---|---|---|---|
+| default, 3 seeds | C2 | 79–94 % | 3 of 3 / 0 of 3 | 0.1–0.6 cm | |
+| | C2v (view end pose) | 75–97 % | 3 of 3 / **3 of 3** | 0.5–0.6 cm | 1.3–2.9° |
+| | C3c | 63–79 % | 3 of 3 / 0 of 3 | 0.6–1.0 cm | |
+| | C3cv (both) | 93–95 % | 3 of 3 / 0 of 3 | 0.0–0.2 cm | 31–38° |
+| hard, 3 starts | C2 | 19–39 % | 1 of 3 / 0 of 3 | 0.1–1.0 cm | |
+| | C2v | 71–89 % | **3 of 3 / 2 of 3** | 0.1–0.9 cm | 1.0–5.3° |
+| | C3c | 26–75 % | 1 of 3 / 1 of 3 | 0.7–0.9 cm | |
+| | C3cv | 9–91 % | 2 of 3 / 0 of 3 | 0.3–1.1 cm | 29–42° |
+
+The end pose decides identity at the grasp: with it the tracker ends on the
+flower in 5 of 6 runs (C2: 0 of 6, C3c: 1 of 6) and the flower is visible at
+the end in 6 of 6. Adding the trajectory visibility term (C3cv) fails: it
+keeps the current view and holds the camera 29–42° off the chosen axis
+(counting the axis error in the secondary constraint, 0.1 m per rad, reduced
+that to 26° in one run, not enough). `predictive_mpc_node` therefore chooses
+the end pose for point goals (`jepa_view_end_pose`) and suspends the
+visibility cost while that axis is set (`view_suspends_visibility_cost`).
+Hardware-free (ROS, synthetic camera): the axis is chosen once the target is
+anchored, and the visibility cost leaves the MPC. Caveats: one synthetic scene,
+oracle visibility for scoring the runs, six starts.
+
 ## ROS interface
 
 ```text

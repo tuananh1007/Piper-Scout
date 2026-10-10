@@ -149,11 +149,11 @@ whole-body MPC, stem grasp (reach, servo, approach, grasp, release).
 ./scripts/hardware_free_checks.sh 2>&1 | tee $LOG/W4_hardware_free.txt
 ```
 
-It runs ten checks one after another (about 14 minutes), each with its own
+It runs twelve checks one after another (about 17 minutes), each with its own
 fake-driver bringup, on localhost only, and writes its logs to
 `test_logs/hwfree_<date>_<time>/`.
 
-**Pass:** the summary lists ten `PASS` lines and the script exits with 0.
+**Pass:** the summary lists twelve `PASS` lines and the script exits with 0.
 **Record:** the summary, and the `info: ... MPPI solve median ... ms, max ... ms`
 lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 **If it fails:** open `check.out` and `pipeline.log` / `mpc.log` of the
@@ -317,7 +317,7 @@ Watch `tegrastats` in another terminal during the first run and save a few
 lines: `tegrastats --interval 2000 | tee $LOG/J6_tegrastats.txt` (Ctrl-C after
 the run).
 
-**Pass:** ten `PASS` lines with `--profile orin`; no `MPPI solves overrun`
+**Pass:** twelve `PASS` lines with `--profile orin`; no `MPPI solves overrun`
 warning with `--profile orin`.
 **Record:** the `MPPI solve median / max` lines of both runs, any overrun
 warnings, the highest RAM use in `tegrastats`.

@@ -24,11 +24,22 @@ observed) for a pipeline with ``servo_controller:=mppi`` and
 used the field and kept clearance to it (the target stem released, the
 neighbour not).
 
-``--push-force N`` (servo only, with effort_force_node from
-bringup_force_estimate:=true): after ``--push-after`` s of servoing it applies
-N newtons at the fake arm's TCP (the fake driver's ``external_force_n``) and
-checks that the estimate stayed below the pipeline's max_force_n while
-servoing and that the pipeline then aborts to SCANNING within a second.
+Phase 2B hard gates (servo only; one event ``--event-after`` s into the servo):
+``--push-force N`` (with effort_force_node from bringup_force_estimate:=true)
+applies N newtons at the fake arm's TCP (the fake driver's
+``external_force_n``) and checks that the estimate stayed below max_force_n
+while servoing, then RETREATING within a second, the gripper backed out
+force_retract_m along its axis and ABORTED; ``--lose-target`` publishes empty
+masks from then on and expects SCANNING (re-ground) within
+servo_lost_target_sec + 1 s; ``--intrude`` (with ``--scene-field`` and the MPPI
+servo) puts an obstacle into the field at the TCP and expects ABORTED within
+1.5 s and no more servo motion.
+
+Without an event it also reports the WE6 handoff numbers (research
+whole_body_mpc): the gap between the MPC's last and the servo's first command,
+the TCP motion in that gap and the peak TCP speed in the first second of the
+servo, and checks that the handoff has no transient (TCP still in the gap,
+peak speed under ``--max-handoff-speed``).
 
 Publishes a synthetic stem (a 4 mm vertical cylinder, z 0.25-0.60 m in odom):
 its robot-facing half as a point cloud on /stem_grasp/filtered_cloud, and, as
@@ -74,6 +85,34 @@ def render_mask(points_cam, K, hw=(480, 640), dilate=1):
     return mask
 
 
+def handoff_metrics(t_handoff, mpc_cmd_times, servo_cmd_times, tcp_track, window=0.1):
+    """WE6 numbers around the MPC -> servo handoff at ``t_handoff`` (the
+    pipeline entering its servo phase): the gap from the MPC's last command to
+    the servo's first command with motion, the TCP displacement in that gap,
+    and the peak TCP speed (over ``window`` s) in the last second of the MPC
+    and the first second of the servo. ``tcp_track``: [(t, xyz)]."""
+    import numpy as np  # noqa: PLC0415
+    first = next((t for t in sorted(servo_cmd_times) if t >= t_handoff), None)
+    if first is None:
+        return None
+    last = max((t for t in mpc_cmd_times if t <= first), default=None)
+    T = np.array([t for t, _ in tcp_track])
+    P = np.array([p for _, p in tcp_track])
+
+    def at(t):
+        return P[int(np.argmin(np.abs(T - t)))]
+
+    def peak(t0, t1):
+        sel = np.flatnonzero((T >= t0) & (T <= t1))
+        v = [np.linalg.norm(P[j] - P[i]) / (T[j] - T[i]) for i in sel
+             for j in sel[(T[sel] >= T[i] + window)][:1]]
+        return float(max(v)) if v else 0.0
+
+    t_from = last if last is not None else t_handoff
+    return {"gap_s": first - t_from, "gap_motion_m": float(np.linalg.norm(at(first) - at(t_from))),
+            "peak_mpc_mps": peak(t_from - 1.0, t_from), "peak_servo_mps": peak(first, first + 1.0)}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("stem", type=float, nargs=2, help="stem x y in odom [m]")
@@ -82,15 +121,18 @@ def main() -> int:
     ap.add_argument("--servo-seconds", type=float, default=15.0, help="servo time after the handoff")
     ap.add_argument("--release", action="store_true", help="after the grasp, release and retreat")
     ap.add_argument("--push-force", type=float, default=0.0, help="N at the TCP while servoing (force abort)")
+    ap.add_argument("--lose-target", action="store_true", help="empty masks while servoing (re-ground)")
+    ap.add_argument("--intrude", action="store_true", help="obstacle at the TCP in the field (clearance stop)")
     ap.add_argument("--scene-field", action="store_true", help="publish the stems as a semantic distance field")
-    ap.add_argument("--push-after", type=float, default=4.0, help="servo seconds before the push")
+    ap.add_argument("--event-after", type=float, default=4.0, help="servo seconds before the gate event")
+    ap.add_argument("--max-handoff-speed", type=float, default=0.10, help="m/s, TCP in the first servo second")
     a = ap.parse_args()
 
     import numpy as np  # noqa: PLC0415
     import rclpy  # noqa: PLC0415
     import tf2_ros  # noqa: PLC0415
     from control_msgs.msg import JointJog  # noqa: PLC0415
-    from geometry_msgs.msg import PoseStamped, WrenchStamped  # noqa: PLC0415
+    from geometry_msgs.msg import PoseStamped, TwistStamped, WrenchStamped  # noqa: PLC0415
     from nav_msgs.msg import Odometry  # noqa: PLC0415
     from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue  # noqa: PLC0415
     from rcl_interfaces.srv import GetParameters, SetParameters  # noqa: PLC0415
@@ -118,6 +160,12 @@ def main() -> int:
     n.create_subscription(JointJog, "/servo_node/delta_joint_cmds",
                           lambda m: m.header.frame_id != "stem_grasp" and jogs.append(time.time()), 50)
     n.create_subscription(Int8, "/servo_node/status", lambda m: servo.append(m.data), 100)
+    servo_cmds = []                                     # stem_grasp servo commands with motion (WE6)
+    n.create_subscription(JointJog, "/servo_node/delta_joint_cmds", lambda m: m.header.frame_id == "stem_grasp"
+                          and any(abs(v) > 1e-6 for v in m.velocities) and servo_cmds.append(time.time()), 50)
+    n.create_subscription(TwistStamped, "/servo_node/delta_twist_cmds", lambda m: servo_cmds.append(time.time())
+                          if abs(m.twist.linear.x) + abs(m.twist.linear.y) + abs(m.twist.linear.z) > 1e-6
+                          else None, 50)
     forces = []
     n.create_subscription(WrenchStamped, "/ft_sensor/raw", lambda m: forces.append((time.time(), float(np.linalg.norm(
         [m.wrench.force.x, m.wrench.force.y, m.wrench.force.z])))), 100)
@@ -140,6 +188,8 @@ def main() -> int:
                              np.repeat(a.stem[1] + 0.004 * np.sin(ang)[None], len(zz), 0).ravel(),
                              np.repeat(zz[:, None], len(ang), 1).ravel(), np.ones(len(zz) * len(ang))])
 
+    mask_on = [True]                                    # --lose-target clears it
+
     def publish_camera():
         try:
             tr = tf_buffer.lookup_transform("camera_color_optical_frame", "odom", rclpy.time.Time())
@@ -150,6 +200,8 @@ def main() -> int:
         T[:3, :3] = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
         T[:3, 3] = [tr.transform.translation.x, tr.transform.translation.y, tr.transform.translation.z]
         mask = render_mask((T @ stem_surface)[:3].T, K)
+        if not mask_on[0]:
+            mask[:] = 0                                 # the stem left the view
         stamp = n.get_clock().now().to_msg()
         img = Image(height=mask.shape[0], width=mask.shape[1], encoding="mono8", step=mask.shape[1],
                     data=mask.tobytes())
@@ -223,32 +275,83 @@ def main() -> int:
         call(SetParameters, "/piper_ctrl_single_node/set_parameters",
              SetParameters.Request(parameters=[Parameter(name="external_force_n", value=v)]))
 
-    if a.push_force and (approach or param("/effort_force_estimator", "wrench_topic") is None):
-        print("REFUSED: --push-force needs servo only (no approach) and bringup_force_estimate:=true", flush=True)
+    event = "push" if a.push_force else "lose" if a.lose_target else "intrude" if a.intrude else None
+    if event and approach:
+        print("REFUSED: the gate events need servo only (approach_enabled false)", flush=True)
+        return 2
+    if event == "push" and param("/effort_force_estimator", "wrench_topic") is None:
+        print("REFUSED: --push-force needs bringup_force_estimate:=true", flush=True)
+        return 2
+    if event == "intrude" and not a.scene_field:
+        print("REFUSED: --intrude needs --scene-field", flush=True)
         return 2
 
-    def push_force_check() -> int:
-        """Servo, push N at the TCP, expect the force abort (``--push-force``)."""
+    def tcp_now():
+        tr = link6()
+        if tr is None:
+            return None
+        r = tr.transform.rotation
+        R = Rotation.from_quat([r.x, r.y, r.z, r.w]).as_matrix()
+        t = tr.transform.translation
+        return np.array([t.x, t.y, t.z]) + offset * R[:, 2], R[:, 2]
+
+    def gate_check() -> int:
+        """Servo, then one gate event; expect the gate's outcome (Phase 2B hard gates)."""
         t_servo = next((t for t, s in states if s == servo_state), None)
-        spin(a.push_after)
-        max_force = param("/stem_grasp_pipeline", "max_force_n").double_value
+        spin(a.event_after)
+        p = lambda name: param("/stem_grasp_pipeline", name)    # noqa: E731
         before = [f for t, f in forces if t_servo is not None and t > t_servo]
-        t_push = time.time()
-        set_force([0.0, 0.0, -a.push_force])
-        while time.time() - t_push < 3.0 and states[-1][1] == servo_state:
+        start = tcp_now()
+        t_ev = time.time()
+        if event == "push":
+            set_force([0.0, 0.0, -a.push_force])
+            wait_for, limit = ("ABORTED",), 8.0
+        elif event == "lose":
+            mask_on[0] = False
+            lost = p("servo_lost_target_sec").double_value
+            wait_for, limit = ("SCANNING", "ABORTED"), lost + 3.0
+        else:
+            c = start[0]
+            field_state["hard"] = np.minimum(field_state["hard"], np.linalg.norm(g - c, axis=-1) - 0.01)
+            publish_field()
+            wait_for, limit = ("ABORTED", "SCANNING"), 3.0
+        while time.time() - t_ev < limit and states[-1][1] not in wait_for:
             spin(0.05)
-        t_abort = next((t for t, s in states if s == "SCANNING" and t > t_push), None)
-        set_force([0.0, 0.0, 0.0])
+        spin(0.5)
+        end = tcp_now()
+        if event == "push":
+            set_force([0.0, 0.0, 0.0])
         call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
         seq = [s for _, s in states]
-        ok = []
-        for name, cond, detail in (
-                ("stem_grasp went REACHING -> " + servo_state, t_servo is not None, " -> ".join(seq)),
+        after = [s for t, s in states if t > t_ev]
+        first = lambda name: next((t - t_ev for t, s in states if s == name and t > t_ev), None)   # noqa: E731
+        results = [("stem_grasp went REACHING -> " + servo_state, t_servo is not None, " -> ".join(seq))]
+        if event == "push":
+            max_force = p("max_force_n").double_value
+            retract = p("force_retract_m").double_value
+            back = float((start[0] - end[0]) @ start[1]) if start and end else float("nan")
+            t_r = first("RETREATING")
+            results += [
                 ("force estimate below max_force_n while servoing", before and max(before) < max_force,
-                 f"max {max(before or [float('nan')]):.2f} N over {len(before)} estimates "
-                 f"(max_force_n {max_force} N)"),
-                (f"{a.push_force} N at the TCP aborts to SCANNING", t_abort is not None and t_abort - t_push < 1.0,
-                 f"after {t_abort - t_push:.2f} s" if t_abort else "no abort: " + " -> ".join(seq))):
+                 f"max {max(before or [float('nan')]):.2f} N over {len(before)} estimates (max_force_n {max_force} N)"),
+                (f"{a.push_force} N at the TCP: back out {100 * retract:.0f} cm, then ABORTED",
+                 after[:2] == ["RETREATING", "ABORTED"] and t_r is not None and t_r < 1.0 and back > 0.8 * retract,
+                 f"{' -> '.join(after)}; retracting after {t_r if t_r is None else round(t_r, 2)} s, "
+                 f"backed {100 * back:.1f} cm along the gripper axis")]
+        elif event == "lose":
+            t_s = first("SCANNING")
+            results.append(("target lost: re-ground (SCANNING)", t_s is not None and t_s < lost + 1.0,
+                            f"after {t_s if t_s is None else round(t_s, 2)} s (servo_lost_target_sec {lost}); "
+                            + " -> ".join(after)))
+        else:
+            t_a = first("ABORTED")
+            moving = [t for t in servo_cmds if t_a is not None and t > t_ev + t_a + 0.3]
+            results.append(("obstacle in the field at the TCP: servo stops (ABORTED)",
+                            t_a is not None and t_a < 1.5 and not moving,
+                            f"after {t_a if t_a is None else round(t_a, 2)} s, {len(moving)} servo commands "
+                            "with motion afterwards; " + " -> ".join(after)))
+        ok = []
+        for name, cond, detail in results:
             ok.append(bool(cond))
             print(("PASS " if cond else "FAIL ") + f"{name}: {detail}", flush=True)
         print("GRASP CHAIN", "OK" if all(ok) else "FAILED", flush=True)
@@ -273,20 +376,28 @@ def main() -> int:
         g = origin + (np.stack(np.meshgrid(*[np.arange(nv)] * 3, indexing="ij"), -1) + 0.5) * vs
         axes = [np.array(a.stem), np.array(a.stem) + [0.0, 0.08]]          # target stem, neighbour
         hard = np.min([np.linalg.norm(g[..., :2] - c, axis=-1) for c in axes], axis=0) - 0.004 - 0.005
-        hard = np.where((g[..., 2] > 0.25) & (g[..., 2] < 0.60), hard, np.maximum(hard, 0.02))
+        field_state = {"hard": np.where((g[..., 2] > 0.25) & (g[..., 2] < 0.60), hard, np.maximum(hard, 0.02))}
         age = np.where(g[..., 0] > a.stem[0] + 0.004 + vs, AGE_UNKNOWN, 0).astype(np.uint16)   # unseen back
 
         def publish_field():
             t = n.get_clock().now().nanoseconds * 1e-9
             snap = DistanceFieldSnapshot(origin=origin, voxel_size=vs, shape=(nv,) * 3, stamp=t,
-                                         hard_classes=["stem"], hard_distance=hard.astype(np.float32),
+                                         hard_classes=["stem"], hard_distance=field_state["hard"].astype(np.float32),
                                          hard_class=np.zeros((nv,) * 3, np.uint8), age_ds=age)
             field_pub.publish(fill_msg(SemanticDistanceField(), snap, "odom"))
 
         publish_field()
         n.create_timer(1.0, publish_field)
+    tcp_track = []
+
+    def track_tcp():
+        tcp = tcp_now()
+        if tcp is not None:
+            tcp_track.append((time.time(), tcp[0]))
+
     n.create_timer(0.2, publish_cloud)
     n.create_timer(1.0 / 15.0, publish_camera)
+    n.create_timer(0.05, track_tcp)
     call(Trigger, "/servo_node/start_servo", Trigger.Request())
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=True))
     t0 = time.time()
@@ -313,8 +424,8 @@ def main() -> int:
             while time.time() - t_release < 30.0 and states[-1][1] not in ("IDLE", "ABORTED"):
                 spin(0.2)
             released = (reply, link6(), t_release)
-    elif a.push_force:
-        return push_force_check()
+    elif event:
+        return gate_check()
     else:
         spin(a.servo_seconds)
     call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=False))
@@ -420,6 +531,17 @@ def main() -> int:
               used and len(used) == len(served) and clear and min(clear) > 0.0,
               f"{len(used)} of {len(served)} servo steps with the field, min clearance "
               f"{min(clear) if clear else float('nan'):.3f} m")
+    hm = handoff_metrics(t_servo, jogs, servo_cmds, tcp_track) if t_servo is not None else None
+    if hm is None:
+        check("handoff without a transient (WE6)", False, "no servo command after the handoff")
+    else:
+        print(f"info handoff: gap {hm['gap_s']:.2f} s, TCP moved {1000 * hm['gap_motion_m']:.1f} mm in it; "
+              f"peak TCP speed {100 * hm['peak_mpc_mps']:.1f} cm/s before, {100 * hm['peak_servo_mps']:.1f} cm/s "
+              "in the first servo second", flush=True)
+        check("handoff without a transient (WE6)",
+              hm["gap_motion_m"] < 0.005 and hm["peak_servo_mps"] < a.max_handoff_speed,
+              f"TCP {1000 * hm['gap_motion_m']:.1f} mm in the {hm['gap_s']:.2f} s gap, peak "
+              f"{100 * hm['peak_servo_mps']:.1f} cm/s (< {100 * a.max_handoff_speed:.0f})")
     check("MPC idle after the handoff", mpc and mpc[-1][1]["mode"] == "idle",
           f"last mode {mpc[-1][1]['mode'] if mpc else None}")
     late = [t for t in jogs if t_servo is not None and t > t_servo + 0.5]   # MPC JointJog only

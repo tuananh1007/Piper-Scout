@@ -41,8 +41,8 @@ needs R0–R8 of the same file.
 | Whole-body MPC | numpy MPPI + safety filter; **torch backend** (same model and cost on CUDA, `profile:=gpu` / `orin_gpu`); **W2 reactive QP** baseline; **30-scene plant benchmark** (W3 reaches 21/22 arm-unreachable targets: P3.3.2 gate passed, synthetic); **calibration tools** (slip, TCP pivot, hand-eye); semantic field from a topic; unknown-space policy `no_entry` | GPU / Orin timing (A2, B2), calibration on the robot (C2), runs on the robot (C3, C9) |
 | Semantic scene | CPU map + query + MoveIt plugin; **merged label image** from stem_grasp (P1.1.4); **`other` class** and **finger self-filter** in the demux / CPU map (P1.7.8); **nvblox ESDF bridge** → `/scene_repr/distance_field` (P1.3.1, P3.2.2); **target attractor** → `/scene_repr/target_goal` (P1.3.3); **RViz config** (P1.2.3); **semantic vs occupancy** benchmark, synthetic 18/20 vs 17/20 and an offline mode for recorded scenes (P1.4.2); `record_bag.sh scene` (P1.4.1) | first run of the per-class nvblox stack and the bridge (A4, B3), Orin rate (B3), recorded scenes (C5, D1), robot runs (C4) |
 | Piper-JEPA | Stage A memory, Stage B predictors, Stage C cost; **DINOv2 encoder** (T2); **E1 runner T0–T4** with the H1 go/no-go rule (P2A.6); **bag → episode export** with depth, poses, states, segmentation, labels; **annotation tool** (P2A.5, P3B.8); **training command** with GPU support (P3B.9); **latency benchmark** (P3B.10); **predictive MPC node C3** (P3B.11) | V-JEPA / DINOv2 inference (A6), GPU training and latency (A7, A8, B4), datasets (C6, C7), H1 decision (D2), E3 training (D3), C3 on the robot (C8) |
-| Contact force | no F/T sensor: **joint-effort force estimate** (`dynamics/effort.py`, `effort_force_node` on `/ft_sensor/raw`, `~/tare`), **`calibrate_effort`** (move to a checked centre, multi-sine, fit, held-out residual, 3-σ threshold); relay passes driver efforts; fake driver simulates efforts and a TCP force; stem_grasp `force_topic`, tare on servo start, stale-force stop, thresholds into the MPPI servo; hardware-free: 0.04 N error on 3 N, calibration gains 1.00, 3 N push aborts the servo in 0.2 s | real driver efforts and noise, calibration on the robot (C2 step 4) |
-| Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes; **semantic clearance** from `/scene_repr/distance_field` with the target stem released (`exclude_target`: obstacle voxels connected to the grasp point; neighbours stay hard), hardware-free grasp with a synthetic field passes | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
+| Contact force | no F/T sensor: **joint-effort force estimate** (`dynamics/effort.py`, `effort_force_node` on `/ft_sensor/raw`, `~/tare`), **`calibrate_effort`** (move to a checked centre, multi-sine, fit, held-out residual, 3-σ threshold); relay passes driver efforts; fake driver simulates efforts and a TCP force; stem_grasp `force_topic`, tare on servo start, stale-force stop, thresholds into the MPPI servo; hardware-free: 0.04 N error on 3 N, calibration gains 1.00, 3 N push trips the force gate in 0.2 s (retract 5 cm, ABORTED) | real driver efforts and noise, calibration on the robot (C2 step 4) |
+| Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes; **semantic clearance** from `/scene_repr/distance_field` with the target stem released (`exclude_target`: obstacle voxels connected to the grasp point; neighbours stay hard), hardware-free grasp with a synthetic field passes; **Phase 2B hard gates** (force limit → retract 5 cm → ABORTED, silent force source → stop, target lost 2 s → SCANNING, hard clearance violation → stop) and the **WE6 handoff** numbers in `grasp_chain_check.py` | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
 
 ---
 
@@ -82,7 +82,7 @@ to the largest torch-cuda value whose p95 with the plant field is under 90 ms
 ### A3 — Hardware-free chains on the GPU profile
 
 **Steps:** `./scripts/hardware_free_checks.sh --profile gpu 2>&1 | tee $LOG/A3_hwfree_gpu.txt`
-**Pass:** ten `PASS` lines; no `MPPI solves overrun` warning.
+**Pass:** twelve `PASS` lines; no `MPPI solves overrun` warning.
 **Record:** the two `MPPI solve median / max` lines.
 
 ### A4 — Per-class nvblox and the distance-field bridge (P1.2.1, P1.3.1, first run)
@@ -209,6 +209,9 @@ python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --seeds 3 --samples 25
 # starts where geometry-only motion loses the flower (C2 screened on 30 random starts)
 python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --hard 30 --hard-k 5 --samples 256 \
   --methods C2,C3c-oracle,C3c-learned --model $LOG/A7_e3_synthetic/P3.pt 2>&1 | tee $LOG/A9_c2_c3_hard.txt
+# end pose chosen for the view (C2v), at 256 samples
+python3 src/scout_piper_jepa/benchmarks/visibility_mpc.py --hard 30 --hard-k 5 --samples 256 --steps 120 \
+  --methods C2,C2v 2>&1 | tee $LOG/A9_view_end_pose.txt
 ```
 
 **Expect:** the feasibility line (share of goal poses that see the flower),
@@ -218,8 +221,10 @@ at most 1 cm (`--tol`). The question: does C3c keep the flower in view more
 often, and the tracker on it, without a larger goal error, above all on the
 hard starts. CPU reference (64 / 128 samples, default start): C3c keeps the
 goal error at 1.3–1.8 cm but does not see the flower more than C2 (C2 already
-keeps it in view 81–95 % there). **Record:** visible fraction, tracker end
-state and goal error per method and start; samples.
+keeps it in view 81–95 % there). With the end pose chosen for the view (C2v,
+CPU, 64 samples) the tracker ended on the flower in 5 of 6 runs vs 0 of 6 for
+C2. **Record:** visible fraction, tracker end state, goal and axis error per
+method and start; samples.
 
 ### A10 — E1 pilot with a hand-held camera (P2A.5 / P2A.6 rehearsal)
 
@@ -315,7 +320,7 @@ python3 src/scout_piper_whole_body_mpc/benchmarks/timing.py --backends numpy,tor
 p95 with the plant field is under 90 ms at ≥ 256 samples, else `orin` (numpy,
 128 samples). Set `samples` in `config/whole_body_mpc_orin_gpu.yaml` (or
 `_orin.yaml`) accordingly and run `./scripts/hardware_free_checks.sh --profile <chosen>`
-(ten PASS). **Record:** the table, the chosen profile and samples.
+(twelve PASS). **Record:** the table, the chosen profile and samples.
 
 ### B3 — nvblox rate and memory on the Orin (P1.1.3, P1.7.6 timing)
 

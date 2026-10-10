@@ -4,7 +4,8 @@ import pytest
 
 import numpy as np
 
-from stem_grasp.approach import ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor
+from stem_grasp.approach import (ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor,
+                                 ServoGates, servo_gate)
 
 DT = 0.1
 
@@ -75,6 +76,19 @@ def test_contact_ends_the_approach():
     assert st.phase == "done" and "contact" in st.reason and d == pytest.approx(0.12)
 
 
+def test_a_single_force_spike_is_not_a_contact():
+    spikes = {5, 40, 60}                                   # one-sample spikes (a noisy force estimate)
+    app = IterativeApproach(ApproachConfig(), start_t=0.0)
+    d, t = 0.12, 0.0
+    for k in range(400):
+        st = app.update(t, 2.0, d, 500, 0.3 if k in spikes else 0.0)
+        if st.phase in ("done", "abort"):
+            break
+        d -= st.speed * DT
+        t += DT
+    assert st.phase == "done" and "grasp point" in st.reason   # arrived; the spikes did not end it
+
+
 def close(widths, dt=0.1, **kw):
     """Feed a measured opening sequence; return (decision, time, width)."""
     mon = GripperCloseMonitor(start_t=0.0, **kw)
@@ -109,3 +123,18 @@ def test_retreat_counts_only_motion_back_along_the_axis():
     stuck = RetreatMonitor(start_t=0.0, start_tcp=np.zeros(3), axis=axis, timeout_s=5.0)
     assert stuck.update(6.0, np.zeros(3)) == "timeout"
     assert stuck.update(6.0, None) == "timeout"
+
+
+@pytest.mark.parametrize("approaching, force, force_age, mask_age, expected", [
+    (False, 0.3, 0.01, 0.05, None),                     # all well
+    (False, 2.5, 0.01, 0.05, "retract"),                # force limit: back out
+    (True, 2.5, 0.01, 9.0, "retract"),                  # force first, whatever else is wrong
+    (False, 0.0, 0.8, 0.05, "stop"),                    # the force source fell silent
+    (False, 0.0, None, 0.05, None),                     # no force source at all: no force gate
+    (False, 0.0, None, 2.5, "reground"),                # target lost while servoing
+    (True, 0.0, None, 2.5, None),                       # approaching: the approach's own mask abort
+])
+def test_servo_gates(approaching, force, force_age, mask_age, expected):
+    out = servo_gate(ServoGates(), approaching, force, force_age, mask_age)
+    assert (out[0] if out else None) == expected
+    assert servo_gate(ServoGates(force_max_age_s=0.0, lost_target_s=0.0), False, 0.0, 9.0, 9.0) is None   # gates off

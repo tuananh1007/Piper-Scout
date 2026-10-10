@@ -35,7 +35,7 @@ from typing import Optional
 
 import numpy as np
 
-from .costs.terms import WholeBodyCost
+from .costs.terms import JOINT_LIMIT_MARGIN, WholeBodyCost
 from .dynamics.whole_body import WholeBodyModel
 from .solvers.mppi import MPPIConfig
 
@@ -292,7 +292,7 @@ class TorchCost:
 
         q = Xk[..., 3:]
         J = J + w.manip * (1.0 / (tm.manipulability(F) + 1e-3)).mean(1)
-        margin = 0.05
+        margin = JOINT_LIMIT_MARGIN
         lim = torch.clamp(tm.lower + margin - q, min=0) + torch.clamp(q - (tm.upper - margin), min=0)
         J = J + w.joint_limit * (lim ** 2).sum((1, 2))
         if w.reach > 0:

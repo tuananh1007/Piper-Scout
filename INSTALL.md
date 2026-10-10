@@ -168,7 +168,7 @@ clone on the Orin:
 - udev rules and the rest of Step 9 as on the workstation.
 
 **A.6 Run.** First `./scripts/hardware_free_checks.sh --profile orin` (10.2;
-all ten checks must pass), then Step 10 on the Orin, in the order of
+all twelve checks must pass), then Step 10 on the Orin, in the order of
 [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) parts J and R, with:
 - **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
   whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
@@ -854,14 +854,14 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 10 checks, ~14 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 12 checks, ~17 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
 It runs the checks of 10.4 (servo), 10.13 (whole-body MPC, two goals) and
 10.9 (stem grasp: reach and servo; reach, servo and approach; full grasp
 and release at two stem positions; a full grasp with the MPPI servo on a
-semantic distance field) and 10.14 (the joint-effort force estimate and
+semantic distance field; the lost-target and clearance gates) and 10.14 (the joint-effort force estimate and
 its calibration; the force abort while servoing) one after another, each with its own
 bringup on the fake arm and base, with `ROS_LOCALHOST_ONLY=1` in a separate
 ROS domain (`HWF_DOMAIN`, default 77), so it cannot reach a real robot. It
@@ -1177,11 +1177,31 @@ stops) on any of these:
 - no usable stem mask for `approach_mask_wait_sec`;
 - `approach_timeout_sec` passes.
 
-A force above `contact_threshold_n` also ends the approach, and one above
-`max_force_n` sends any servo phase back to SCANNING. The Piper has no force
-sensor: `/ft_sensor/raw` then comes from the joint-effort estimate (10.14),
-whose noise both thresholds must clear; without it only the geometry stops the
-approach.
+A force above `contact_threshold_n` for `contact_hold_sec` (0.1 s; one noisy
+sample of the estimate is not a contact) also ends the approach. The Piper has no
+force sensor: `/ft_sensor/raw` comes from the joint-effort estimate (10.14),
+whose noise both force thresholds must clear; without it only the geometry
+stops the approach.
+
+**Hard gates (Phase 2B), in SERVOING and APPROACHING** (`approach.servo_gate`):
+- force above `max_force_n`: the gripper backs straight out `force_retract_m`
+  (5 cm) along its axis, then ABORTED (`force_retract_m: 0` stops in place);
+  a force that rises above twice the limit during the retreat stops it;
+- a force source that falls silent for `force_max_age_sec`: stop, ABORTED;
+- the target lost for `servo_lost_target_sec` (2 s) while servoing: back to
+  SCANNING (re-ground);
+- MPPI servo with `scene_field_topic`: a hard semantic-clearance violation
+  (a collision sphere inside the field after the step) stops, ABORTED.
+
+ABORTED needs `~/scan` to start again. moveit_servo halts any command that
+moves a joint within 0.1 rad of its limit (`joint_limit_margin`), retreats
+included, so the MPC and the MPPI servo keep 0.15 rad from the limits.
+
+**Handoff (WE6).** At the handoff the pipeline cancels the MPC, which sends one
+stop, and the servo takes over. Hardware-free (`grasp_chain_check.py` reports
+it): 0.01–0.13 s between the MPC's last and the servo's first command, the TCP
+still (≤ 0.5 mm) in that gap and 0.6–3.5 cm/s at most in the first servo
+second, with both servo controllers.
 
 **Grasp (`grasp_close_gripper: true`, off by default).** With the approach on,
 the pipeline opens the gripper to `grasp_open_width_m` (6 cm) before it
@@ -1538,8 +1558,9 @@ estimate on the fake arm at rest, applies 3 N and (2, −1, 0.5) N at the TCP
 (here within 0.04 N), then runs `calibrate_effort --execute` for 60 s (gains
 1.00, held-out residual 0.02 N·m, 3-σ 0.32 N at the fake's 0.02 N·m noise);
 `grasp_force_abort` servos on the synthetic stem with that calibration (the
-estimate stayed ≤ 0.08 N while the arm moved), applies 3 N and expects
-SCANNING within 1 s (0.2 s here).
+estimate stayed ≤ 0.11 N while the arm moved), applies 3 N and expects the
+force gate within 1 s (0.2 s here): the gripper backs out 5 cm (5.1 cm) and
+the pipeline stops in ABORTED.
 
 ## Research quick start without ROS (path D)
 

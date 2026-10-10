@@ -20,6 +20,19 @@ Phase 2A rule):
 Without an initialised, visible target the cost adds nothing, so the node
 behaves exactly like the geometry-only MPC (C2).
 
+End pose for the view (``jepa_view_end_pose``): a point goal (``goal_topic``)
+gets the approach axis of a whole-body end pose whose camera sees the target
+(``view_pose.choose_view_end_pose``: line of sight from the camera to the
+target's anchored position ``p_world`` through ``field_topic``'s semantic
+field, leaves included; without a field only the field of view counts), with
+orientation weight ``view_w_orient``. It is chosen once per goal, as soon as
+the target is anchored; pose goals (stem_grasp) keep their own axis and
+``w_orient``. With ``view_suspends_visibility_cost`` (default) the visibility
+cost is off while such an axis is set: in the synthetic comparison the end
+pose alone kept the tracker on the flower in 5 of 6 runs, and the trajectory
+visibility term held the camera's current view against the new axis (C3cv,
+README).
+
     ros2 run scout_piper_jepa predictive_mpc_node --ros-args \\
         --params-file $(ros2 pkg prefix scout_piper_whole_body_mpc)/share/scout_piper_whole_body_mpc/config/whole_body_mpc.yaml \\
         -p jepa_model:=runs/e3/P3.pt -p encoder:=vjepa -p hub_entry:=vjepa2_vit_large -p image_size:=256
@@ -41,12 +54,14 @@ from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 
 from scout_piper_whole_body_mpc.controller_node import WholeBodyMpcNode
+from scout_piper_whole_body_mpc.costs.terms import Goal
 
 from .encoder import make_encoder
 from .image_codec import image_to_numpy
 from .predictive_cost import JepaVisibilityCost, VisibilityCostWeights
 from .predictor import PersistencePredictor, StateConditionedPredictor
 from .target_memory import TargetMemory, TargetMemoryConfig
+from .view_pose import choose_view_end_pose, field_occluder, line_of_sight_visible_fn
 
 
 def _quat_to_T(tr) -> np.ndarray:
@@ -86,6 +101,10 @@ class PredictiveMpcNode(WholeBodyMpcNode):
             ("init_mask_topic", "/piper_jepa/init_mask"),
             ("flange_frame", "piper_link6"),
             ("anchor_tolerance_m", 0.03),
+            ("jepa_view_end_pose", True),   # point goals: approach axis of an end pose that sees the target
+            ("view_w_orient", 30.0),        # orientation weight for that axis (pose goals keep w_orient)
+            ("view_half_fov_deg", 30.0),    # the target within this of the optical axis at the end pose
+            ("view_suspends_visibility_cost", True),   # no trajectory visibility cost with a view axis
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         kw = {}
@@ -144,8 +163,62 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.create_subscription(CameraInfo, p("camera_info_topic"), self._info, be)
         self.create_subscription(Image, p("init_mask_topic"), self._mask, 2)
         self.pub_ctx = self.create_publisher(String, "/piper_jepa/mpc_context", 5)
+        self.view_on = bool(p("jepa_view_end_pose"))
+        self.view_w_orient = float(p("view_w_orient"))
+        self.view_half_fov = np.radians(float(p("view_half_fov_deg")))
+        self.view_suspends = bool(p("view_suspends_visibility_cost"))
+        self.base_w_orient = float(self.weights.orient)
+        self.view_pending = False
+        self.view_axis: Optional[np.ndarray] = None
+        self.create_timer(1.0, self._choose_view)
         self.get_logger().info("predictive MPC (C3): visibility cost active once the target is grounded, "
                                + ("secondary (goal error first)" if self.constrained else "additive"))
+
+    # ------------------------------------------------------------- goals
+    def _goal(self, msg) -> None:
+        p_new = np.array([msg.point.x, msg.point.y, msg.point.z])
+        if self.view_axis is not None and self.goal is not None and np.linalg.norm(self.goal.p - p_new) < 1e-3:
+            return                                   # the same goal again: keep the axis chosen for it
+        self.view_axis, self.weights.orient = None, self.base_w_orient
+        self._install_vis()
+        super()._goal(msg)
+        self.view_pending = self.view_on and self.goal is not None
+
+    def _goal_pose(self, msg) -> None:
+        self.view_pending, self.view_axis, self.weights.orient = False, None, self.base_w_orient
+        self._install_vis()
+        super()._goal_pose(msg)
+
+    def _install_vis(self) -> None:
+        """Visibility cost in the MPC (secondary or additive), unless a view axis suspends it."""
+        terms = [self.vis] if self.vis is not None and not (self.view_axis is not None and self.view_suspends) \
+            else []
+        if self.constrained:
+            self.secondary_terms, self.extra_terms = terms, []
+        else:
+            self.secondary_terms, self.extra_terms = [], terms
+
+    def _choose_view(self) -> None:
+        """Approach axis of an end pose that sees the target (``jepa_view_end_pose``)."""
+        if (not self.view_pending or self.goal is None or self.p_world is None or self.base is None
+                or self.q is None or self._flange_cam() is None):
+            return
+        self.view_pending = False
+        snap = self.field_snap
+        occ = field_occluder(snap) if snap is not None else (lambda o, t: np.zeros(len(np.atleast_2d(o)), bool))
+        vis = line_of_sight_visible_fn(self.p_world, occ, self.view_half_fov)
+        ch = choose_view_end_pose(self.model, self._camera_pose, self.goal.p, self.p_world,
+                                  np.r_[self.base, self.q], vis, n=60000)
+        if ch is None:
+            self.get_logger().warn("no end pose on the goal sees the target; goal kept without an axis")
+            return
+        self.view_axis = ch.axis
+        self.goal = Goal(p=self.goal.p, approach_axis=ch.axis)
+        self.weights.orient = self.view_w_orient
+        self._install_vis()
+        self.get_logger().info(f"end pose for the view: axis {np.round(ch.axis, 3).tolist()}, target "
+                               f"{ch.angle_deg:.0f} deg off the optical axis ({ch.visible} of {ch.checked} "
+                               f"checked poses see it{', field' if snap is not None else ', no field'})")
 
     # ------------------------------------------------------------- inputs
     def _info(self, msg: CameraInfo) -> None:
@@ -206,10 +279,7 @@ class PredictiveMpcNode(WholeBodyMpcNode):
                 self.vis = JepaVisibilityCost(image_hw=rgb.shape[:2], K=self.K,
                                               camera_pose=self._camera_pose if self.T_flange_cam is not None else None,
                                               **self.vis_args)
-                if self.constrained:
-                    self.secondary_terms = [self.vis]
-                else:
-                    self.extra_terms = [self.vis]
+                self._install_vis()
             self.vis.set_context(np.stack(self.Z_hist), self.memory.r, self.u_now, p_world=self.p_world)
         elif self.vis is not None:
             self.vis.clear()
@@ -217,6 +287,8 @@ class PredictiveMpcNode(WholeBodyMpcNode):
         self.pub_ctx.publish(String(data=json.dumps({
             "status": s.status, "visible": bool(s.visible), "cost_active": bool(active),
             "anchored": self.p_world is not None,
+            "view_axis": None if self.view_axis is None else np.round(self.view_axis, 3).tolist(),
+            "vis_in_mpc": bool(self.secondary_terms or self.extra_terms),
             **{k: [round(float(np.min(v)), 3), round(float(np.max(v)), 3)] for k, v in terms.items()}})))
 
 

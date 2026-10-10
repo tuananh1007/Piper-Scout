@@ -132,9 +132,17 @@ stem_grasp_pipeline:
     # threshold_3sigma_n); 0.15 N is a wrist-sensor value, far below it.
     max_force_n: 2.0
     contact_threshold_n: 0.15
+    contact_hold_sec: 0.1          # the force above contact_threshold_n this long is a contact
     force_topic: "/ft_sensor/raw"
     force_tare_service: "/effort_force_estimator/tare"
     force_max_age_sec: 0.5
+    # Phase 2B hard gates while servoing / approaching: above max_force_n back
+    # out force_retract_m along the gripper axis, then ABORTED; target lost for
+    # servo_lost_target_sec -> SCANNING; MPPI servo inside the semantic field's
+    # hard clearance -> stop (ABORTED).
+    force_retract_m: 0.05
+    servo_lost_target_sec: 2.0
+    stop_on_clearance_violation: true
 
     # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
     servo_cmd_topic: "/servo_node/delta_twist_cmds"

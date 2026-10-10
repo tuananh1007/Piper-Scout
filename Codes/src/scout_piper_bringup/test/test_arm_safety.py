@@ -326,3 +326,22 @@ def test_print_tcp_puts_the_tcp_on_the_flange_z_axis():
     from scipy.spatial.transform import Rotation
     q = Rotation.from_euler("zy", [90, 10], degrees=True).as_quat()
     assert np.allclose(tcp.heading(q), [0.0, 1.0, 0.0], atol=1e-9)
+
+
+# ------------------------------------------------------- WE6 handoff numbers
+def test_handoff_metrics_find_the_gap_and_a_speed_transient():
+    import numpy as np  # noqa: PLC0415
+    chk = _load(os.path.join(PKG, "scripts", "grasp_chain_check.py"), "grasp_chain_check")
+    ts = np.arange(0.0, 6.0, 0.05)
+    # MPC approaches at 5 cm/s until t = 2, the arm holds through the gap, the servo starts at t = 2.6
+    x = np.where(ts < 2.0, 0.05 * ts, 0.1) + np.where(ts > 2.6, 0.02 * (ts - 2.6), 0.0)
+    track = [(t, np.array([xi, 0.0, 0.4])) for t, xi in zip(ts, x)]
+    mpc = list(np.arange(0.0, 2.05, 0.1))
+    servo = list(np.arange(2.6, 6.0, 0.05))
+    m = chk.handoff_metrics(2.2, mpc, servo, track)
+    assert m["gap_s"] == pytest.approx(0.6, abs=0.06) and m["gap_motion_m"] < 1e-9
+    assert m["peak_mpc_mps"] == pytest.approx(0.05, abs=0.005)
+    assert m["peak_servo_mps"] == pytest.approx(0.02, abs=0.005)
+    jerk = [(t, p + ([0.03, 0, 0] if 2.6 < t < 2.75 else 0.0)) for t, p in track]   # a 3 cm lurch
+    assert chk.handoff_metrics(2.2, mpc, servo, jerk)["peak_servo_mps"] > 0.1
+    assert chk.handoff_metrics(9.0, mpc, servo, track) is None          # no servo command after it
