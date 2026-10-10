@@ -39,7 +39,7 @@ def _measure(servo, q, p, T_fc):
 
 
 def _run(servo, q, p, steps, T_true, T_assumed=None, depth_lost_after=None, force=0.0, desired_distance=None,
-         own_error=None):
+         own_error=None, distance_fn=None, diags=None):
     """Closed loop; errors in the true image, or (``own_error`` list) also the
     controller's own error against its desired pixel."""
     T_assumed = T_true if T_assumed is None else T_assumed
@@ -55,7 +55,9 @@ def _run(servo, q, p, steps, T_true, T_assumed=None, depth_lost_after=None, forc
         tg = ServoTarget(uv_meas=uv, K=K, image_hw=HW, T_flange_cam=T_assumed,
                          p_base=None if lost else p, uv_desired=uv_d_fixed if lost else None,
                          force_n=force, desired_distance_m=desired_distance)
-        qd, diag = servo.step(q, tg)
+        qd, diag = servo.step(q, tg, distance_fn=distance_fn(q) if distance_fn else None)
+        if diags is not None:
+            diags.append(diag)
         if own_error is not None:
             own_error.append(diag["error_px"])
         assert np.all(np.abs(qd) <= servo.model.arm.qd_max + 1e-9)
@@ -114,6 +116,58 @@ def test_final_approach_and_the_force_penalty():
     assert d_force[-1] - d_force[0] > 0.5 * (d_free[-1] - d_free[0])   # contact force holds it back
 
 
+def _stem_field(p_base, T_field_base, unseen_back=True, voxel=0.01, stem_r=0.004, padding=0.005):
+    """Snapshot (field frame) of a vertical stem through p_base: hard distance
+    to the stem minus its padding; the half behind the stem (seen from the
+    gripper) never observed, as from an eye-in-hand camera."""
+    field = pytest.importorskip("scout_piper_scene_repr_py.field")
+    c = T_field_base[:3, :3] @ p_base + T_field_base[:3, 3]
+    origin = c - 0.2
+    n = int(round(0.4 / voxel))
+    g = origin[None, None, None, :] + (np.stack(np.meshgrid(*[np.arange(n)] * 3, indexing="ij"), -1) + 0.5) * voxel
+    d = np.linalg.norm((g - c)[..., :2], axis=-1) - stem_r - padding
+    age = np.zeros((n, n, n), np.uint16)
+    if unseen_back:
+        view = T_field_base[:3, :3] @ np.array([1.0, 0.0, 0.0])      # the gripper looks along base x here
+        age[((g - c) @ view > stem_r + voxel)] = field.AGE_UNKNOWN
+    return field.DistanceFieldSnapshot(
+        origin=origin, voxel_size=voxel, shape=(n, n, n), stamp=0.0, hard_classes=["stem"],
+        hard_distance=d.astype(np.float32), hard_class=np.zeros((n, n, n), np.uint8), age_ds=age)
+
+
+@pytest.mark.parametrize("q5, axis_z", [(0.4, 0.0), (0.5, -0.575)])
+def test_approach_onto_a_stem_in_the_semantic_field_needs_the_target_excluded(q5, axis_z):
+    """The stem the gripper closes on is an obstacle in the semantic field: with
+    it the clearance cost and the safety filter stop the approach short; with
+    the grasp-mode exclusion (GraspFieldCache) the gripper reaches it, its
+    clearance to the remaining field held."""
+    import sys  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    sys.path.append(os.path.join(os.path.dirname(__file__), "..", "..", "scout_piper_scene_repr", "python"))
+    from scout_piper_whole_body_mpc.scene_adapter import GraspFieldCache  # noqa: PLC0415
+    s = _servo()
+    q0 = np.array([0.0, 1.2, -1.0 - (0.4 if axis_z == 0.0 else 0.0), 0.0, q5, 0.0])   # horizontal / 35° down
+    assert s.model.kin.link_frames(q0)[-1, 2, 2] == pytest.approx(axis_z, abs=0.12)
+    p = _target_in_front(s, q0, ahead=0.08, side=(0.0, 0.0))
+    T_fb = np.eye(4)
+    T_fb[:3, :3] = np.array([[np.cos(0.4), -np.sin(0.4), 0], [np.sin(0.4), np.cos(0.4), 0], [0, 0, 1]])
+    T_fb[:3, 3] = [1.5, -0.7, 0.0]                           # field in an odom-like frame
+    snap = _stem_field(p, T_fb)
+    field = pytest.importorskip("scout_piper_scene_repr_py.field")
+    raw = field.snapshot_distance_fn(snap, now=0.0, max_voxel_age_s=30.0)
+    blocked = lambda q: (lambda pts: raw(np.asarray(pts) @ T_fb[:3, :3].T + T_fb[:3, 3]))   # noqa: E731
+    cache = GraspFieldCache()
+    excluded = lambda q: cache.distance_fn(snap, T_fb, p, now=0.0)                          # noqa: E731
+    d_ex, d_blk = [], []
+    _, dist_ex, _ = _run(s, q0.copy(), p, 100, T_flange_cam(), desired_distance=0.0, distance_fn=excluded, diags=d_ex)
+    _, dist_blk, _ = _run(_servo(), q0.copy(), p, 100, T_flange_cam(), desired_distance=0.0, distance_fn=blocked,
+                          diags=d_blk)
+    assert dist_ex[-1] < 0.012, dist_ex[::10]                # at the grasp point (approach tolerance 1 cm)
+    assert min(d["min_clearance_m"] for d in d_ex) > 0.0      # never into the rest of the field
+    assert dist_blk[-1] > 0.03, dist_blk[::10]               # the stem itself held the gripper off
+    assert any(d["safety"] == "clearance" for d in d_blk) or d_blk[-1]["plan_terms"].get("clearance", 0) > 0
+
+
 def test_broyden_estimator_learns_a_linear_map():
     rng = np.random.default_rng(0)
     J_true = rng.normal(size=(2, 6)) * 100
@@ -147,9 +201,17 @@ def test_torch_cost_matches_numpy():
     U[..., :2] = 0.0
     X = s.model.rollout(x0, U)
     tm = TorchModel(s.model, dtype=torch.float64)
+    tcp = s.model.kin.tcp(Q0)[:3, 3]
+
+    def obstacle(pts):                                    # a ball 6 cm from the TCP: clearance term active
+        pts = np.asarray(pts, float).reshape(-1, 3)
+        return np.linalg.norm(pts - (tcp + [0.0, 0.06, 0.0]), axis=-1) - 0.02, np.ones(len(pts), bool)
+
     for mode in ("projective", "jacobian"):
-        c = VisualServoCost(s.model, tg, x0, mode=mode)
-        assert np.allclose(c(X, U), c.torch_cost(tm)(tm.tensor(X), tm.tensor(U)).numpy(), rtol=1e-6)
+        for fn in (None, obstacle):
+            c = VisualServoCost(s.model, tg, x0, mode=mode, distance_fn=fn)
+            assert fn is None or c.terms(X, U)["clearance"].max() > 0
+            assert np.allclose(c(X, U), c.torch_cost(tm)(tm.tensor(X), tm.tensor(U)).numpy(), rtol=1e-6)
 
 
 def test_torch_backend_closes_the_loop():

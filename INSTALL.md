@@ -168,7 +168,7 @@ clone on the Orin:
 - udev rules and the rest of Step 9 as on the workstation.
 
 **A.6 Run.** First `./scripts/hardware_free_checks.sh --profile orin` (10.2;
-all seven checks must pass), then Step 10 on the Orin, in the order of
+all ten checks must pass), then Step 10 on the Orin, in the order of
 [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) parts J and R, with:
 - **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
   whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
@@ -854,13 +854,15 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 7 checks, ~10 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 10 checks, ~14 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
 It runs the checks of 10.4 (servo), 10.13 (whole-body MPC, two goals) and
 10.9 (stem grasp: reach and servo; reach, servo and approach; full grasp
-and release at two stem positions) one after another, each with its own
+and release at two stem positions; a full grasp with the MPPI servo on a
+semantic distance field) and 10.14 (the joint-effort force estimate and
+its calibration; the force abort while servoing) one after another, each with its own
 bringup on the fake arm and base, with `ROS_LOCALHOST_ONLY=1` in a separate
 ROS domain (`HWF_DOMAIN`, default 77), so it cannot reach a real robot. It
 prints a PASS / FAIL summary, the MPC solve times and any
@@ -1200,6 +1202,25 @@ hardware-free run reached a Jacobian condition number of 59, and moveit_servo
 slowed (status 1). The MPC therefore keeps the wrist under
 `reach_max_advanced_m` (0.40 m) for the pose *after* `pose_goal_advance_m`
 (0.12 m, = `target_position_offset_m`) as well (10.13).
+
+**MPPI servo (Phase 2B, `servo_controller: mppi`).** Instead of the IBVS's
+camera twists, an arm-only MPPI plans Piper joint velocities over 1 s and
+publishes them as JointJog on `servo_joint_cmd_topic` (frame_id `stem_grasp`);
+the Scout stays still (`mppi_*` parameters; `scout_piper_whole_body_mpc`
+`visual_servo.py`). With `scene_field_topic: /scene_repr/distance_field`
+(scene_query_node or `nvblox_field_bridge.py`, 10.10) it also keeps the arm's
+collision spheres clear of the semantic scene, in the cost and in the safety
+filter. The stem it grasps is itself an obstacle there, so the servo releases
+the target first (`exclude_target`): the obstacle voxels connected to the grasp
+point within `grasp_exclusion_radius_m` (0.10 m) no longer count, while other
+stems, branches and pots in that ball stay hard, and unknown space within 3 cm
+of the grasp point (the unseen back of the stem) counts as observed. With the
+topic set, the servo sends nothing while the field is older than
+`scene_field_max_age_sec` (2.5 s) or not in TF. `/stem_grasp/servo_status`
+carries `min_clearance_m`. Hardware-free: `hardware_free_checks.sh --only
+scene_field` (full grasp with a synthetic stem field and a neighbouring stem;
+3.8 cm minimum clearance here). The field adds about 9 ms per step at 256
+samples on the CPU (numpy); the torch backend samples it on the CPU too.
 
 To check, run terminal 3 with the approach (and the grasp) on:
 

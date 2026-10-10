@@ -155,6 +155,13 @@ stem_grasp_pipeline:
     # Phase 2B: "mppi" replaces the IBVS with the arm-only MPPI visual servo
     # (JointJog; mppi_* parameters in stem_grasp/config/pipeline.yaml)
     servo_controller: "ibvs"
+    # MPPI servo clearance from the semantic scene (bringup_scene_repr:=true,
+    # /scene_repr/distance_field); the target stem is released within
+    # grasp_exclusion_radius_m of the grasp point. Set, the servo stops while
+    # the field is older than scene_field_max_age_sec (INSTALL.md 10.9).
+    scene_field_topic: ""
+    scene_field_max_age_sec: 2.5
+    grasp_exclusion_radius_m: 0.10
     # Move to the pre-grasp pose (P0.4.11): "none" only publishes
     # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
     # (run it with execute:=true and bringup_servo:=true), waits for "reached",

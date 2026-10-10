@@ -164,6 +164,14 @@ class PipelineParams:
     mppi_device: str = "auto"
     mppi_qd_max: float = 0.5              # rad/s near the stem
     joint_state_max_age_sec: float = 0.2  # no MPPI command on older joint states
+    # Semantic clearance for the MPPI servo (P2.1.4): scout_piper_scene_repr
+    # SemanticDistanceField (scene_query_node or nvblox_field_bridge.py); the
+    # target stem is released within grasp_exclusion_radius_m of the grasp point
+    # (scene_adapter.GraspFieldCache). Set, the servo stops without a fresh field.
+    scene_field_topic: str = ""           # e.g. /scene_repr/distance_field ("" = off)
+    scene_field_max_age_sec: float = 2.5  # older field: no MPPI command
+    scene_field_max_voxel_age_sec: float = 30.0   # older voxels count as unknown
+    grasp_exclusion_radius_m: float = 0.10
 
     # Iterative final approach (P0.4.13, approach.py): after the handoff, servo
     # and advance along the gripper axis in approach_step steps until the grasp
@@ -317,6 +325,23 @@ class StemGraspPipeline(Node):
             String, self.params.mpc_status_topic, self._on_mpc_status,
             qos_reliable, callback_group=self.cb_group,
         )
+        self.scene_snap = None                 # semantic field for the MPPI servo (scene_field_topic)
+        self.scene_frame = ""
+        self.grasp_field = None
+        if self.params.scene_field_topic and self.params.servo_controller == "mppi":
+            from rclpy.qos import DurabilityPolicy  # noqa: PLC0415
+            from scout_piper_scene_repr.msg import SemanticDistanceField  # noqa: PLC0415
+            from scout_piper_whole_body_mpc.scene_adapter import GraspFieldCache  # noqa: PLC0415
+            self.grasp_field = GraspFieldCache(radius_m=float(self.params.grasp_exclusion_radius_m),
+                                               max_voxel_age_s=float(self.params.scene_field_max_voxel_age_sec))
+            self.create_subscription(
+                SemanticDistanceField, self.params.scene_field_topic, self._on_scene_field,
+                QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                           durability=DurabilityPolicy.TRANSIENT_LOCAL),
+                callback_group=self.cb_group,
+            )
+        elif self.params.scene_field_topic:
+            self.get_logger().warn("scene_field_topic is used by servo_controller mppi only")
 
         # ---------- publishers ----------
         self.pub_state = self.create_publisher(
@@ -391,6 +416,28 @@ class StemGraspPipeline(Node):
         f = msg.wrench.force
         self.current_force = float(np.sqrt(f.x * f.x + f.y * f.y + f.z * f.z))
         self.force_t = self._now()
+
+    def _on_scene_field(self, msg) -> None:
+        from scout_piper_scene_repr_py.field import snapshot_from_msg  # noqa: PLC0415
+        self.scene_snap = snapshot_from_msg(msg)
+        self.scene_frame = msg.header.frame_id
+
+    def _servo_distance_fn(self, p_base: np.ndarray):
+        """(distance_fn in robot_base_frame, field age s) for the MPPI servo; (None, 0)
+        without scene_field_topic; None when the field is missing, stale or not in TF."""
+        if self.grasp_field is None:
+            return None, 0.0
+        snap = self.scene_snap
+        age = self._age(snap.stamp) if snap is not None else float("inf")
+        if age > self.params.scene_field_max_age_sec:
+            self.get_logger().warn(f"no scene field on {self.params.scene_field_topic} for "
+                                   f"{self.params.scene_field_max_age_sec} s: MPPI servo holds",
+                                   throttle_duration_sec=2.0)
+            return None
+        T_fb = self._lookup(self.scene_frame, self.params.robot_base_frame)
+        if T_fb is None:
+            return None
+        return self.grasp_field.distance_fn(snap, T_fb, p_base, self._now()), age
 
     def _tare_force(self) -> None:
         """Zero the force estimate before the servo moves toward the stem."""
@@ -504,7 +551,7 @@ class StemGraspPipeline(Node):
             dt=float(p.mppi_dt), horizon=int(p.mppi_horizon), samples=int(p.mppi_samples),
             qd_max=float(p.mppi_qd_max), tcp_offset_m=float(p.tcp_offset_m),
             approach_speed_mps=float(p.approach_speed_mps), backend=str(p.mppi_backend),
-            device=str(p.mppi_device)),
+            device=str(p.mppi_device), max_geometry_age_s=float(p.scene_field_max_age_sec)),
             VisualServoWeights(contact_force_n=float(p.contact_threshold_n), max_force_n=float(p.max_force_n)))
         self.get_logger().info(f"MPPI visual servo: {p.mppi_samples} samples x {p.mppi_horizon} steps "
                                f"of {p.mppi_dt} s on {p.mppi_backend}")
@@ -811,10 +858,14 @@ class StemGraspPipeline(Node):
                 return
             desired_distance = distance - speed * p.mppi_horizon * p.mppi_dt
             status = {"approach": self.approach.phase, "step": self.approach.steps}
+        p_base = T_bc[:3, :3] @ target_cam + T_bc[:3, 3]
+        field = self._servo_distance_fn(p_base)
+        if field is None:
+            return                                            # no fresh field: no command (servo halts)
         target = ServoTarget(uv_meas=np.asarray(raw, float), K=K, image_hw=getattr(self, "image_hw", (480, 640)),
-                             T_flange_cam=T_fc, p_base=T_bc[:3, :3] @ target_cam + T_bc[:3, 3],
+                             T_flange_cam=T_fc, p_base=p_base,
                              force_n=float(self.current_force), desired_distance_m=float(desired_distance))
-        qd, diag = self.mppi_servo.step(self.arm_q, target)
+        qd, diag = self.mppi_servo.step(self.arm_q, target, distance_fn=field[0], geometry_age_s=field[1])
         msg = self._JointJog()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "stem_grasp"                   # tells these apart from the whole-body MPC's
@@ -829,6 +880,7 @@ class StemGraspPipeline(Node):
                 "raw_uv": [float(v) for v in raw], "desired_uv": [float(v) for v in desired],
                 "qd": [float(v) for v in qd], "solve_ms": diag["solve_ms"], "mode": diag["mode"],
                 "safety": diag["safety"], "distance_m": distance, "axis_miss_m": miss,
+                "min_clearance_m": _finite(diag.get("min_clearance_m")), "scene_field": self.grasp_field is not None,
                 "plan_terms": diag.get("plan_terms", {}), "nominal_terms": diag.get("nominal_terms", {}),
                 **status})))
 
@@ -1076,6 +1128,11 @@ class StemGraspPipeline(Node):
         msg = String()
         msg.data = self.state.name
         self.pub_state.publish(msg)
+
+
+def _finite(v) -> Optional[float]:
+    """JSON-safe number: None for missing, NaN or infinite (no field, nothing near)."""
+    return float(v) if v is not None and np.isfinite(v) else None
 
 
 def _interrupt(signum, frame) -> None:

@@ -84,6 +84,8 @@ stem_grasp_pipeline:
     mppi_dt: 0.05
     mppi_backend: "numpy"                 # numpy | torch (mppi_device cuda on the GPU)
     mppi_qd_max: 0.5
+    scene_field_topic: ""                 # e.g. /scene_repr/distance_field: semantic clearance (mppi)
+    grasp_exclusion_radius_m: 0.10        # target stem released within this of the grasp point
     # Move to the pre-grasp pose (P0.4.11): "none" only publishes
     # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
     # (run it with execute:=true and bringup_servo:=true), waits for "reached",

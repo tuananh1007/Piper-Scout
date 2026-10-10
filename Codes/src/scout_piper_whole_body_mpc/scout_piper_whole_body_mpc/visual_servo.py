@@ -15,7 +15,9 @@ velocities, with the Phase 2B costs
              a large cost for the target behind the camera (visibility)
   joints     quadratic barrier within 0.05 rad of the joint limits
   manip      1 / manipulability (Yoshikawa, translational)
-  clearance  optional ``distance_fn`` (semantic scene), as WholeBodyCost
+  clearance  optional ``distance_fn`` (semantic scene) on the arm's collision
+             spheres, as WholeBodyCost; for a servo onto a stem the target's
+             surroundings must be excluded (scene_adapter.GraspFieldCache)
   smooth     ‖ΔU‖² and continuity with the last command
   force      above ``contact_force_n``, motion that brings the TCP closer to the
              target along the gripper axis costs w_force · (f / f_max) per metre
@@ -266,8 +268,9 @@ class VisualServoCost:
         lim = np.clip(m.kin.lower + 0.05 - q, 0, None) + np.clip(q - (m.kin.upper - 0.05), 0, None)
         out["joints"] = w.joint_limit * (lim ** 2).sum((1, 2))
         out["manip"] = w.manip * (1.0 / (_manipulability(F) + 1e-3)).mean(1)
-        if self.distance_fn is not None:
-            C, r = m.collision_spheres(Xk)
+        if self.distance_fn is not None:                              # arm spheres (the base stays), from F
+            C = F[..., :3, 3][..., [i for i, _ in m.arm_spheres], :]
+            r = np.array([r for _, r in m.arm_spheres])
             d, _ = self.distance_fn(C.reshape(-1, 3))
             out["clearance"] = w.clearance * (np.clip(w.d_safe - (d.reshape(C.shape[:-1]) - r), 0, None) ** 2).sum((1, 2))
         smooth = w.smooth * (np.diff(U, axis=1) ** 2).sum((1, 2))
@@ -397,6 +400,8 @@ class VisualServoConfig:
     backend: str = "numpy"              # numpy | torch
     device: str = "auto"
     seed: int = 0
+    unknown_policy: str = "no_entry"    # safety filter in unknown space (whole-body MPC default)
+    max_geometry_age_s: float = 2.5     # safety filter stops on an older distance field
 
 
 class MppiVisualServo:
@@ -418,7 +423,8 @@ class MppiVisualServo:
         else:
             self.mppi = MPPI(self.model, mcfg)
         self.distance_fn = distance_fn
-        self.safety = SafetyFilter(self.model, distance_fn=distance_fn)
+        self.safety = SafetyFilter(self.model, distance_fn=distance_fn, d_safe=self.w.d_safe,
+                                   max_geometry_age_s=cfg.max_geometry_age_s, unknown_policy=cfg.unknown_policy)
         self.jac = ImageJacobianEstimator()
         self.u_prev = np.zeros(8)
         self.extra: List[ExtraTerm] = []
@@ -442,13 +448,19 @@ class MppiVisualServo:
         self._last_nominal = {k: round(float(v[1]), 4) for k, v in cost.terms(self.model.rollout(x0, Us), Us,
                                                                              self.u_prev).items()}
 
-    def step(self, q: np.ndarray, target: ServoTarget, max_staleness_s: float = 0.0):
+    def step(self, q: np.ndarray, target: ServoTarget, max_staleness_s: float = 0.0,
+             distance_fn: Optional[DistanceFn] = None, geometry_age_s: float = 0.0):
         """One control step from the measured joints and image target.
 
-        Returns (qdot (6,), diag): diag has the image error, the predicted
-        terminal error, the image prediction mode used, solve ms and the
-        safety reason."""
+        ``distance_fn`` (base-frame points) replaces the constructor's for this
+        step, in the cost and the safety filter (a field that changes with the
+        scene and the target); ``geometry_age_s`` is its age for the filter's
+        watchdog. Returns (qdot (6,), diag): diag has the image error, the
+        predicted terminal error, the image prediction mode used, solve ms, the
+        safety reason and the smallest clearance after the step."""
         t0 = time.perf_counter()
+        dist_fn = self.distance_fn if distance_fn is None else distance_fn
+        self.safety.distance_fn = dist_fn
         q = np.asarray(q, float)
         x0 = np.r_[0.0, 0.0, 0.0, q]
         mode, J_s = self.cfg.mode, None
@@ -463,14 +475,14 @@ class MppiVisualServo:
             if J_s is None:
                 return np.zeros(6), {"mode": "no_jacobian", "error_px": float("nan"), "safety": "no_model"}
         cost = VisualServoCost(self.model, target, x0, self.w, mode=mode, J_s=J_s,
-                               distance_fn=self.distance_fn, extra=list(self.extra))
+                               distance_fn=dist_fn, extra=list(self.extra))
         if target.p_base is not None:
             self._seed_with_nominal(x0, q, target, cost)
         u_prev = self.u_prev
         u = self.mppi.solve(x0, cost, u_prev)
         U_plan = self.mppi.U
         U_plan = np.array(U_plan.detach().cpu().numpy() if not isinstance(U_plan, np.ndarray) else U_plan, float)
-        rep = self.safety.project(x0, u, u_prev, state_age_s=max_staleness_s)
+        rep = self.safety.project(x0, u, u_prev, state_age_s=max_staleness_s, geometry_age_s=geometry_age_s)
         self.u_prev = rep.u
         self.mppi.shift()
         X = self.model.rollout(x0, U_plan[None])
@@ -480,5 +492,6 @@ class MppiVisualServo:
         return rep.u[2:].copy(), {
             "mode": mode, "error_px": cost.error_px, "predicted_terminal_px": e_term,
             "distance_m": cost.distance0, "solve_ms": 1e3 * (time.perf_counter() - t0),
-            "safety": rep.reason, "scale": float(rep.scale), "plan_terms": plan_terms,
+            "safety": rep.reason, "scale": float(rep.scale), "min_clearance_m": float(rep.min_clearance),
+            "plan_terms": plan_terms,
             "nominal_terms": getattr(self, "_last_nominal", {})}

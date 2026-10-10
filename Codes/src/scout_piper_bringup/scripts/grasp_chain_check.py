@@ -16,6 +16,14 @@ gripper opened for the approach and closed on the stem. ``--release`` then
 calls the pipeline's ``~/release`` and checks RELEASING -> RETREATING -> IDLE:
 the gripper opens and the gripper backs out along its axis.
 
+``--scene-field`` publishes the synthetic stem, and a second stem 8 cm to
+its side, as a scout_piper_scene_repr SemanticDistanceField on
+/scene_repr/distance_field (odom, 1 cm voxels, the half behind the stem never
+observed) for a pipeline with ``servo_controller:=mppi`` and
+``scene_field_topic:=/scene_repr/distance_field``; it checks that the servo
+used the field and kept clearance to it (the target stem released, the
+neighbour not).
+
 ``--push-force N`` (servo only, with effort_force_node from
 bringup_force_estimate:=true): after ``--push-after`` s of servoing it applies
 N newtons at the fake arm's TCP (the fake driver's ``external_force_n``) and
@@ -74,6 +82,7 @@ def main() -> int:
     ap.add_argument("--servo-seconds", type=float, default=15.0, help="servo time after the handoff")
     ap.add_argument("--release", action="store_true", help="after the grasp, release and retreat")
     ap.add_argument("--push-force", type=float, default=0.0, help="N at the TCP while servoing (force abort)")
+    ap.add_argument("--scene-field", action="store_true", help="publish the stems as a semantic distance field")
     ap.add_argument("--push-after", type=float, default=4.0, help="servo seconds before the push")
     a = ap.parse_args()
 
@@ -253,6 +262,29 @@ def main() -> int:
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
             return None
 
+    if a.scene_field:
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: PLC0415
+        from scout_piper_scene_repr.msg import SemanticDistanceField  # noqa: PLC0415
+        from scout_piper_scene_repr_py.field import AGE_UNKNOWN, DistanceFieldSnapshot, fill_msg  # noqa: PLC0415
+        field_pub = n.create_publisher(SemanticDistanceField, "/scene_repr/distance_field", QoSProfile(
+            depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        vs, nv = 0.01, 40
+        origin = np.array([a.stem[0] - 0.2, a.stem[1] - 0.2, 0.22])
+        g = origin + (np.stack(np.meshgrid(*[np.arange(nv)] * 3, indexing="ij"), -1) + 0.5) * vs
+        axes = [np.array(a.stem), np.array(a.stem) + [0.0, 0.08]]          # target stem, neighbour
+        hard = np.min([np.linalg.norm(g[..., :2] - c, axis=-1) for c in axes], axis=0) - 0.004 - 0.005
+        hard = np.where((g[..., 2] > 0.25) & (g[..., 2] < 0.60), hard, np.maximum(hard, 0.02))
+        age = np.where(g[..., 0] > a.stem[0] + 0.004 + vs, AGE_UNKNOWN, 0).astype(np.uint16)   # unseen back
+
+        def publish_field():
+            t = n.get_clock().now().nanoseconds * 1e-9
+            snap = DistanceFieldSnapshot(origin=origin, voxel_size=vs, shape=(nv,) * 3, stamp=t,
+                                         hard_classes=["stem"], hard_distance=hard.astype(np.float32),
+                                         hard_class=np.zeros((nv,) * 3, np.uint8), age_ds=age)
+            field_pub.publish(fill_msg(SemanticDistanceField(), snap, "odom"))
+
+        publish_field()
+        n.create_timer(1.0, publish_field)
     n.create_timer(0.2, publish_cloud)
     n.create_timer(1.0 / 15.0, publish_camera)
     call(Trigger, "/servo_node/start_servo", Trigger.Request())
@@ -381,6 +413,13 @@ def main() -> int:
               f"{100 * miss:.2f} cm from the axis (stem grasp point {np.round(grasp_point, 3)})")
     else:
         check("servo image error ends small", False, f"{len(served)} servo status messages")
+    if a.scene_field:
+        used = [s for s in served if s.get("scene_field")]
+        clear = [s["min_clearance_m"] for s in used if s.get("min_clearance_m") is not None]
+        check("servo kept clearance to the semantic field (target stem released)",
+              used and len(used) == len(served) and clear and min(clear) > 0.0,
+              f"{len(used)} of {len(served)} servo steps with the field, min clearance "
+              f"{min(clear) if clear else float('nan'):.3f} m")
     check("MPC idle after the handoff", mpc and mpc[-1][1]["mode"] == "idle",
           f"last mode {mpc[-1][1]['mode'] if mpc else None}")
     late = [t for t in jogs if t_servo is not None and t > t_servo + 0.5]   # MPC JointJog only

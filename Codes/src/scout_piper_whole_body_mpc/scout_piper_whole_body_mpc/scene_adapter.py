@@ -31,6 +31,49 @@ def semantic_distance_fn(query, now: Optional[float] = None, outside_free: bool 
     return fn
 
 
+class GraspFieldCache:
+    """Semantic distance field for a controller that moves onto its target
+    (the stem_grasp MPPI servo): the target object excluded (``exclude_target``,
+    grasp mode: the obstacle voxels connected to the grasp point within
+    ``radius_m``), sampled in the robot base frame.
+
+    ``distance_fn(snap, T_field_base, target_base, now)`` returns a
+    DistanceFn over base-frame points: they are mapped into the snapshot's
+    frame with ``T_field_base`` (4×4, base → field) and sampled with the
+    snapshot conventions (unknown/stale space invalid and ≤ 0, outside the grid
+    free). The exclusion (a local distance transform, a few ms) is redone only
+    for a new snapshot or when the target moves more than ``retarget_m``.
+    ``radius_m`` bounds how much of the target stem is released: the gripper's
+    sphere (0.03 m) plus d_safe (0.02) must clear what remains wherever the
+    gripper passes, which for an approach inclined to the stem takes more than
+    that sum (0.10 m holds at 35°); other objects in the ball stay hard unless
+    they touch the target inside it."""
+
+    def __init__(self, radius_m: float = 0.10, max_voxel_age_s: float = 30.0, retarget_m: float = 0.01):
+        self.radius, self.max_age, self.retarget = float(radius_m), float(max_voxel_age_s), float(retarget_m)
+        self._snap = None
+        self._target = None
+        self._sampler = None
+        self.excluded = None
+
+    def distance_fn(self, snap, T_field_base: np.ndarray, target_base: np.ndarray, now: float):
+        from scout_piper_scene_repr_py.field import (FieldSampler, exclude_target,  # noqa: PLC0415
+                                                     snapshot_distance_fn)
+        T = np.asarray(T_field_base, float)
+        target = T[:3, :3] @ np.asarray(target_base, float) + T[:3, 3]
+        if (snap is not self._snap or self._target is None
+                or np.linalg.norm(target - self._target) > self.retarget):
+            self.excluded = exclude_target(snap, target, self.radius)
+            self._sampler = FieldSampler(self.excluded)
+            self._snap, self._target = snap, target
+        fn = snapshot_distance_fn(self.excluded, now, self.max_age, sampler=self._sampler)
+        R, t = T[:3, :3], T[:3, 3]
+
+        def in_base(points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+            return fn(np.asarray(points, float).reshape(-1, 3) @ R.T + t)
+        return in_base
+
+
 def semantic_leaf_fn(query, d_soft: float = 0.02):
     def fn(points: np.ndarray) -> np.ndarray:
         cost, _ = query.leaf_cost(points, d_soft=d_soft)
