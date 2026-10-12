@@ -88,6 +88,7 @@ ros2 launch plant_twin plant_twin.launch.py
 | in (TF) | `piper_base_link → piper_link7` | | fingertip = contact point |
 | out | `/plant_twin/markers` | MarkerArray | TRIANGLE_LIST leaf, LINE_STRIP stem (RViz) |
 | out | `/plant_twin/leaf_tip` | PointStamped | stem/leaf attachment |
+| out | `/plant_twin/state` | String (JSON) | fit quality of the frame: `confidence` (0–1), `valid`, `leaf_rms_mm` / `stem_rms_mm`, inlier fractions, point counts, `touching`, `pulling`, `force_n`, `cloud_age_s`, `stamp`, `frame` |
 
 `pulling` = touching **and** gripper closed; before that the stem's
 stationary prior holds it at rest.
@@ -103,6 +104,17 @@ On the first frame with clouds, mask, depth and intrinsics, the node
    textures each mesh vertex with the nearest cloud point's colour
    (`LeafModel.texture_from_cloud`), published as per-vertex marker colours;
 4. initialises the stem as a straight line from that base to the petiole.
+
+### Fit quality
+
+`fit_quality` scores each frame from the data alone: the leaf points'
+point-to-plane distance to the fitted mesh (normal of the nearest vertex) and
+the stem points' distance to the centreline minus the radius. Per part it
+reports the RMS and the fraction within `inlier_m` (5 mm); the confidence is
+`min(inlier fractions) · exp(−max(RMS) / 5 mm)`, valid at ≥ 0.5 with at least
+20 points per part. Phase 4's active perception reads `1 − confidence` as the
+deformation uncertainty U_twin; a large `cloud_age_s` means the twin is
+coasting on old clouds.
 
 ## Tests
 

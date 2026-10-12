@@ -221,6 +221,7 @@ ROS 2 has `moveit_servo` as a first-class node — we actually wire it up.
 | P1.6.8 | Analytic Jacobians | ☑ | 2026-09-29 — leaf (SO(3) right Jacobian + RBF bend) and stem (linear basis), FD-verified; ~60 ms/frame at 10 evals with velocity warm start, ~4 mm tracking error at 5 mm/frame. 30 Hz still needs custom GN or GPU |
 | P1.6.9 | Hardware run: RViz check of textured leaf + stem during a pull | ☐ | Needs arm + camera + a force (F/T sensor or the calibrated joint-effort estimate, P2.1.5) |
 | P1.6.10 | Fused residual+Jacobian `evaluate` + own LM solver on normal equations | ☑ | 2026-09-29 — `solver.py`; ~28 ms/frame, 1.6 mm at 5 mm/frame; TRF/FD kept as references |
+| P1.6.11 | Per-frame fit quality and `/plant_twin/state` | ☑ | 2026-10-12 — `fit_quality`: leaf point-to-plane and stem point-to-centreline residuals, inlier fractions (5 mm), confidence = min(inliers) · exp(−max RMS / 5 mm), valid ≥ 0.5; published with touching, pulling, force and cloud age as JSON on `/plant_twin/state` (Phase 4's U_twin, the operator GUI). Unit-tested; not on hardware |
 
 ### P1 exit criteria
 

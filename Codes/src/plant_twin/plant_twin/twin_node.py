@@ -16,11 +16,17 @@ Outputs:
   /plant_twin/markers   MarkerArray   TRIANGLE_LIST leaf (per-vertex colour)
                                       + LINE_STRIP stem
   /plant_twin/leaf_tip  PointStamped  stem/leaf attachment point
+  /plant_twin/state     String (JSON) fit quality of the frame (fitting.fit_quality:
+                                      residuals in mm, inlier fractions,
+                                      confidence, valid), touching, pulling,
+                                      force, cloud age, stamp, frame
 """
 
 from __future__ import annotations
 
 from typing import Optional, Tuple
+
+import json
 
 import numpy as np
 import rclpy
@@ -31,11 +37,11 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
 from sensor_msgs_py import point_cloud2
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .fitting import FrameObservation, PlantTwinFitter
+from .fitting import FrameObservation, PlantTwinFitter, twin_state
 from .leaf import LeafModel
 from .outline import outline_from_mask
 from .stem import StemModel
@@ -91,6 +97,7 @@ class PlantTwinNode(Node):
         self.K: Optional[np.ndarray] = None
         self.force = 0.0
         self.gripper_gap = 0.035
+        self.cloud_time: Optional[float] = None      # node clock [s] of the last leaf / stem cloud
         self.fitter: Optional[PlantTwinFitter] = None
 
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -103,6 +110,7 @@ class PlantTwinNode(Node):
         self.create_subscription(JointState, "/joint_states", self._js_cb, 20)
         self.pub_markers = self.create_publisher(MarkerArray, "/plant_twin/markers", 1)
         self.pub_tip = self.create_publisher(PointStamped, "/plant_twin/leaf_tip", 1)
+        self.pub_state = self.create_publisher(String, "/plant_twin/state", 1)
         self.create_timer(1.0 / float(p("rate_hz")), self._tick)
 
     # ---------------------------------------------------------------- inputs
@@ -131,11 +139,13 @@ class PlantTwinNode(Node):
         xyz, rgb = self._cloud(msg, want_rgb=True)
         if xyz is not None:
             self.leaf_pts, self.leaf_rgb = xyz, rgb
+            self.cloud_time = self._now_s()
 
     def _stem_cb(self, msg):
         xyz, _ = self._cloud(msg, want_rgb=False)
         if xyz is not None:
             self.stem_pts = xyz
+            self.cloud_time = self._now_s()
 
     def _mask_cb(self, msg): self.mask = msg
     def _depth_cb(self, msg): self.depth = msg
@@ -151,6 +161,9 @@ class PlantTwinNode(Node):
     def _js_cb(self, msg: JointState):
         if "piper_joint7" in msg.name:
             self.gripper_gap = float(msg.position[msg.name.index("piper_joint7")])
+
+    def _now_s(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
 
     def _fingertip(self):
         tf = self._lookup(self.fingertip)
@@ -209,6 +222,9 @@ class PlantTwinNode(Node):
         pulling = touching and self.gripper_gap < self.closed
         res = self.fitter.step(FrameObservation(self.leaf_pts, self.stem_pts, contact, pulling))
         self._publish(res)
+        age = None if self.cloud_time is None else self._now_s() - self.cloud_time
+        self.pub_state.publish(String(data=json.dumps(
+            twin_state(res.quality, touching, pulling, self.force, age, self._now_s(), self.frame))))
 
     def _publish(self, res) -> None:
         out = self.fitter.export()

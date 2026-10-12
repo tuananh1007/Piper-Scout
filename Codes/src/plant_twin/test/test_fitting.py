@@ -171,3 +171,16 @@ def test_step_reports_quality():
     lp = _sample_surface(leaf, truth, 300, rng)
     res = fitter.step(FrameObservation(lp, stem.curve(stem.initial_params())[::4]))
     assert res.quality is not None and 0.0 <= res.quality["confidence"] <= 1.0
+
+
+def test_twin_state_reports_mm_and_handles_missing_quality():
+    from plant_twin.fitting import twin_state
+    q = {"leaf_rms_m": 0.0021, "stem_rms_m": float("nan"), "leaf_inlier": 0.9, "stem_inlier": 0.0,
+         "n_leaf": 300, "n_stem": 0, "confidence": 0.0, "valid": False}
+    s = twin_state(q, True, False, 0.4, 0.05, 12.5, "piper_base_link")
+    assert s["leaf_rms_mm"] == 2.1 and s["stem_rms_mm"] is None
+    assert s["touching"] and not s["pulling"] and s["n_leaf"] == 300 and s["cloud_age_s"] == 0.05
+    empty = twin_state(None, False, False, 0.0, None, 0.0, "f")
+    assert empty["confidence"] == 0.0 and not empty["valid"] and empty["cloud_age_s"] is None
+    import json
+    json.dumps(s), json.dumps(empty)                            # JSON-serialisable

@@ -78,6 +78,24 @@ def fit_quality(leaf_vertices: np.ndarray, leaf_faces: np.ndarray, stem_curve: n
     return out
 
 
+def twin_state(quality: Optional[Dict[str, float]], touching: bool, pulling: bool, force_n: float,
+               cloud_age_s: Optional[float], stamp_s: float, frame: str) -> Dict[str, object]:
+    """/plant_twin/state payload: the frame's fit quality (residuals in mm)
+    with the contact state and the age of the clouds it was fitted to."""
+    q = quality or {}
+
+    def mm(k):
+        v = q.get(k)
+        return round(1000.0 * v, 3) if v is not None and np.isfinite(v) else None
+    return {"stamp": stamp_s, "frame": frame,
+            "confidence": float(q.get("confidence", 0.0)), "valid": bool(q.get("valid", False)),
+            "leaf_rms_mm": mm("leaf_rms_m"), "stem_rms_mm": mm("stem_rms_m"),
+            "leaf_inlier": float(q.get("leaf_inlier", 0.0)), "stem_inlier": float(q.get("stem_inlier", 0.0)),
+            "n_leaf": int(q.get("n_leaf", 0)), "n_stem": int(q.get("n_stem", 0)),
+            "touching": bool(touching), "pulling": bool(pulling), "force_n": round(float(force_n), 3),
+            "cloud_age_s": None if cloud_age_s is None else round(float(cloud_age_s), 3)}
+
+
 class PlantTwinFitter:
     """Tracks one leaf + stem across frames.
 
