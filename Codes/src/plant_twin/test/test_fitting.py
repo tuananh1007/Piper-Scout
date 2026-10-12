@@ -140,3 +140,34 @@ def test_full_sequence_tracks_pull():
 
     out = fitter.export()
     assert out["leaf_vertices"].shape[1] == 3 and out["stem_curve"].shape[1] == 3
+
+
+def test_fit_quality_is_high_for_a_good_fit_and_drops_for_a_bad_one():
+    from plant_twin.fitting import fit_quality
+    leaf = _make_leaf()
+    ctrl = np.column_stack([np.zeros(6), np.zeros(6), np.linspace(0, 0.25, 6)])
+    stem = StemModel(ctrl)
+    rng = np.random.default_rng(5)
+    truth = leaf.initial_params(np.array([0.0, 0.2, 0.0]), np.array([0.0, 0.0, 0.25]))
+    lp = _sample_surface(leaf, truth, 300, rng) + rng.normal(0, 5e-4, (300, 3))
+    curve = stem.curve(stem.initial_params())
+    sp = curve[::2] + rng.normal(0, 5e-4, curve[::2].shape)
+    sp = sp + np.array([stem.radius_m, 0.0, 0.0])            # surface points, one radius off the axis
+    good = fit_quality(leaf.vertices(truth), leaf.faces, curve, stem.radius_m, lp, sp)
+    assert good["valid"] and good["confidence"] > 0.7 and good["leaf_rms_m"] < 0.002, good
+    moved = leaf.initial_params(np.array([0.0, 0.2, 0.0]), np.array([0.0, 0.0, 0.27]))   # model 2 cm off the data
+    bad = fit_quality(leaf.vertices(moved), leaf.faces, curve, stem.radius_m, lp, sp)
+    assert not bad["valid"] and bad["confidence"] < 0.3, bad
+    empty = fit_quality(leaf.vertices(truth), leaf.faces, curve, stem.radius_m, np.zeros((0, 3)), sp)
+    assert not empty["valid"] and empty["confidence"] == 0.0
+
+
+def test_step_reports_quality():
+    leaf = _make_leaf()
+    stem = StemModel(np.column_stack([np.zeros(6), np.zeros(6), np.linspace(0, 0.25, 6)]))
+    fitter = PlantTwinFitter(leaf, stem)
+    rng = np.random.default_rng(6)
+    truth = leaf.initial_params(np.array([0.0, 0.2, 0.0]), np.array([0.0, 0.0, 0.25]))
+    lp = _sample_surface(leaf, truth, 300, rng)
+    res = fitter.step(FrameObservation(lp, stem.curve(stem.initial_params())[::4]))
+    assert res.quality is not None and 0.0 <= res.quality["confidence"] <= 1.0
