@@ -5,7 +5,7 @@
 > The companion [`ROADMAP.md`](ROADMAP.md) is the high-level strategic plan;
 > this file is the day-to-day execution log.
 
-**Last updated:** 2026-10-10 (P2.3.1 simulated servo trials, approach alignment window; P3B end pose chosen for the view; P3.2.3 Phase 2B hard gates and WE6 handoff numbers; P2.1.4 semantic clearance in the stem_grasp MPPI servo with the target stem released; P2.1.5 contact force from the Piper's joint efforts: estimator node, calibration recorder, relay and fake-driver efforts, stem_grasp force topic and tare; Phase 2B MPPI visual servo; P3B.7 constrained visibility cost; 2026-10-09: MODULE_TASKS.md; semantic scene: label image, nvblox ESDF bridge, target goal, self-filter, RViz, semantic vs occupancy; whole-body MPC: torch / GPU backend, W2 QP, 30-scene benchmark, calibration tools; Piper-JEPA: E1 runner, export and annotation, training, latency, predictive MPC node; TEST_PROCEDURE.md and `hardware_free_checks.sh`; stem_grasp segmentation no longer pauses during the servo and approach; P0.1.13 Jetson AGX Orin deployment path; stem_grasp grasp point on the stem axis, release and retreat; P0.4.13 grasp: gripper closes on the stem, wrist room for the final approach; P0.1 memory-safe build and runtime for the 16 GB workstation; P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
+**Last updated:** 2026-10-12 (Phase 4 `scout_piper_active_perception`: stem-joint Fisher information, U_JEPA / U_geometry / U_twin, MPC-reachable views, simulated ablation, closed loop on the fake robot, VGGT helpers; Phase 5 `scout_piper_language`: instruction grounding and clarification, reachability filter, countdown, software stop, operator web GUI, `/stem_grasp/detections` and the pipeline's `operator_target_topic`; plant_twin fit quality on `/plant_twin/state`; 2026-10-10: P2.3.1 simulated servo trials, approach alignment window; P3B end pose chosen for the view; P3.2.3 Phase 2B hard gates and WE6 handoff numbers; P2.1.4 semantic clearance in the stem_grasp MPPI servo with the target stem released; P2.1.5 contact force from the Piper's joint efforts: estimator node, calibration recorder, relay and fake-driver efforts, stem_grasp force topic and tare; Phase 2B MPPI visual servo; P3B.7 constrained visibility cost; 2026-10-09: MODULE_TASKS.md; semantic scene: label image, nvblox ESDF bridge, target goal, self-filter, RViz, semantic vs occupancy; whole-body MPC: torch / GPU backend, W2 QP, 30-scene benchmark, calibration tools; Piper-JEPA: E1 runner, export and annotation, training, latency, predictive MPC node; TEST_PROCEDURE.md and `hardware_free_checks.sh`; stem_grasp segmentation no longer pauses during the servo and approach; P0.1.13 Jetson AGX Orin deployment path; stem_grasp grasp point on the stem axis, release and retreat; P0.4.13 grasp: gripper closes on the stem, wrist room for the final approach; P0.1 memory-safe build and runtime for the 16 GB workstation; P0.4.13 stem_grasp stepwise final approach to AT_GRASP; P0.4.12 stem_grasp image-based servo toward the gripper axis, six servo bugs, camera placeholder orientation; whole-body MPC reach margin; P0.4.11 stem_grasp reach through the whole-body MPC, three stem_grasp porting bugs; P3A.11 whole-body MPC execute mode end to end on fake drivers, stop on exit; INSTALL.md TODOs resolved: D405 URDF, realsense-ros 4.58.4, CPU-only build closure, Nav2 blocker; P0.5 moveit_servo wired through the servo bridge; P0.3.13 arm command isolation; P3B.1–P3B.7 Piper-JEPA Stage B/C on a synthetic world; P3A.6, P3A.9 whole-body MPC; P1.7.7 MoveIt semantic collision plugin)
 
 ## Legend
 
@@ -341,49 +341,49 @@ Plan: [`ROADMAP.md`](ROADMAP.md) §3 (Phase 3B) and [`research/piper_jepa/`](res
 
 ## Phase 4 — Uncertainty-driven active perception
 
-**Target start:** 2027-05-15  ·  **Target finish:** 2027-08-15  ·  **Status:** ☐ not started
+**Target start:** 2027-05-15  ·  **Target finish:** 2027-08-15  ·  **Status:** ◐ in_progress — `scout_piper_active_perception` (2026-10-12, ahead of schedule): U_JEPA / U_geometry / U_twin, stem-joint Fisher information, MPC-reachable view candidates, ROS node, simulated benchmark and a closed loop on the fake robot; VGGT on the GPU / Orin and robot runs open
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P4.1 | Deploy VGGT on Orin with sparse-view batching | ☐ | ~3 GB GPU |
-| P4.2 | FisherRF-style information-gain on stem skeleton joint | ☐ | |
-| P4.3 | Closed loop: VGGT → NBV → whole-body MPC → re-VGGT | ☐ | |
-| P4.4 | Ablation: random / fixed-ring / ours | ☐ | |
+| P4.1 | Deploy VGGT on Orin with sparse-view batching | ◐ | ~3 GB GPU 2026-10-12 — `vggt.py`: `SparseViewBatcher` (keyframes by 3 cm / 8°, anchor kept, at most 8), lazy wrapper (`facebook/VGGT-1B`, bf16/fp16, or any `model_fn`), metric scale from the D405 depth (median ratio over confident pixels) or the robot's camera baselines, `fuse_depth` (sensor where valid, VGGT where the sensor dropped and VGGT is confident, agreement reported). Tested with a fake model only; GPU and Orin runs MODULE_TASKS.md A14, B8; fused depth not yet fed to the semantic map |
+| P4.2 | FisherRF-style information-gain on stem skeleton joint | ☑ | 2026-10-12 — `stem_joint.py`: the grasp-point axis as a cylinder fitted to the target's points; per-point information JᵀJ/σ_n² (depth noise along the ray, one pixel across, projected on the normal); per-view camera pose error mapped to the joint parameters and fused per view (independent points gave σ 0.3 mm with 2-4 mm true error, a per-point inflation σ up to 5 mm with 1 mm error; now true error / σ ≈ 1.1-1.4); predicted information of a candidate camera (surface facing it, pixel count, thin-structure survival, transmittance through the map). `nbv.py`: fused score from the need of each unmet term (target pixels, joint Fisher gain, approach-corridor voxels cleared with a depth return behind them) minus motion time and approach-axis turn; `uncertainty.py`: U terms mapped to 0.5 at their requirement, a view needed while a required term is unmet. Found: an unknown voxel at p = 0.5 or 0.15 made every line of sight through the unknown space left after one view look blocked (the gains ran opposite to rendering); the canopy fill fraction 0.02 is the prior |
+| P4.3 | Closed loop: VGGT → NBV → whole-body MPC → re-VGGT | ◐ | 2026-10-12 — without VGGT (sensor depth): `active_perception_node` (field, target, JEPA / twin state, stem cloud in; next view as the MPC's pose goal, status JSON, `~/plan_view`); hardware-free on the fake robot (`active_perception_chain_check.py`, simulated plant rendered from TF): scan pose and two planned views reached in 3.5-6.6 s, target in view, joint axis error 0.56 mm (σ 0.52 mm), uncertainty falling. Found on the way: view candidates must stay inside the MPC's reach margin (shoulder-to-wrist ≤ 0.36 m; it stalled 25-35 cm short of stretched-arm views) and penalise approach-axis turns; the check must start moveit_servo and enable the bridge. Simulated loop with the MPPI as executor: `--executor mpc`. VGGT in the loop and robot runs open (C10) |
+| P4.4 | Ablation: random / fixed-ring / ours | ◐ | 2026-10-12 — simulated (`benchmarks/nbv_benchmark.py`, 30 scenes, D405-like sensor with thin-structure dropout, per-view pose error, ≤ 8 views): see the package README for the table. Robot ablation open (C10) |
 
 ---
 
 ## Phase 5 — Language/VLM + operator GUI for non-experts
 
-**Target start:** 2027-07-15  ·  **Target finish:** 2027-11-15  ·  **Status:** ☐ not started
+**Target start:** 2027-07-15  ·  **Target finish:** 2027-11-15  ·  **Status:** ◐ in_progress — `scout_piper_language` (2026-10-12, ahead of schedule): rule-based instruction grounding with clarification, reachability filter with plain-language reasons, 2-s countdown, software stop, operator web GUI; VLA on the Orin, open-vocabulary perception and the user study open
 
 ### P5.1 — VLA on Orin
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P5.1.1 | Choose deployment model (π₀ default; Octo-Small fallback) | ☐ | |
+| P5.1.1 | Choose deployment model (π₀ default; Octo-Small fallback) | ☐ | Needs the Orin memory left after nvblox, MPC and predictor (B3, B4) |
 | P5.1.2 | TRT-LLM / INT8 quantize, measure latency on Orin | ☐ | |
-| P5.1.3 | Sub-goal generator service: image + instruction → SE(3) + class + rationale | ☐ | |
-| P5.1.4 | PhysVLM-style reachability filter on every VLA-proposed target | ☐ | Safety gate |
+| P5.1.3 | Sub-goal generator service: image + instruction → SE(3) + class + rationale | ◐ | 2026-10-12 — `parser.py` (q_ℓ = action, class, ordinal with counting direction, superlative, attribute, relation + reference; unknown words kept, cut / pull refused) + `grounding.py` (detections from `/stem_grasp/detections`, image left/right, height and distance from the robot, ambiguity → a question with options, follow-up answers) give target + class + rationale; `vlm.py` `HttpProposer` puts a VLM behind HTTP, validated against the detections with the rules as fallback. The SE(3) goal comes from the existing pipeline (operator target → nearest grasp candidate). No VLM / VLA model yet (P5.1.1) |
+| P5.1.4 | PhysVLM-style reachability filter on every VLA-proposed target | ☑ | Safety gate 2026-10-12 — `reachability.py` on every proposal: no depth, too high / low (heights a near-horizontal approach reaches, from the arm's kinematics), too thick (stem width from the outline vs the 7 cm gripper), crowded (another hard obstacle within 4.5 cm of the grasp point, target stem released), too far / no collision-free whole-body pose on the pre-grasp; advisory "behind a leaf" (line of sight through the field). Unit-tested, including a crowded target in a synthetic field |
 
 ### P5.2 — Open-vocab perception
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P5.2.1 | Grounding-DINO + SAM-2 swap for fixed YOLO classes | ☐ | |
-| P5.2.2 | Keep YOLO fallback for known classes | ☐ | |
+| P5.2.1 | Grounding-DINO + SAM-2 swap for fixed YOLO classes | ☐ | The segmentation node's Grounded-SAM path exists (ROS 1 port) but does not publish per-instance detections yet |
+| P5.2.2 | Keep YOLO fallback for known classes | ◐ | 2026-10-12 — the YOLO path publishes every instance on `/stem_grasp/detections` (class, box, centroid, area, colour name, 3-D point, outline polygon; `stem_grasp/detections.py`) for the language layer |
 
 ### P5.3 — Operator GUI (laptop)
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P5.3.1 | Tauri app scaffold, ROS 2 bridge via DDS | ☐ | |
-| P5.3.2 | Tabs: Drive, Inspect, Command, Watch | ☐ | |
-| P5.3.3 | Voice input (whisper-cpp) + voice output (Piper TTS) | ☐ | |
-| P5.3.4 | Confirmation loop with 2-s countdown override | ☐ | |
-| P5.3.5 | Plain-language target rejections ("Behind a leaf...") | ☐ | |
-| P5.3.6 | Wire abort button to existing hot-key stop | ☐ | |
+| P5.3.1 | Tauri app scaffold, ROS 2 bridge via DDS | ◐ | 2026-10-12 — a web page served by `operator_gui_node` (any browser on the laptop or a tablet; ROS bridge in the node, not in the browser); a Tauri shell is packaging only and not done |
+| P5.3.2 | Tabs: Drive, Inspect, Command, Watch | ☑ | 2026-10-12 — Command (camera with numbered detections, instruction box, microphone, proposal with countdown, questions with options, message log), Inspect (detections with Grasp / Inspect), Drive (enable, hold-to-move base and gripper pads, speed; 0.3 s hold then zero; refused while the pipeline or MPC moves), Watch (pipeline, MPC, uncertainty, force, plant twin). Headless Chromium test (Playwright): 15 checks incl. phone width; not used by operators yet |
+| P5.3.3 | Voice input (whisper-cpp) + voice output (Piper TTS) | ◐ | 2026-10-12 — the page records 16 kHz WAV and speaks the messages; the node runs `whisper_cmd` / `tts_cmd` when configured, else the browser's speech synthesis. Not tried with whisper-cpp / Piper binaries |
+| P5.3.4 | Confirmation loop with 2-s countdown override | ☑ | 2026-10-12 — `session.py`: proposal → 2 s → commit unless cancelled; "do it now"; a new instruction replaces it; stop never counted down. Fake robot (`operator_chain_check.py`): committed 3.3 s after the instruction (2 s countdown + discovery), target at the chosen flower's point in odom (0.00 cm), tracker mask inside its outline |
+| P5.3.5 | Plain-language target rejections ("Behind a leaf...") | ☑ | 2026-10-12 — reachability reasons (P5.1.4), "I can't find the white flower. I see 3 flowers (red, yellow), 1 stem.", unknown words, refused actions, clarification questions |
+| P5.3.6 | Wire abort button to existing hot-key stop | ☑ | 2026-10-12 — `safety_stop.py`: the hot-key stop's zero servo twist and bridge disable plus zero joint jog, zero `/cmd_vel` and MPC cancel; STOP button, Esc / Space, "stop" spoken or typed; also in the GUI node so it works without the instruction node. Fake robot: zero base commands, MPC cancelled, bridge disable confirmed, drive disabled |
 
 ### P5.4 — User study
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| P5.4.1 | IRB / ethics approval | ☐ | |
+| P5.4.1 | IRB / ethics approval | ☐ | Long lead time: start the application early |
 | P5.4.2 | 10 non-expert participants, 3 task families | ☐ | |
 | P5.4.3 | NASA-TLX + trust survey + task-success metrics | ☐ | |
 | P5.4.4 | Paper draft (HRI / RO-MAN) | ☐ | |

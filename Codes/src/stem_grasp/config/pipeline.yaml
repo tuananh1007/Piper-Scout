@@ -57,6 +57,8 @@ stem_grasp_pipeline:
     acceleration_scale: 0.12
     grasp_strategy: "nearest_target"
     target_point_timeout_sec: 3.5
+    operator_target_topic: ""             # Phase 5: /operator/target from scout_piper_language
+    operator_target_max_dist_m: 0.05
     # grasp the stem axis: fit the stem cross-section around each skeleton
     # point (single-view clouds show only the camera-facing half)
     grasp_point_on_stem_axis: true

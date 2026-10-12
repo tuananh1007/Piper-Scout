@@ -35,6 +35,17 @@ def candidate_goal_in_world(pre_pos: np.ndarray, quat_xyzw: np.ndarray,
     return p, Rotation.from_matrix(R).as_quat()
 
 
+def pick_operator_candidate(candidates, target: np.ndarray, max_dist_m: float):
+    """Index of the grasp candidate nearest the operator's target (planning
+    frame), or None when even that one is farther than ``max_dist_m``: the
+    segmented stem is not the one the operator chose, so nothing is reached."""
+    if not candidates:
+        return None
+    d = [float(np.linalg.norm(np.asarray(c["pos"], float) - target)) for c in candidates]
+    i = int(np.argmin(d))
+    return i if d[i] <= max_dist_m else None
+
+
 @dataclass
 class ReachMonitor:
     """Decides when the MPC has delivered the arm to the pre-grasp pose.

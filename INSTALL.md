@@ -38,6 +38,7 @@ powering anything on.
 | Per-class semantic nvblox (`nvblox_semantic.launch.py`) | Never run (P1.2.1) |
 | CPU semantic map, distance field, MoveIt semantic collision plugin | Unit-tested; not run in `move_group` on the robot |
 | `plant_twin`, `scout_piper_jepa`, `scout_piper_whole_body_mpc` | Tested offline on synthetic data only; V-JEPA inference has never run. The MPC is dry-run by default; its execute mode runs end to end on the fake arm and base (10.13), not yet on hardware |
+| `scout_piper_active_perception`, `scout_piper_language` | Phase 4 next-view planning and the Phase 5 operator layer (10.15, 10.16): tested in simulation, in a browser and on the fake arm and base; VGGT and any VLM have never run; not yet on hardware |
 | Jetson Orin AGX deployment | Not documented (path A) |
 
 > **Safety: how the Piper driver takes commands.** The driver executes every
@@ -168,7 +169,7 @@ clone on the Orin:
 - udev rules and the rest of Step 9 as on the workstation.
 
 **A.6 Run.** First `./scripts/hardware_free_checks.sh --profile orin` (10.2;
-all twelve checks must pass), then Step 10 on the Orin, in the order of
+all fourteen checks must pass), then Step 10 on the Orin, in the order of
 [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) parts J and R, with:
 - **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
   whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
@@ -575,7 +576,8 @@ builds through `colcon_build_safe.sh`.
 Without CUDA, build only the packages that do not depend on Isaac ROS:
 
 ```bash
-./scripts/colcon_build_safe.sh --symlink-install --packages-up-to scout_piper_bringup plant_twin scout_piper_jepa
+./scripts/colcon_build_safe.sh --symlink-install --packages-up-to scout_piper_bringup plant_twin scout_piper_jepa \
+    scout_piper_active_perception scout_piper_language
 ```
 
 `colcon list --packages-up-to` on the imported workspace resolves this to 19
@@ -854,7 +856,7 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 12 checks, ~17 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 14 checks, ~20 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
@@ -1565,6 +1567,60 @@ estimate on the fake arm at rest, applies 3 N and (2, −1, 0.5) N at the TCP
 estimate stayed ≤ 0.11 N while the arm moved), applies 3 N and expects the
 force gate within 1 s (0.2 s here): the gripper backs out 5 cm (5.1 cm) and
 the pipeline stops in ABORTED.
+
+### 10.15 Active perception (Phase 4)
+
+`scout_piper_active_perception` decides whether the wrist camera needs another
+view before the grasp and plans it among poses the whole-body MPC reaches
+(package README). It reads the semantic field, the Stage A target point and
+state, `/plant_twin/state` and the target stem cloud, and publishes the next
+view as a TCP pose goal:
+
+```bash
+ros2 launch scout_piper_active_perception active_perception.launch.py        # status only
+ros2 topic echo /active_perception/status                                     # U terms, needs_view, unmet
+ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py execute:=true \
+    field_topic:=/scene_repr/distance_field goal_pose_topic:=/active_perception/next_view
+ros2 service call /active_perception/plan_view std_srvs/srv/Trigger           # one view
+```
+
+`auto_publish:=true` publishes a view whenever a required term (stem joint,
+approach corridor, target tracking) is unmet, at most every 10 s. View
+candidates keep the arm within the MPC's reach margin (`reach_max_m`, as
+`whole_body_mpc.yaml`). The depth noise model (`depth_sigma0_m`, `depth_k2`) is
+a placeholder until MODULE_TASKS.md C10 measures the D405. VGGT (multi-view
+depth for thin stems, `vggt.py`) is not installed with the workspace: GPU
+environment only (MODULE_TASKS.md A14, B8).
+
+**Hardware-free check:** `./scripts/hardware_free_checks.sh --only active_perception`
+(fake arm and base, MPC executing; a simulated plant is rendered from the
+camera pose in TF).
+
+### 10.16 Operator GUI and instructions (Phase 5)
+
+`scout_piper_language` turns typed or spoken instructions into a target for
+the existing pipeline, after a reachability check and a 2-s countdown the
+operator can cancel (package README). The GUI is a web page served on the
+robot computer:
+
+```bash
+ros2 launch scout_piper_language operator.launch.py                 # http://127.0.0.1:8080/
+ros2 launch scout_piper_language operator.launch.py host:=0.0.0.0   # tablet / laptop on the robot's closed network
+ros2 run stem_grasp pipeline_node --ros-args ... -p operator_target_topic:=/operator/target
+ros2 run scout_piper_language operator_gui_demo --port 8080        # the page without a robot
+```
+
+The segmentation node publishes `/stem_grasp/detections` (every YOLO instance
+with class, box, colour and 3-D point) for the grounding. The page's STOP
+(and Esc, or "stop") sends zero commands to moveit_servo and the base,
+cancels the MPC and disables the servo bridge; like the hot key it is a
+software stop, so keep the physical stops in reach (Step 9). The server has
+no authentication: bind it to 0.0.0.0 only on a closed network. Voice needs
+whisper-cpp and Piper TTS binaries (`whisper_cmd`, `tts_cmd` in
+`config/operator.yaml`); without them the page is typed and speaks with the
+browser.
+
+**Hardware-free check:** `./scripts/hardware_free_checks.sh --only operator`.
 
 ## Research quick start without ROS (path D)
 

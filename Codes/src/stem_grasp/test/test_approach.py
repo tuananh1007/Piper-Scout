@@ -154,3 +154,11 @@ def test_a_swaying_stem_needs_the_alignment_window(window, arrives):
         d -= st.speed * DT
         t += DT
     assert (st.phase == "done") == arrives, (st.phase, st.reason, d)
+
+
+def test_operator_target_picks_the_nearest_candidate_or_none():
+    from stem_grasp.reach_handoff import pick_operator_candidate
+    cands = [{"pos": np.array([0.5, 0.0, 0.3])}, {"pos": np.array([0.6, 0.1, 0.3])}]
+    assert pick_operator_candidate(cands, np.array([0.61, 0.1, 0.31]), 0.05) == 1
+    assert pick_operator_candidate(cands, np.array([0.9, 0.5, 0.3]), 0.05) is None
+    assert pick_operator_candidate([], np.zeros(3), 0.05) is None

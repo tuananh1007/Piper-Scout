@@ -756,6 +756,13 @@ U_{\rm total}
 
 **Exit criterion:** fewer views or lower acquisition time at equal or better grasp performance.
 
+**Implementation (2026-10-12):** `Codes/src/scout_piper_active_perception/`: the
+three U terms with per-term requirements, Fisher information of the stem joint
+at the grasp point, view candidates the whole-body MPC reaches, the five
+ablation policies in simulation, a ROS node whose views the MPC follows (closed
+loop on the fake robot), VGGT helpers not yet run on a GPU. Simulated results
+and their limits in the package README; robot runs in MODULE_TASKS.md C10.
+
 ---
 
 ### Phase 5 — Language/VLM + operator GUI for non-experts (Months 15–18) ★ APPLICATION CAPSTONE
@@ -805,6 +812,15 @@ The VLM initializes the target; Phase 2A maintains its identity afterward.
 - `plant_twin` deformation overlay when valid;
 - confirm/abort;
 - text + local speech input.
+
+**Implementation (2026-10-12):** `Codes/src/scout_piper_language/`: rule-based
+q_ℓ parsing and grounding in the segmentation's detections with clarification
+questions, a VLM interface behind HTTP whose answers are validated against the
+detections, the reachability filter with plain-language reasons on every
+proposal, the 2-s countdown, a software stop shared with the hot key, and a web
+GUI (Command / Inspect / Drive / Watch) served by a ROS node; tested in headless
+Chromium and on the fake robot. No VLA / VLM model, no Tauri shell, no
+operators yet (MODULE_TASKS.md C11, P5.4).
 
 ---
 

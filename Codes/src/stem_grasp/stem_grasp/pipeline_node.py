@@ -64,7 +64,7 @@ from stem_grasp import core
 from stem_grasp.approach import (ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor,
                                  ServoGates, servo_gate)
 from stem_grasp.moveit_planner import MoveItPlanner
-from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world
+from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world, pick_operator_candidate
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
 from stem_grasp.servo_geometry import project, stem_feature_uv
 
@@ -146,6 +146,11 @@ class PipelineParams:
     acceleration_scale: float = 0.12
     grasp_strategy: str = "nearest_target"
     target_point_timeout_sec: float = 3.5
+    # Target chosen by the operator (scout_piper_language instruction node, Phase 5):
+    # PointStamped; the candidate nearest it is reached, none if it is farther than
+    # operator_target_max_dist_m; an empty frame_id clears it. "" = off
+    operator_target_topic: str = ""
+    operator_target_max_dist_m: float = 0.05
     # Single-view stem clouds show only the camera-facing half, so skeleton
     # points sit on that surface; fit the cross-section and grasp the axis.
     grasp_point_on_stem_axis: bool = True
@@ -263,6 +268,7 @@ class StemGraspPipeline(Node):
         self._inner_lock = threading.Lock()
         self.grasp_target_world: Optional[np.ndarray] = None   # in mpc_world_frame
         self.last_target_point: Optional[np.ndarray] = None  # in planning_frame
+        self.operator_target: Optional[np.ndarray] = None    # in planning_frame (operator_target_topic)
         self.last_target_stamp: Optional[float] = None
         self.last_stem_cloud: Optional[np.ndarray] = None  # (N, 3) in planning_frame
         self.last_stem_cloud_stamp: Optional[float] = None
@@ -354,6 +360,9 @@ class StemGraspPipeline(Node):
             )
         elif self.params.scene_field_topic:
             self.get_logger().warn("scene_field_topic is used by servo_controller mppi only")
+        if self.params.operator_target_topic:
+            self.create_subscription(PointStamped, self.params.operator_target_topic, self._on_operator_target, 5,
+                                     callback_group=self.cb_group)
 
         # ---------- publishers ----------
         self.pub_state = self.create_publisher(
@@ -515,6 +524,19 @@ class StemGraspPipeline(Node):
         self.last_mask = mask > 0
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.last_mask_stamp = stamp if stamp > 0 else self._now()
+
+    def _on_operator_target(self, msg: PointStamped) -> None:
+        if not msg.header.frame_id:
+            self.operator_target = None
+            self.get_logger().info("operator target cleared")
+            return
+        T = self._lookup(self.params.planning_frame, msg.header.frame_id)
+        if T is None:
+            self.get_logger().warn(f"operator target in {msg.header.frame_id}: no TF to "
+                                   f"{self.params.planning_frame}; ignored")
+            return
+        self.operator_target = T[:3, :3] @ np.array([msg.point.x, msg.point.y, msg.point.z]) + T[:3, 3]
+        self.get_logger().info(f"operator target {np.round(self.operator_target, 3).tolist()}")
 
     def _on_target_point(self, msg: PointStamped) -> None:
         # Convert to planning_frame for reuse downstream
@@ -692,7 +714,15 @@ class StemGraspPipeline(Node):
         if self.params.grasp_point_on_stem_axis:
             self._centre_on_stem_axis(candidates)
 
-        if (self.params.grasp_strategy == "nearest_target"
+        if self.operator_target is not None:
+            i = pick_operator_candidate(candidates, self.operator_target, self.params.operator_target_max_dist_m)
+            if i is None:
+                self.get_logger().warn("no grasp candidate within "
+                                       f"{self.params.operator_target_max_dist_m:.2f} m of the operator target",
+                                       throttle_duration_sec=5.0)
+                return
+            candidates.insert(0, candidates.pop(i))
+        elif (self.params.grasp_strategy == "nearest_target"
                 and self.last_target_point is not None
                 and self._age(self.last_target_stamp) < self.params.target_point_timeout_sec):
             tgt = self.last_target_point

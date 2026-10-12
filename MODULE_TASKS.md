@@ -1,7 +1,9 @@
-# Module tasks: semantic scene, Piper-JEPA, whole-body MPC
+# Module tasks: semantic scene, Piper-JEPA, whole-body MPC, active perception, operator layer
 
-The three research modules are implemented to the point where the remaining
-work needs a GPU, the Jetson, the robot or recorded data. This file lists that
+The research modules (semantic scene, Piper-JEPA, whole-body MPC, the Phase 2B
+servo, Phase 4 active perception, the Phase 5 operator layer) are implemented
+to the point where the remaining work needs a GPU, the Jetson, the robot or
+recorded data. This file lists that
 work as tasks to run, in order: **Part A on the workstation (PC) first, Part B
 on the Jetson AGX Orin, Part C on the robot, Part D back on the PC with the
 recorded data.** Each task names the module, the PROGRESS.md items it closes,
@@ -43,6 +45,8 @@ needs R0–R8 of the same file.
 | Piper-JEPA | Stage A memory, Stage B predictors, Stage C cost; **DINOv2 encoder** (T2); **E1 runner T0–T4** with the H1 go/no-go rule (P2A.6); **bag → episode export** with depth, poses, states, segmentation, labels; **annotation tool** (P2A.5, P3B.8); **training command** with GPU support (P3B.9); **latency benchmark** (P3B.10); **predictive MPC node C3** (P3B.11) | V-JEPA / DINOv2 inference (A6), GPU training and latency (A7, A8, B4), datasets (C6, C7), H1 decision (D2), E3 training (D3), C3 on the robot (C8) |
 | Contact force | no F/T sensor: **joint-effort force estimate** (`dynamics/effort.py`, `effort_force_node` on `/ft_sensor/raw`, `~/tare`), **`calibrate_effort`** (move to a checked centre, multi-sine, fit, held-out residual, 3-σ threshold); relay passes driver efforts; fake driver simulates efforts and a TCP force; stem_grasp `force_topic`, tare on servo start, stale-force stop, thresholds into the MPPI servo; hardware-free: 0.04 N error on 3 N, calibration gains 1.00, 3 N push trips the force gate in 0.2 s (retract 5 cm, ABORTED) | real driver efforts and noise, calibration on the robot (C2 step 4) |
 | Phase 2B visual servo | arm-only **MPPI visual servo** (`visual_servo.py`, P2.1–P2.2) in stem_grasp `servo_controller: mppi`: image, view, joint, manipulability, clearance, smoothness, force and approach costs; projective prediction or online image Jacobian; JointJog out; full hardware-free grasp passes; **semantic clearance** from `/scene_repr/distance_field` with the target stem released (`exclude_target`: obstacle voxels connected to the grasp point; neighbours stay hard), hardware-free grasp with a synthetic field passes; **Phase 2B hard gates** (force limit → retract 5 cm → ABORTED, silent force source → stop, target lost 2 s → SCANNING, hard clearance violation → stop) and the **WE6 handoff** numbers in `grasp_chain_check.py`; **simulated P2.3 trials** (`benchmarks/servo_trials.py`: IBVS 48/50, MPPI 49/50 after the approach alignment window; MPPI ~40 % faster; exit gate not reachable in simulation) | CUDA / Orin cycle time (A13, B7), servo comparison on the robot (C9) |
+| Active perception (Phase 4) | `scout_piper_active_perception`: **stem-joint Fisher information** (cylinder fit, per-view pose error fused), U_JEPA / U_geometry / U_twin with per-term requirements, **MPC-reachable view candidates** (reach margin, approach-axis turn), corridor gain with depth returns, policies fixed ring / random / geometry / target / fused, **simulated 30-scene ablation**, `active_perception_node` (next view as the MPC's pose goal), **closed loop on the fake robot** (`active_perception_chain_check.py`), VGGT batching / scale / depth-fusion helpers tested with a fake model | VGGT on the GPU and the Orin (A14, B8), robot runs and the ablation on real plants (C10) |
+| Operator layer (Phase 5) | `scout_piper_language`: instruction parser and grounding with clarification, optional VLM behind HTTP (validated), **reachability filter** with plain-language reasons, **2-s countdown**, software stop (hot-key stop + base + MPC), `instruction_node`, **operator web GUI** (Command / Inspect / Drive / Watch, SSE, MJPEG, hold-to-move, optional whisper-cpp / Piper TTS); stem_grasp `/stem_grasp/detections` and the pipeline's `operator_target_topic`; headless-Chromium page test, **fake-robot check** (`operator_chain_check.py`) | VLA / VLM model on the Orin (P5.1.1-2), voice binaries, sessions with operators on the robot (C11), user study (P5.4) |
 
 ---
 
@@ -82,7 +86,7 @@ to the largest torch-cuda value whose p95 with the plant field is under 90 ms
 ### A3 — Hardware-free chains on the GPU profile
 
 **Steps:** `./scripts/hardware_free_checks.sh --profile gpu 2>&1 | tee $LOG/A3_hwfree_gpu.txt`
-**Pass:** twelve `PASS` lines; no `MPPI solves overrun` warning.
+**Pass:** fourteen `PASS` lines; no `MPPI solves overrun` warning.
 **Record:** the two `MPPI solve median / max` lines.
 
 ### A4 — Per-class nvblox and the distance-field bridge (P1.2.1, P1.3.1, first run)
@@ -310,6 +314,35 @@ the MPPI servo. **Record:** the timing table; servo approach time and the
 
 ---
 
+### A14 — VGGT on the workstation GPU (P4.1, first run) and the active-perception benchmark
+
+1. Install VGGT in the GPU environment (`pip install git+https://github.com/facebookresearch/vggt`;
+   weights `facebook/VGGT-1B` from the Hugging Face hub on first use). Record
+   4-8 wrist-camera views of a plant with `record_bag.sh scene` (or reuse a C5
+   bag later) and run the batcher, the model and the fusion on them:
+
+   ```python
+   from scout_piper_active_perception.vggt import SparseViewBatcher, View, VGGTReconstructor, reconstruct
+   # views: rgb (H, W, 3) uint8, aligned depth in metres, T_world_cam from TF, K
+   out = reconstruct(batcher, VGGTReconstructor(device="cuda"))
+   ```
+
+   **Record:** seconds and GPU memory per batch of 2 / 4 / 8 views, the scale,
+   the agreement with the D405 (`fuse_depth` third value; expect > 0.8 within
+   5 %), and how many stem pixels VGGT fills where the D405 dropped out
+   (source 2 on the target mask).
+2. Simulated ablation (CPU, about 15 min with 4 jobs):
+
+   ```bash
+   cd src/scout_piper_active_perception
+   PYTHONPATH=.:../scout_piper_whole_body_mpc:../scout_piper_scene_repr/python \
+     python3 benchmarks/nbv_benchmark.py --scenes 30 --jobs 4 --out $LOG/A14_nbv.jsonl | tail -8 | tee $LOG/A14_nbv.txt
+   ```
+
+   **Expect:** the table in the package README.
+
+---
+
 ## Part B — Jetson AGX Orin
 
 Prerequisite: TEST_PROCEDURE.md J1–J6 passed on the Orin.
@@ -331,7 +364,7 @@ python3 src/scout_piper_whole_body_mpc/benchmarks/timing.py --backends numpy,tor
 p95 with the plant field is under 90 ms at ≥ 256 samples, else `orin` (numpy,
 128 samples). Set `samples` in `config/whole_body_mpc_orin_gpu.yaml` (or
 `_orin.yaml`) accordingly and run `./scripts/hardware_free_checks.sh --profile <chosen>`
-(twelve PASS). **Record:** the table, the chosen profile and samples.
+(fourteen PASS). **Record:** the table, the chosen profile and samples.
 
 ### B3 — nvblox rate and memory on the Orin (P1.1.3, P1.7.6 timing)
 
@@ -379,6 +412,17 @@ As A13 on the Orin: `visual_servo_timing.py --samples 256,512` and
 `hardware_free_checks.sh --profile orin --servo mppi`. **Pass:** torch-CUDA
 median under 10 ms at the chosen sample count. **Record:** the table; the
 `mppi_samples` / `mppi_backend` for the robot.
+
+---
+
+### B8 — VGGT on the Orin (P4.1)
+
+As A14 step 1 on the Orin (torch with CUDA from B1; the wrapper uses bf16
+where the GPU supports it, else fp16). **Record:** seconds and memory for 2 /
+4 / 8 views with nvblox, the MPC and the segmentation running (B3); choose the
+batch size (`max_views`) that keeps the total memory under 48 GB and one
+reconstruction under 2 s, or record that VGGT runs on the workstation over the
+LAN instead.
 
 ---
 
@@ -514,6 +558,56 @@ that calibrated force estimate.
 
 ---
 
+### C10 — Active perception on the robot (P4.3, P4.4)
+
+1. **Sensor model:** with the arm still, record 100 depth frames of a stem
+   (6-10 mm) at 0.2, 0.3 and 0.45 m: per-pixel depth σ (fit σ₀ + k₂z²) and the
+   share of stem pixels without depth vs projected width; set
+   `depth_sigma0_m`, `depth_k2` in `config/active_perception.yaml` (and the
+   simulation's `DepthSensor` for the next benchmark).
+2. With C4's semantic stack, the Stage A memory grounded on a flower behind a
+   leaf, and the MPC following `/active_perception/next_view`:
+
+   ```bash
+   ros2 launch scout_piper_active_perception active_perception.launch.py
+   ros2 launch scout_piper_whole_body_mpc whole_body_mpc.launch.py execute:=true profile:=<B2> \
+       field_topic:=/scene_repr/distance_field goal_pose_topic:=/active_perception/next_view
+   ros2 service call /active_perception/plan_view std_srvs/srv/Trigger     # one view at a time, dry run first
+   ```
+
+   Watch `/active_perception/status` (U terms, `unmet`) and the camera.
+   **Pass:** each view reached, the target in view afterwards, `u_joint` and
+   `u_corridor` falling; then the grasp (R11) from there.
+3. **Ablation:** 10 plants, policies `fixed_ring`, `geometry`, `fused`
+   (`-p policy:=...`), same start: views and time until `needs_view` is false,
+   and the grasp outcome afterwards.
+
+**Record:** σ₀, k₂, dropout vs width; per run views, seconds, final `axis_sigma_mm`,
+`corridor_unknown`, grasp success.
+
+### C11 — Operator GUI and instructions on the robot (P5.3)
+
+```bash
+ros2 launch scout_piper_language operator.launch.py host:=0.0.0.0     # page on the laptop / tablet
+ros2 run stem_grasp pipeline_node --ros-args ... -p operator_target_topic:=/operator/target
+```
+
+1. STOP first: button, Esc, and typing "stop" during a base move (Drive tab)
+   and during an MPC reach: everything halts, the bridge is disabled
+   (`/piper_servo_bridge/enable` must be called again).
+2. Two flowers of different colours in view: "grasp the red flower" → the
+   proposal names the right detection, cancel within 2 s → nothing moves;
+   again without cancelling → the pipeline reaches the stem of that flower.
+3. "grasp the flower" → the question; answer by button; "grasp the flower
+   behind the leaf" with an occluded one → the "behind a leaf" advisory; a
+   target out of reach → the plain-language reason.
+4. Optional: `whisper_cmd` / `tts_cmd` set, a spoken instruction.
+
+**Record:** per instruction the proposal, whether it was the intended object,
+the time to the proposal, any wrong grounding; the STOP latency by eye.
+
+---
+
 ## Part D — Analysis on the PC (recorded data)
 
 ### D1 — Semantic vs occupancy on the recorded scenes (P1.4.2)
@@ -583,12 +677,14 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | A12 slip on the fake base | | | k_v, k_omega |
 | A12 force estimate (fake arm) | | | estimate error, gains, 3-σ, abort s |
 | A13 MPPI servo timing + grasp | | | median ms per backend, approach s, simulated trials per controller |
+| A14 VGGT on the PC + NBV benchmark | | | s and GB per 2/4/8 views, scale, agreement, filled stem px; policy table |
 | B2 MPC timing Orin | | | chosen profile, samples |
 | B3 nvblox on the Orin | | | integration ms per class, RAM |
 | B4 predictor latency Orin | | | samples |
 | B5 encoder on the Orin | | | ms per frame |
 | B6 C3 node hardware-free | | | cost active, solve ms |
 | B7 MPPI servo on the Orin | | | median ms, chosen samples |
+| B8 VGGT on the Orin | | | s and GB per batch, chosen max_views |
 | C1 self-filter | | | boxes, filtered px |
 | C2 calibration | | | tcp offset, hand-eye origin, k_v, k_omega, effort σ, 3-σ force, known-mass reading |
 | C3 MPC with profile | | | time, error |
@@ -598,6 +694,8 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | C7 E3 recorded | | | episodes, frames |
 | C8 C3 vs C2 on robot | | | in view, tracker, goal error |
 | C9 MPPI servo vs IBVS | | | error vs time, approach s, axis miss |
+| C10 active perception | | | σ₀, k₂, dropout; views, s, sigma, corridor, grasp per policy |
+| C11 operator GUI | | | proposals right / wrong, time to proposal, STOP |
 | D1 semantic vs occupancy (real) | | | failures per representation |
 | D2 E1 + H1 | | | go / no-go |
 | D3 E3 training | | | E_target@4 per method |

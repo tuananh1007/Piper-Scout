@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Piper-Scout Operator</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">Piper-Scout</div>
+  <div class="chips" aria-live="polite">
+    <span class="chip" id="chip-conn" title="connection to the robot">connecting</span>
+    <span class="chip" id="chip-pipe" title="grasp pipeline state">pipeline –</span>
+    <span class="chip" id="chip-mpc" title="whole-body MPC mode">MPC –</span>
+  </div>
+  <button id="stop" class="stop" title="Stop everything (Esc)" aria-label="Stop the robot">STOP</button>
+</header>
+<div id="stopped" class="banner" hidden>Stopped. Motion commands are blocked until the drive is re-enabled.</div>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" aria-selected="true" data-tab="command">Command</button>
+  <button role="tab" aria-selected="false" data-tab="inspect">Inspect</button>
+  <button role="tab" aria-selected="false" data-tab="drive">Drive</button>
+  <button role="tab" aria-selected="false" data-tab="watch">Watch</button>
+</nav>
+
+<main>
+  <section class="camera-col">
+    <div class="camera" id="camera">
+      <img id="stream" alt="Wrist camera" src="api/stream.mjpg">
+      <canvas id="overlay" aria-hidden="true"></canvas>
+    </div>
+  </section>
+
+  <section class="panel" id="tab-command" role="tabpanel">
+    <form id="say-form" class="say-form" autocomplete="off">
+      <label for="instruction" class="sr">Instruction</label>
+      <input id="instruction" placeholder="e.g. grasp the red flower on the left" maxlength="300">
+      <button type="submit" class="primary">Send</button>
+      <button type="button" id="mic" class="ghost" title="Hold to speak" aria-label="Hold to speak">🎤</button>
+    </form>
+    <div id="proposal" class="card proposal" hidden>
+      <div class="card-title" id="proposal-title"></div>
+      <div id="proposal-msg"></div>
+      <ul id="proposal-adv" class="adv"></ul>
+      <div class="countdown"><div id="countdown-bar"></div></div>
+      <div class="row">
+        <button id="confirm" class="primary">Do it now</button>
+        <button id="cancel" class="ghost">Cancel</button>
+      </div>
+    </div>
+    <div id="question" class="card question" hidden>
+      <div id="question-text"></div>
+      <div id="question-opts" class="row wrap"></div>
+    </div>
+    <div class="row between">
+      <h2>Messages</h2>
+      <label class="toggle"><input type="checkbox" id="speak"> speak</label>
+    </div>
+    <ol id="log" class="log"></ol>
+  </section>
+
+  <section class="panel" id="tab-inspect" role="tabpanel" hidden>
+    <h2>What the camera sees</h2>
+    <p class="muted">Numbers match the labels on the image.</p>
+    <ul id="dets" class="dets"></ul>
+  </section>
+
+  <section class="panel" id="tab-drive" role="tabpanel" hidden>
+    <label class="toggle big"><input type="checkbox" id="drive-enable"> Enable manual drive</label>
+    <p class="muted">Hold a button to move; releasing it stops. Only while the pipeline is idle.</p>
+    <h2>Base</h2>
+    <div class="pad" id="base-pad">
+      <span></span><button data-v="1" data-w="0" aria-label="forward">▲</button><span></span>
+      <button data-v="0" data-w="1" aria-label="turn left">⟲</button><span class="pad-c"></span><button data-v="0" data-w="-1" aria-label="turn right">⟳</button>
+      <span></span><button data-v="-1" data-w="0" aria-label="backward">▼</button><span></span>
+    </div>
+    <h2>Gripper (camera directions)</h2>
+    <div class="pad" id="arm-pad">
+      <span></span><button data-arm="0,-1,0,0,0,0" aria-label="up">▲</button><button data-arm="0,0,1,0,0,0" aria-label="forward">⊙</button>
+      <button data-arm="-1,0,0,0,0,0" aria-label="left">◀</button><span class="pad-c"></span><button data-arm="1,0,0,0,0,0" aria-label="right">▶</button>
+      <span></span><button data-arm="0,1,0,0,0,0" aria-label="down">▼</button><button data-arm="0,0,-1,0,0,0" aria-label="back">⊗</button>
+    </div>
+    <label class="slider">Speed <input type="range" id="speed" min="25" max="100" value="50"> <span id="speed-val">50 %</span></label>
+  </section>
+
+  <section class="panel" id="tab-watch" role="tabpanel" hidden>
+    <div class="grid">
+      <div class="card"><div class="card-title">Pipeline</div><div id="w-pipe" class="big-val">–</div><ol id="w-pipe-hist" class="hist"></ol></div>
+      <div class="card"><div class="card-title">Whole-body MPC</div><div id="w-mpc" class="big-val">–</div><div id="w-mpc-detail" class="muted"></div></div>
+      <div class="card"><div class="card-title">Uncertainty</div>
+        <div class="meter"><span>Target (JEPA)</span><meter id="u-jepa" min="0" max="1" low="0.5" high="0.75" optimum="0"></meter></div>
+        <div class="meter"><span>Geometry</span><meter id="u-geo" min="0" max="1" low="0.5" high="0.75" optimum="0"></meter></div>
+        <div class="meter"><span>Plant twin</span><meter id="u-twin" min="0" max="1" low="0.5" high="0.75" optimum="0"></meter></div>
+        <div id="w-unmet" class="muted"></div></div>
+      <div class="card"><div class="card-title">Contact</div><div id="w-force" class="big-val">–</div><div id="w-twin" class="muted"></div></div>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

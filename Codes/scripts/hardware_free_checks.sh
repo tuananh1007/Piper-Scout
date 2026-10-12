@@ -13,13 +13,13 @@
 #          --servo ibvs|mppi        stem_grasp servo controller for the grasp checks (Phase 2B)
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
-#          --quick                  skip the extra stem positions, the semantic-field, gate and
-#                                   force-estimate checks
+#          --quick                  skip the extra stem positions, the semantic-field, gate,
+#                                   force-estimate, active-perception and operator checks
 #          --only REGEX             run only the checks whose name matches (bash regex)
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 16 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 20 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
 profile=default quick=0 servo=ibvs only=""
@@ -121,6 +121,10 @@ if (( ! quick )); then
   run_check grasp_force_abort_0.95_0.15 1 1 "-p force_tare_service:=/effort_force_estimator/tare" \
     ros2 run scout_piper_bringup grasp_chain_check.py 0.95 0.15 --push-force 3.0
   bringup_extra=()
+  # Phase 4: next view planned from a simulated plant, driven by the MPC, joint estimate refined
+  run_check active_perception 1 1 - ros2 run scout_piper_bringup active_perception_chain_check.py
+  # Phase 5: instruction -> proposal -> countdown -> target, clarification, refusal, GUI STOP
+  run_check operator 1 0 - ros2 run scout_piper_bringup operator_chain_check.py
 fi
 ros2 daemon stop > /dev/null 2>&1
 

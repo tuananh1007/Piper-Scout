@@ -120,6 +120,8 @@ cd src
 ( cd plant_twin                 && python3 -m pytest test -q ) 2>&1 | tee $LOG/W3_plant_twin.txt
 ( cd scout_piper_jepa           && python3 -m pytest test -q ) 2>&1 | tee $LOG/W3_jepa.txt
 ( cd scout_piper_whole_body_mpc && PYTHONPATH=../scout_piper_scene_repr/python python3 -m pytest test -q ) 2>&1 | tee $LOG/W3_mpc.txt
+( cd scout_piper_active_perception && python3 -m pytest test -q ) 2>&1 | tee $LOG/W3_active_perception.txt
+( cd scout_piper_language       && python3 -m pytest test -q ) 2>&1 | tee $LOG/W3_language.txt
 cd ..
 colcon test --packages-select scout_piper_scene_repr --ctest-args -R test_semantic_collision_plugin
 colcon test-result --verbose 2>&1 | tee $LOG/W3_colcon_test.txt
@@ -132,7 +134,10 @@ If `python3 -m pytest` is missing in the container, install it first with
 `stem_grasp` 41, `scout_piper_bringup` 24, `scout_piper_scene_repr` 31,
 `plant_twin` 22, `scout_piper_jepa` 20 (+4 skipped without torch, 24 with
 torch), `scout_piper_whole_body_mpc` 36 (+10 skipped without torch, 46 with
-torch) passed; no failures in `colcon test-result`.
+torch) passed; no failures in `colcon test-result`. Added 2026-10-12:
+`scout_piper_active_perception` 12, `scout_piper_language` 16 (one of them
+drives the operator page in headless Chromium through Node's Playwright, and is
+skipped where Node or Playwright is missing).
 **Record:** the last line of each file.
 **If it fails:** `plant_twin` `test_jacobian.py` asserts a wall-clock
 speed-up and can fail on a busy machine; rerun it once on an idle machine.
@@ -149,11 +154,14 @@ whole-body MPC, stem grasp (reach, servo, approach, grasp, release).
 ./scripts/hardware_free_checks.sh 2>&1 | tee $LOG/W4_hardware_free.txt
 ```
 
-It runs twelve checks one after another (about 17 minutes), each with its own
-fake-driver bringup, on localhost only, and writes its logs to
-`test_logs/hwfree_<date>_<time>/`.
+It runs fourteen checks one after another (about 20 minutes), each with its
+own fake-driver bringup, on localhost only, and writes its logs to
+`test_logs/hwfree_<date>_<time>/`. The last two are Phase 4
+(`active_perception`: a simulated plant rendered from the camera pose, views
+planned and driven by the MPC) and Phase 5 (`operator`: instructions through
+the GUI's API, countdown, clarification, refusal, STOP).
 
-**Pass:** the summary lists twelve `PASS` lines and the script exits with 0.
+**Pass:** the summary lists fourteen `PASS` lines and the script exits with 0.
 **Record:** the summary, and the `info: ... MPPI solve median ... ms, max ... ms`
 lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 **If it fails:** open `check.out` and `pipeline.log` / `mpc.log` of the
@@ -317,7 +325,7 @@ Watch `tegrastats` in another terminal during the first run and save a few
 lines: `tegrastats --interval 2000 | tee $LOG/J6_tegrastats.txt` (Ctrl-C after
 the run).
 
-**Pass:** twelve `PASS` lines with `--profile orin`; no `MPPI solves overrun`
+**Pass:** fourteen `PASS` lines with `--profile orin`; no `MPPI solves overrun`
 warning with `--profile orin`.
 **Record:** the `MPPI solve median / max` lines of both runs, any overrun
 warnings, the highest RAM use in `tegrastats`.

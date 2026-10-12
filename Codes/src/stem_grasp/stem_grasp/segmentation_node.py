@@ -185,6 +185,10 @@ class StemSegmentationNode(Node):
             stationary_joint_vel_threshold=0.02,
             joint_states_timeout_sec=0.75,
             stationary_settle_sec=0.12,
+            # every YOLO instance (class, box, colour, 3-D point) as JSON for the
+            # operator layer (scout_piper_language, Phase 5)
+            publish_detections=True,
+            detections_topic="/stem_grasp/detections",
         )
         self.p = p
         self.throttle = _Throttle()
@@ -273,6 +277,8 @@ class StemSegmentationNode(Node):
         self.combined_centroid_pub = self.create_publisher(
             PointStamped, "/stem_grasp/combined_centroid", 1
         )
+        self.detections_pub = self.create_publisher(String, str(self.p["detections_topic"]), 1)
+        self._yolo_instances = None
 
         # --- Subscribers ---------------------------------------------------
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -559,6 +565,7 @@ class StemSegmentationNode(Node):
 
     def _segment_yolo(self, bgr: np.ndarray) -> Tuple[np.ndarray, float]:
         self._yolo_class_masks = {}
+        self._yolo_instances = None
         if self.yolo is None:
             return np.zeros(bgr.shape[:2], dtype=np.uint8), 0.0
         predict_kwargs = dict(
@@ -594,6 +601,8 @@ class StemSegmentationNode(Node):
         )
         thr = float(self.p["yolo_mask_threshold"])
         stem_class = int(self.p["yolo_stem_class_id"])
+        self._yolo_instances = ([m > thr for m in masks], list(classes), list(confs),
+                                dict(getattr(result, "names", {}) or {}))
         mc, cc = [], []
         H, W = bgr.shape[:2]
         for idx, m in enumerate(masks):
@@ -1008,6 +1017,8 @@ class StemSegmentationNode(Node):
         self._publish_centroid(msg.header, centroid)
         self._publish_target(msg.header)
         self._publish_combined_centroid(msg.header, mask, self._cached_target_mask)
+        if bool(self.p["publish_detections"]) and mode == "yolo_seg":
+            self._publish_detections(msg.header, bgr)
 
         if bool(self.p["publish_debug"]):
             self._publish_debug(bgr, mask, stem_conf, centroid)
@@ -1108,6 +1119,28 @@ class StemSegmentationNode(Node):
         ps.header.frame_id = str(self.p["camera_optical_frame"])
         ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
         self.target_point_pub.publish(ps)
+
+    def _publish_detections(self, header, bgr) -> None:
+        """Every YOLO instance of this frame as JSON (detections.py)."""
+        import json  # noqa: PLC0415
+        from stem_grasp.detections import describe_instances  # noqa: PLC0415
+        inst = self._yolo_instances or ([], [], [], {})
+        depth, K = None, None
+        if self.latest_depth is not None and self._fx is not None:
+            try:
+                d = self.bridge.imgmsg_to_cv2(self.latest_depth, desired_encoding="passthrough").astype(np.float32)
+                depth = d / 1000.0 if np.nanmax(d) > 10.0 else d
+                if depth.shape != bgr.shape[:2]:
+                    depth = None                     # depth must be aligned to colour
+                K = np.array([[self._fx, 0.0, self._cx], [0.0, self._fy, self._cy], [0.0, 0.0, 1.0]])
+            except Exception:
+                depth = None
+        dets = describe_instances(inst[0], inst[1], inst[2], inst[3], bgr, depth, K,
+                                  min_pixels=int(self.p["target_min_pixels"]))
+        body = {"stamp": header.stamp.sec + 1e-9 * header.stamp.nanosec,
+                "frame_id": str(self.p["camera_optical_frame"]), "image_hw": list(bgr.shape[:2]),
+                "detections": dets}
+        self.detections_pub.publish(String(data=json.dumps(body)))
 
     def _publish_debug(self, bgr, mask, stem_conf, centroid):
         dbg = bgr.copy()

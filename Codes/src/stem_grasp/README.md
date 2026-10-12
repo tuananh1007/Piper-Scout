@@ -135,9 +135,18 @@ nothing or did not settle.
 | Node | Executable | Status |
 |---|---|---|
 | Pipeline orchestrator | `pipeline_node` | Ported: state machine, outer loop (skeleton + candidate selection → `/stem_grasp/target_pose`), inner-loop image-based servo toward the gripper axis (P0.4.12), stepwise final approach (P0.4.13, `approach_enabled`). Reach to the pre-grasp pose through the whole-body MPC with `reach_executor: whole_body_mpc` (P0.4.11, `reach_handoff.py`; default `none` only publishes the pose) |
-| Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Ported (YOLO-seg, Grounded-SAM + target caption, HSV fallback) |
+| Segmentation (YOLO + Grounded-SAM) | `segmentation_node` | Ported (YOLO-seg, Grounded-SAM + target caption, HSV fallback). With YOLO it also publishes every instance on `/stem_grasp/detections` (`publish_detections`, JSON: class, confidence, box, centroid, area, colour name, 3-D point in the camera frame, outline polygon; `detections.py`) for the operator layer (scout_piper_language) |
 | Point cloud filter | `pointcloud_node` | Ported (`/stem_grasp/filtered_cloud`, `/stem_grasp/leaf_filtered_cloud`) |
 | Hot-key stop | `hotkey_stop_and_zero` | Working: `x` publishes zero twists and disables `piper_servo_bridge` (the arm holds its measured pose); stops servo-driven motion only, not the base; zero-arm service not ported |
+
+## Operator target (Phase 5)
+
+With `operator_target_topic` (e.g. `/operator/target` from scout_piper_language's
+instruction node; PointStamped in any frame TF knows) the outer loop reaches
+the grasp candidate nearest the operator's target, and none when even the
+nearest is farther than `operator_target_max_dist_m` (5 cm): the segmented stem
+is then not the one the operator chose. An empty `frame_id` clears the target.
+The operator's target takes precedence over `grasp_strategy: nearest_target`.
 
 ## Port plan
 

@@ -18,6 +18,8 @@ install(
     scripts/mpc_chain_check.py
     scripts/grasp_chain_check.py
     scripts/effort_chain_check.py
+    scripts/active_perception_chain_check.py
+    scripts/operator_chain_check.py
     scripts/print_tcp.py
   DESTINATION lib/${PROJECT_NAME}
 )
