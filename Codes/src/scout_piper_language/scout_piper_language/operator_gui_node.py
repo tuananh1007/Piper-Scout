@@ -9,6 +9,11 @@ Serves ``gui_server.py`` with a backend bridged to ROS:
                   /servo_node/delta_twist_cmds (TCP jog in the camera frame), each
                   command held ``hold_s`` then zero, only while drive is enabled and
                   the pipeline is not moving on its own
+  heartbeat       /operator/heartbeat (std_msgs/Empty, 4 Hz) while the page's own
+                  heartbeats are fresh (``page_heartbeat_timeout_s``): the safety
+                  supervisor (scout_piper_bringup) stops motion without it when
+                  started with operator_heartbeat:=true; /safety/state is shown on
+                  the page and ``/api/safety_reset`` calls its ~/reset
   robot -> page   /operator/say, /operator/proposal (events), /operator/state,
                   /stem_grasp/pipeline_state, /whole_body_mpc/status,
                   /active_perception/status (uncertainty), /plant_twin/state,
@@ -78,6 +83,13 @@ class RosBackend:
     def drive_enable(self, enable: bool) -> Dict:
         return self.n.drive_enable(enable)
 
+    def heartbeat(self) -> Dict:
+        self.n.page_beat_t = time.time()
+        return {"ok": True}
+
+    def safety_reset(self) -> Dict:
+        return self.n.safety_reset()
+
     def jpeg(self) -> Optional[bytes]:
         return self.n.jpeg
 
@@ -99,6 +111,8 @@ class OperatorGuiNode(Node):
             ("base_v_max", 0.2), ("base_w_max", 0.4), ("arm_v_max", 0.05),
             ("camera_frame", "camera_color_optical_frame"),
             ("whisper_cmd", ""), ("tts_cmd", ""),
+            ("heartbeat_topic", "/operator/heartbeat"), ("page_heartbeat_timeout_s", 0.75),
+            ("safety_state_topic", "/safety/state"), ("safety_reset_service", "/safety_supervisor/reset"),
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.p = p
@@ -106,7 +120,8 @@ class OperatorGuiNode(Node):
         self.stop = SafetyStop(self)
         self.lock = threading.Lock()
         self.data: Dict = {"pipeline": None, "mpc": {}, "uncertainty": {}, "twin": {}, "force_n": None,
-                           "session": {}, "detections": [], "image_hw": None}
+                           "session": {}, "detections": [], "image_hw": None, "safety": None}
+        self.page_beat_t = -np.inf
         self.jpeg: Optional[bytes] = None
         self.last_img = 0.0
         self.drive_enabled = False
@@ -122,6 +137,8 @@ class OperatorGuiNode(Node):
         self.pub_twist = self.create_publisher(TwistStamped, "/servo_node/delta_twist_cmds", 5)
         self.cl_servo = self.create_client(Trigger, "/servo_node/start_servo")
         self.cl_bridge = self.create_client(SetBool, "/piper_servo_bridge/enable")
+        self.cl_safety_reset = self.create_client(Trigger, p("safety_reset_service"))
+        self.pub_heartbeat = self.create_publisher(Empty, p("heartbeat_topic"), 5)
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         js = lambda key: (lambda m: self._set(key, json.loads(m.data)))  # noqa: E731
         self.create_subscription(String, "/operator/say", lambda m: self.hub.publish("say", {"text": m.data}), 10)
@@ -132,10 +149,12 @@ class OperatorGuiNode(Node):
         self.create_subscription(String, "/whole_body_mpc/status", js("mpc"), 5)
         self.create_subscription(String, "/active_perception/status", js("uncertainty"), 5)
         self.create_subscription(String, "/plant_twin/state", js("twin"), 5)
+        self.create_subscription(String, p("safety_state_topic"), self._safety, 5)
         self.create_subscription(String, "/stem_grasp/detections", self._dets, be)
         self.create_subscription(WrenchStamped, "/ft_sensor/raw", self._force, be)
         self.create_subscription(Image, p("camera_topic"), self._image, be)
         self.create_timer(0.1, self._drive_tick)
+        self.create_timer(0.25, self._heartbeat_tick)
         self.create_timer(0.5, lambda: self.hub.publish("state", self.snapshot()))
 
         self.server = GuiServer((p("host"), int(p("port"))), RosBackend(self, self.hub), self.hub, float(p("fps")))
@@ -154,6 +173,23 @@ class OperatorGuiNode(Node):
             self.data["detections"] = [{k: x.get(k) for k in ("index", "class", "colour", "bbox", "conf")}
                                        for x in d.get("detections", [])]
             self.data["image_hw"] = d.get("image_hw")
+
+    def _safety(self, m: String) -> None:
+        try:
+            sf = json.loads(m.data)
+        except ValueError:
+            return
+        with self.lock:
+            was_ok = (self.data.get("safety") or {}).get("ok", True)
+            self.data["safety"] = sf
+        if was_ok and not sf.get("ok", True):
+            self.drive_enabled = False                 # the supervisor disabled the bridge
+            self.cmd, self.cmd_t = {}, -np.inf
+            self.hub.publish("say", {"text": f"Safety stop: {sf.get('tripped')}."})
+
+    def _heartbeat_tick(self) -> None:
+        if time.time() - self.page_beat_t < float(self.p("page_heartbeat_timeout_s")):
+            self.pub_heartbeat.publish(Empty())
 
     def _force(self, m: WrenchStamped) -> None:
         f = m.wrench.force
@@ -202,11 +238,26 @@ class OperatorGuiNode(Node):
         self.hub.publish("say", {"text": "Stopped."})
         return res
 
+    def safety_reset(self) -> Dict:
+        if not self.cl_safety_reset.service_is_ready():
+            return {"ok": False, "reason": "no safety supervisor (bringup_safety:=false?)"}
+        done = threading.Event()
+        fut = self.cl_safety_reset.call_async(Trigger.Request())
+        fut.add_done_callback(lambda f: done.set())
+        if not done.wait(3.0) or fut.result() is None:        # HTTP thread; the executor answers
+            return {"ok": False, "reason": "the safety supervisor did not answer"}
+        r = fut.result()
+        return {"ok": bool(r.success), "message": r.message}
+
     def drive_enable(self, enable: bool) -> Dict:
         if not enable:
             self.drive_enabled = False
             self.cmd = {}
             return {"ok": True, "enabled": False}
+        sf = self.data.get("safety") or {}
+        if sf and not sf.get("ok", True):
+            return {"ok": False, "enabled": False,
+                    "reason": f"safety stop: {sf.get('tripped')}; reset it first"}
         pipe = self.data.get("pipeline")
         if pipe in MOVING_STATES:
             return {"ok": False, "enabled": False, "reason": f"the pipeline is moving ({pipe})"}

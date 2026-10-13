@@ -138,7 +138,7 @@ torch) passed; no failures in `colcon test-result`. Added 2026-10-12:
 `scout_piper_active_perception` 13, `scout_piper_language` 16 (one of them
 drives the operator page in headless Chromium through Node's Playwright, and is
 skipped where Node or Playwright is missing). 2026-10-13: `stem_grasp` 61,
-`scout_piper_bringup` 29, `scout_piper_whole_body_mpc` 52 (+10 skipped without torch).
+`scout_piper_bringup` 36, `scout_piper_whole_body_mpc` 52 (+10 skipped without torch).
 **Record:** the last line of each file.
 **If it fails:** `plant_twin` `test_jacobian.py` asserts a wall-clock
 speed-up and can fail on a busy machine; rerun it once on an idle machine.
@@ -155,15 +155,22 @@ whole-body MPC, stem grasp (reach, servo, approach, grasp, release).
 ./scripts/hardware_free_checks.sh 2>&1 | tee $LOG/W4_hardware_free.txt
 ```
 
-It runs fifteen checks one after another (about 22 minutes), each with its
+It runs sixteen checks one after another (about 23 minutes), each with its
 own fake-driver bringup, on localhost only, and writes its logs to
-`test_logs/hwfree_<date>_<time>/`. The last three are Phase 4
+`test_logs/hwfree_<date>_<time>/`. Every bringup includes the safety
+supervisor (INSTALL.md 10.17), so the earlier checks also show that it does
+not trip in normal operation. The last four are Phase 4
 (`active_perception`: a simulated plant rendered from the camera pose, views
 planned and driven by the MPC; `active_perception_grasp`: the stem_grasp
-pipeline asks for the views itself, then reaches) and Phase 5 (`operator`:
-instructions through the GUI's API, countdown, clarification, refusal, STOP).
+pipeline asks for the views itself, then reaches), Phase 5 (`operator`:
+instructions through the GUI's API, countdown, clarification, refusal, STOP)
+and `safety` (base gate and command timeout, operator heartbeat lost while
+driving and while jogging, pipeline abort, bridge refusal, reset).
 
-**Pass:** the summary lists fifteen `PASS` lines and the script exits with 0.
+Each check's folder also holds `trials.jsonl` and `trials.md` (the trial
+recorder and report, R11), and the run prints a `trials:` line per check.
+
+**Pass:** the summary lists sixteen `PASS` lines and the script exits with 0.
 **Record:** the summary, and the `info: ... MPPI solve median ... ms, max ... ms`
 lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 **If it fails:** open `check.out` and `pipeline.log` / `mpc.log` of the
@@ -437,7 +444,9 @@ move the robot.
   front of or behind it.
 - Know the software stops (INSTALL.md Step 9): disable the servo bridge
   (`ros2 service call /piper_servo_bridge/enable std_srvs/srv/SetBool "{data: false}"`),
-  stop the base (`ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"`).
+  stop the base (`ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"`),
+  trip the safety supervisor (`ros2 service call /safety_supervisor/trip std_srvs/srv/Trigger`:
+  everything stops and stays stopped until `/safety_supervisor/reset`).
   None replaces cutting power.
 - Start every motion test at low speed and small distances. Stop at the first
   unexpected motion, cut power if needed, and record what happened before
@@ -581,9 +590,11 @@ shows `gripper command ignored`.
    alone (CAN names from R1 if they differ):
 
    ```bash
-   ros2 launch scout_piper_bringup full_system.launch.py bringup_base:=true \
+   ros2 launch scout_piper_bringup full_system.launch.py bringup_base:=true bringup_safety:=false \
      bringup_pipeline:=false bringup_jsp_gui:=false bringup_rviz:=false 2>&1 | tee $LOG/R6_launch.txt
    ```
+
+   (`bringup_safety:=false`: the safety supervisor would send the zero itself, R6b.)
 
 2. In a second terminal, command 0.1 m/s, then press Ctrl-C **without**
    sending a zero twist, and watch the wheels for 5 s:
@@ -600,8 +611,38 @@ shows `gripper command ignored`.
 **Pass:** the wheels turn slowly forward while commands arrive and stop on
 the zero twist; on the ground the base creeps forward and stops.
 **Record:** whether the wheels kept turning after Ctrl-C in step 2 (and for
-how long): this answers the open question of INSTALL.md 10.5 and decides
-whether the base needs a software watchdog. Then stop the launch.
+how long): this answers the open question of INSTALL.md 10.5 (the safety
+supervisor's command timeout covers it either way). Then stop the launch.
+
+### R6b — Safety supervisor and operator heartbeat
+
+**Goal:** the supervisor (INSTALL.md 10.17) stops the base when commands stop,
+and stops base and arm when the operator page goes away.
+
+**Steps (wheels off the ground, arm clear):**
+1. Launch arm, base and servo with the heartbeat required, and the GUI:
+
+   ```bash
+   ros2 launch scout_piper_bringup full_system.launch.py bringup_arm:=true bringup_base:=true \
+     bringup_servo:=true operator_heartbeat:=true bringup_pipeline:=false bringup_rviz:=false \
+     2>&1 | tee $LOG/R6b_launch.txt
+   ros2 launch scout_piper_language operator.launch.py host:=0.0.0.0      # second terminal
+   ros2 topic echo /safety/state > $LOG/R6b_state.txt                       # third terminal
+   ```
+
+2. R6 step 2 again (0.1 m/s, Ctrl-C without a zero): the wheels stop within
+   about 0.5 s.
+3. On the laptop: open the page, Drive tab, enable, hold forward at 30 %;
+   while the wheels turn, close the browser tab. The wheels stop within about
+   1.5 s; the supervisor log shows `SAFETY TRIP: operator heartbeat lost`.
+4. Reopen the page: the red banner shows the trip, enabling drive is refused.
+   **Reset safety stop**, enable drive again, hold forward: the wheels turn.
+5. Jog the arm slowly (Drive tab, TCP jog); while it moves, switch the laptop's
+   Wi-Fi off. The arm stops within about 1.5 s; switch Wi-Fi on, reset.
+
+**Pass:** each stop as described, no trip during steps 2 and 4 otherwise.
+**Record:** the stop delays (from the video or the state log) and any
+unexpected trip with its reason.
 
 ### R7 — All three together
 
@@ -819,6 +860,21 @@ X mm` is within 2 mm of the dowel's diameter; `retreated X cm` is about 10.
 the settled opening, whether the dowel moved, the retreat distance. On an
 `ABORTED` state: the log lines before it.
 
+The trial recorder fills most of this in. Start it in its own terminal before
+step 2, mark what only the eye sees with a note, and make the table after the
+last run:
+
+```bash
+ros2 run scout_piper_bringup trial_recorder.py --ros-args -p out:=$LOG/R11_trials.jsonl
+ros2 topic pub --once /trial/note std_msgs/msg/String "data: 'dowel moved 1 cm'"     # during or after a run
+ros2 run scout_piper_bringup trial_report.py $LOG/R11_trials.jsonl --md $LOG/R11_trials.md --json $LOG/R11_trials.json
+```
+
+One row per run (scan to IDLE or ABORTED): outcome, seconds, views, reach time
+and final TCP error, servo time and final pixel error, approach time, peak
+contact force, gripper opening at GRASPED, base travel, notes and safety trips;
+then the success rate and median times. Use it for R12 and the C-tests too.
+
 ### R12 — Real plant
 
 Only after three clean R11 runs, and with the stem-segmentation weights on
@@ -868,6 +924,7 @@ Copy into `$LOG/RESULTS.md` and fill in.
 | R4 Servo | | robot | | rise, status |
 | R5 Gripper | | robot | | openings |
 | R6 Scout timeout | | robot | | keeps turning? |
+| R6b Safety supervisor | | robot | | stop delays, unexpected trips |
 | R7 All three | | robot | | topic rates, TF tree |
 | R8 Whole-body MPC | | robot | | time, error, solve_ms, base travel |
 | R9 Scanning | | robot | | mask Hz, target pose |

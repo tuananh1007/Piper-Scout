@@ -18,6 +18,10 @@
   <button id="stop" class="stop" title="Stop everything (Esc)" aria-label="Stop the robot">STOP</button>
 </header>
 <div id="stopped" class="banner" hidden>Stopped. Motion commands are blocked until the drive is re-enabled.</div>
+<div id="safety" class="banner safety" role="alert" hidden>
+  <span id="safety-text">Safety stop.</span>
+  <button id="safety-reset" type="button">Reset safety stop</button>
+</div>
 
 <nav class="tabs" role="tablist">
   <button role="tab" aria-selected="true" data-tab="command">Command</button>

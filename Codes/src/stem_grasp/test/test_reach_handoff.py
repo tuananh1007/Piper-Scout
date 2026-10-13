@@ -145,20 +145,19 @@ def test_view_gate_requests_views_then_proceeds():
     assert g.decide(60.0, {"needs_view": True}, 59.9) == "proceed"
 
 
-def test_view_gate_returns_to_the_scan_pose_without_a_stem_cloud():
+def test_view_gate_returns_to_the_scan_pose_without_a_candidate():
     from stem_grasp.reach_handoff import ViewGate
     g = ViewGate(max_views=1, settle_s=1.0, return_after_s=3.0, startup_wait_s=0.0)
-    assert not g.should_return(10.0, None)                                 # no view yet
+    assert not g.should_return(10.0)                                       # no view yet
     assert g.decide(0.0, {"needs_view": True}, 0.0) == "request"
     g.requested(0.0)
     g.view_started()
     g.view_done(10.0)
     assert g.decide(11.5, {"needs_view": True}, 11.2) == "proceed"         # at most 1 view
-    assert not g.should_return(12.0, 9.0)                                  # still within return_after_s
-    assert not g.should_return(14.0, 10.5)                                 # a stem cloud since the view
-    assert g.should_return(14.0, 9.0)                                      # none: go back
+    assert not g.should_return(12.0)                                       # still within return_after_s
+    assert g.should_return(13.5)                                           # still scanning: go back
     g.returned = True
-    assert not g.should_return(20.0, 9.0)                                  # once only
+    assert not g.should_return(20.0)                                       # once only
     g2 = ViewGate(max_views=4, startup_wait_s=0.0)
     g2.requested(0.0)
     g2.view_started()

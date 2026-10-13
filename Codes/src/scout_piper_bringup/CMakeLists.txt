@@ -21,6 +21,10 @@ install(
     scripts/active_perception_chain_check.py
     scripts/operator_chain_check.py
     scripts/print_tcp.py
+    scripts/safety_supervisor.py
+    scripts/safety_chain_check.py
+    scripts/trial_recorder.py
+    scripts/trial_report.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -44,6 +44,23 @@ effort_force_estimator:
     filter_s: 0.1                  # s, low-pass on the joint-torque residual
 
 # ----------------------------------------------------------------------------
+# Safety supervisor (bringup_safety:=true, the default): base command gate,
+# operator heartbeat (operator_heartbeat:=true), watchdogs. safety_supervisor.py
+# ----------------------------------------------------------------------------
+safety_supervisor:
+  ros__parameters:
+    heartbeat_timeout_s: 1.0
+    cmd_timeout_s: 0.5             # zero to the base this long after the last moving command
+    max_cmd_v_mps: 0.5             # relayed /cmd_vel clamped to these
+    max_cmd_w_rps: 1.0
+    max_base_speed_mps: 0.7        # measured (odom): trip above
+    max_base_omega_rps: 1.4
+    max_joint_speed_rps: 1.5       # measured: trip above, two samples in a row
+    max_feedback_age_s: 0.5
+    max_force_n: 25.0              # with bringup_force_estimate (or an F/T sensor on force_topic)
+    geofence_radius_m: 0.0         # around the first odom pose; 0 = off
+
+# ----------------------------------------------------------------------------
 # Stem-grasp pipeline (ports the dense ROS 1 launch arguments)
 # ----------------------------------------------------------------------------
 stem_grasp_pipeline:

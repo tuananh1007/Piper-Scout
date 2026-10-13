@@ -23,6 +23,11 @@ opening, sets the speed percent explicitly, and only forwards while:
 
 Disabling sends one command holding the measured position.
 
+With ``safety_state_topic`` (full_system.launch.py sets ``/safety/state`` when
+the safety supervisor runs) the bridge disables itself when the supervisor
+reports a trip or falls silent for ``safety_max_age_s``, and refuses
+``~/enable`` until it reports ok again (``~/reset`` on the supervisor).
+
 The gripper follows its measured opening (it never moves on its own) until a
 target arrives on ``~/gripper_cmd`` (opening in metres, clamped to
 [0, ``gripper_max_m``]). That target is sent at once, with the arm held at its
@@ -35,9 +40,11 @@ uses 1.0 without one).
     in   /joint_states_single           sensor_msgs/JointState           (driver feedback)
     in   ~/gripper_cmd                  std_msgs/Float64                 (gripper opening, m)
     out  /piper/joint_cmd               sensor_msgs/JointState           (driver command input)
+    in   safety_state_topic             std_msgs/String JSON from safety_supervisor.py (optional)
     srv  ~/enable                       std_srvs/SetBool
 """
 
+import json
 import math
 import signal
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -94,6 +101,17 @@ def gripper_target(opening: float, max_opening: float) -> Optional[float]:
     return min(max(float(opening), 0.0), float(max_opening))
 
 
+def safety_block(state: Optional[dict], age_s: float, max_age_s: float) -> str:
+    """Why the safety supervisor's state forbids moving the arm, or ""."""
+    if state is None:
+        return "no state from the safety supervisor yet"
+    if age_s > max_age_s:
+        return f"safety supervisor silent for {age_s:.1f} s"
+    if not state.get("ok", False):
+        return f"safety supervisor tripped: {state.get('tripped') or 'unknown reason'}"
+    return ""
+
+
 def check_command_topic(topic: str) -> str:
     t = "/" + topic.strip().lstrip("/")
     if t in JOINT_STATE_TOPICS:
@@ -111,7 +129,7 @@ def main() -> None:
     from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
     from rclpy.node import Node  # noqa: PLC0415
     from sensor_msgs.msg import JointState  # noqa: PLC0415
-    from std_msgs.msg import Float64  # noqa: PLC0415
+    from std_msgs.msg import Float64, String  # noqa: PLC0415
     from std_srvs.srv import SetBool  # noqa: PLC0415
     from trajectory_msgs.msg import JointTrajectory  # noqa: PLC0415
 
@@ -140,6 +158,13 @@ def main() -> None:
             self.create_subscription(JointTrajectory, traj_topic, self._target, 10)
             self.create_subscription(Float64, "~/gripper_cmd", self._gripper, 10)
             self.create_service(SetBool, "~/enable", self._enable)
+            self.safety_topic = p("safety_state_topic", "").value
+            self.safety_max_age = float(p("safety_max_age_s", 1.0).value)
+            self.safety_state: Optional[dict] = None
+            self.safety_t = None
+            if self.safety_topic:
+                self.create_subscription(String, self.safety_topic, self._safety, 10)
+                self.create_timer(0.2, self._safety_watch)
             self.get_logger().info(f"{traj_topic} -> {cmd_topic}; "
                                    f"{'ENABLED' if self.enabled else 'disabled (call ~/enable)'}; "
                                    f"speed {self.speed} %, max step {self.max_step} rad")
@@ -191,7 +216,38 @@ def main() -> None:
                 return
             self._send(cmd)
 
+        def _safety_reason(self) -> str:
+            if not self.safety_topic:
+                return ""
+            return safety_block(self.safety_state, self._age(self.safety_t), self.safety_max_age)
+
+        def _safety(self, msg) -> None:
+            try:
+                self.safety_state = json.loads(msg.data)
+            except ValueError:
+                return
+            self.safety_t = self.get_clock().now()
+            self._safety_watch()
+
+        def _safety_watch(self) -> None:
+            reason = self._safety_reason()
+            if self.enabled and reason:
+                self._disable_hold()
+                self.get_logger().error(f"servo bridge disabled: {reason}")
+
+        def _disable_hold(self) -> None:
+            self.enabled = False
+            if self._age(self.fb_time) <= self.max_fb_age:
+                hold = hold_command(self.measured, self._gripper_out(), self.speed)
+                if hold is not None:
+                    self._send(hold)
+
         def _enable(self, req, res):
+            reason = self._safety_reason() if req.data else ""
+            if reason:
+                res.success, res.message = False, f"not enabled: {reason}"
+                self.get_logger().warn(res.message)
+                return res
             self.enabled = bool(req.data)
             if not self.enabled and self._age(self.fb_time) <= self.max_fb_age:
                 hold = hold_command(self.measured, self._gripper_out(), self.speed)

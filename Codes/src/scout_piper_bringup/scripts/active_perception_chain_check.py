@@ -26,7 +26,7 @@ With ``--pipeline`` the stem_grasp pipeline runs as well (launched with
 ``-p active_perception_service:=/active_perception/plan_view``): it asks for
 the views itself (VIEWING, full-orientation MPC goals) while active
 perception reports needs_view, goes back to the scan pose when the last view
-does not show the stem, and then reaches; this script only renders and
+gives no grasp candidate, and then reaches; this script only renders and
 publishes what the camera sees.
 
 Starts moveit_servo and enables the servo bridge (the MPC's arm commands go
@@ -264,7 +264,7 @@ def main() -> int:
                     renders += 1
                     if "VIEWING" in states and "REACHING" not in states and len(px_views) >= len(planned_cam):
                         returned.append(px)            # more renders than planned views: the return
-                        print(f"info back at the scan pose (no stem cloud after the views): {px} target pixels",
+                        print(f"info back at the scan pose (no grasp candidate after the views): {px} target pixels",
                               flush=True)
                     elif "VIEWING" in states and "REACHING" not in states:      # a view, not the reach
                         px_views.append(px)

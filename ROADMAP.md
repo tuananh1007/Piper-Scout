@@ -140,7 +140,7 @@ The revised sequence separates **representation**, **local control**, **geometry
 - Nav2 hardware validation;
 - Piper + Scout + RealSense synchronized hardware bringup;
 - ROS 1 → ROS 2 regression;
-- E-stop / stop-and-zero validation;
+- E-stop / stop-and-zero validation (the software side: hot-key stop, GUI STOP and the safety supervisor with its base command gate and operator heartbeat, checked on the fake robot);
 - the stem_grasp reach, servo and final approach (P0.4.11–P0.4.13) on hardware: they run hardware-free through the whole-body MPC; plan→execute through MoveIt stays unwired (`moveit_py` has no Humble binary), and nothing closes the gripper yet.
 
 **Exit criteria**

@@ -14,15 +14,17 @@
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
 #          --quick                  skip the extra stem positions, the semantic-field, gate,
-#                                   force-estimate, active-perception and operator checks
+#                                   force-estimate, active-perception, operator and safety checks
 #          --only REGEX             run only the checks whose name matches (bash regex)
+#          --no-record              do not record the trials (by default trial_recorder.py writes
+#                                   <check>/trials.jsonl and trial_report.py <check>/trials.md)
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 22 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 23 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
-profile=default quick=0 servo=ibvs only=""
+profile=default quick=0 servo=ibvs only="" record=1
 log_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test_logs/hwfree_$(date +%Y%m%d_%H%M%S)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --quick)   quick=1; shift ;;
     --servo)   servo="$2"; shift 2 ;;
     --only)    only="$2"; shift 2 ;;
+    --no-record) record=0; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ {sub(/^# ?/, ""); print; next} NR > 1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -84,11 +87,17 @@ run_check() {   # run_check <name> <with_base 0|1> <with_mpc 0|1> <pipeline args
     start "$dir/pipeline.log" ros2 run stem_grasp pipeline_node --ros-args \
       -p reach_executor:=whole_body_mpc -p servo_controller:="$servo" $pipe
   fi
+  (( record )) && start "$dir/recorder.log" ros2 run scout_piper_bringup trial_recorder.py \
+    --ros-args -p out:="$dir/trials.jsonl"
   sleep 12                                            # let everything come up
   timeout 300 "$@" > "$dir/check.out" 2>&1
   local rc=$?
   stop_all
   grep -E '^(PASS|FAIL|REFUSED|info)' "$dir/check.out" | sed 's/^/   /' | cut -c1-160
+  if [[ -s "$dir/trials.jsonl" ]] && grep -q '"kind": "state"' "$dir/trials.jsonl"; then
+    ros2 run scout_piper_bringup trial_report.py "$dir/trials.jsonl" --md "$dir/trials.md" \
+      --json "$dir/trials.json" 2> /dev/null | tail -1 | sed 's/^/   trials: /' | cut -c1-160
+  fi
   if (( rc == 0 )); then results+=("PASS  $name"); else results+=("FAIL  $name (exit $rc, see $dir)"); fi
 }
 
@@ -128,6 +137,10 @@ if (( ! quick )); then
     ros2 run scout_piper_bringup active_perception_chain_check.py --pipeline
   # Phase 5: instruction -> proposal -> countdown -> target, clarification, refusal, GUI STOP
   run_check operator 1 0 - ros2 run scout_piper_bringup operator_chain_check.py
+  # Safety supervisor: base gate and command timeout, heartbeat loss while driving / jogging
+  bringup_extra=(operator_heartbeat:=true)
+  run_check safety 1 0 "" ros2 run scout_piper_bringup safety_chain_check.py
+  bringup_extra=()
 fi
 ros2 daemon stop > /dev/null 2>&1
 

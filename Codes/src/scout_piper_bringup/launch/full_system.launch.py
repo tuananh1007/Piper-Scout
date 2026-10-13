@@ -28,11 +28,20 @@ piper_servo_bridge.py, which writes arm_command_topic and starts disabled:
 fake_arm:=true replaces the driver with fake_piper_driver.py and fake_base:=true
 the Scout driver with fake_scout_base.py (no hardware), e.g. to run the
 whole-body MPC in execute mode end to end.
+
+Safety supervisor (bringup_safety:=true, the default; safety_supervisor.py):
+the base driver listens on /cmd_vel_safe, which only the supervisor writes
+(relaying /cmd_vel with a command timeout, nothing while tripped);
+piper_servo_bridge follows /safety/state. operator_heartbeat:=true also
+stops everything when the operator page's heartbeat stops during motion.
+
+    /cmd_vel (MPC, Nav2, GUI, teleop) -> safety_supervisor -> /cmd_vel_safe -> Scout driver
 """
 
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     LogInfo,
     OpaqueFunction,
@@ -45,7 +54,7 @@ from launch.substitutions import (
     LaunchConfiguration,
     PathJoinSubstitution,
 )
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
@@ -166,6 +175,19 @@ def _declare_args():
             default_value="false",
             description="Start moveit_servo (config/moveit/servo.yaml) and piper_servo_bridge "
                         "(starts disabled). Servo also needs /servo_node/start_servo.",
+        ),
+        DeclareLaunchArgument(
+            "bringup_safety",
+            default_value="true",
+            description="Start safety_supervisor.py: /cmd_vel -> /cmd_vel_safe gate for the base "
+                        "(the base driver listens on /cmd_vel_safe), watchdogs, trip latch; the "
+                        "servo bridge follows /safety/state.",
+        ),
+        DeclareLaunchArgument(
+            "operator_heartbeat",
+            default_value="false",
+            description="With bringup_safety: trip when the operator page's heartbeat "
+                        "(/operator/heartbeat) is missing while anything moves.",
         ),
         DeclareLaunchArgument(
             "arm_command_topic",
@@ -300,6 +322,7 @@ def _launch_setup(context, *args, **kwargs):
         ],
         condition=IfCondition(LaunchConfiguration("bringup_servo")),
     )
+    safety_on = _is_true(context, "bringup_safety")
     servo_bridge = Node(
         package="scout_piper_bringup",
         executable="piper_servo_bridge.py",
@@ -307,6 +330,7 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
         parameters=[{
             "command_topic": arm_command_topic,
+            "safety_state_topic": "/safety/state" if safety_on else "",
             "use_sim_time": use_sim,
         }],
         condition=IfCondition(LaunchConfiguration("bringup_servo")),
@@ -323,6 +347,8 @@ def _launch_setup(context, *args, **kwargs):
     # ----------------------------------------------------------------------
     # 3. Scout base driver
     # ----------------------------------------------------------------------
+    # With the safety supervisor the driver takes its commands from the gate only.
+    base_remap = [("/cmd_vel", "/cmd_vel_safe")] if safety_on else []
     if _is_true(context, "fake_base"):
         base_driver = Node(
             package="scout_piper_bringup",
@@ -330,21 +356,42 @@ def _launch_setup(context, *args, **kwargs):
             name="scout_base_node",
             output="screen",
             parameters=[{"use_sim_time": use_sim}],
+            remappings=base_remap,
             condition=IfCondition(LaunchConfiguration("bringup_base")),
         )
     else:
-        base_driver = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution(
-                    [FindPackageShare("scout_base"), "launch", "scout_base.launch.py"]
-                )
-            ),
+        base_driver = GroupAction(
+            [SetRemap(src=a, dst=b) for a, b in base_remap] + [IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution(
+                        [FindPackageShare("scout_base"), "launch", "scout_base.launch.py"]
+                    )
+                ),
+                launch_arguments={
+                    "port_name": LaunchConfiguration("scout_can_port"),
+                    "use_sim_time": use_sim,
+                }.items(),
+            )],
             condition=IfCondition(LaunchConfiguration("bringup_base")),
-            launch_arguments={
-                "port_name": LaunchConfiguration("scout_can_port"),
-                "use_sim_time": use_sim,
-            }.items(),
+            scoped=True,
         )
+
+    # Safety supervisor: base command gate, operator heartbeat, watchdogs.
+    supervisor = []
+    if safety_on:
+        supervisor = [Node(
+            package="scout_piper_bringup",
+            executable="safety_supervisor.py",
+            name="safety_supervisor",
+            output="screen",
+            parameters=[system_params, {
+                "require_heartbeat": _is_true(context, "operator_heartbeat"),
+                "expect_odom": _is_true(context, "bringup_base"),
+                "expect_joints": arm_on,
+                "force_topic": "/ft_sensor/raw" if _is_true(context, "bringup_force_estimate") else "",
+                "use_sim_time": use_sim,
+            }],
+        )]
 
     # ----------------------------------------------------------------------
     # 4. RealSense camera
@@ -467,7 +514,7 @@ def _launch_setup(context, *args, **kwargs):
         pointcloud,
         pipeline,
         rviz,
-    ] + force_estimate + gui
+    ] + force_estimate + supervisor + gui
 
 
 def generate_launch_description():

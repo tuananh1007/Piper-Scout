@@ -16,7 +16,10 @@ ROS 1 source. The grasp sequence runs hardware-free, not yet on the robot:
 - closing the gripper on the stem (`grasp_close_gripper`, GRASPING →
   GRASPED);
 - releasing it (`~/release`: RELEASING → RETREATING → IDLE; `~/scan` scans
-  again).
+  again);
+- stopping wherever it is (`~/abort`: zero servo command, MPC cancelled,
+  gripper left as it is, ABORTED; scout_piper_bringup's safety supervisor
+  calls it on a trip).
 
 The grasp point is on the stem axis. The skeleton of a single-view cloud
 follows the camera-facing half of the stem, so `core.stem_axis_point` fits a
@@ -163,9 +166,10 @@ that, and asks again; then grasps as before. Decisions (`ViewGate` in
   still without an assessment after that: active perception is not running,
   grasp as before;
 - `plan_view` refused or no view published within 10 s: grasp without more views;
-- no stem cloud within `active_perception_return_sec` (3 s) after the last
-  view (leaves the planner had not seen hide the target there): back to the
-  pose the views started from, which saw the target, and no more views.
+- no grasp candidate within `active_perception_return_sec` (3 s) after the
+  last view (leaves the planner had not seen hide the target there, wholly or
+  too much for a skeleton): back to the pose the views started from, which
+  saw the target, and no more views.
 
 Hardware-free: `hardware_free_checks.sh --only active_perception_grasp`
 (`active_perception_chain_check.py --pipeline`).

@@ -105,16 +105,17 @@ class ViewGate:
     view it waits ``settle_s`` and then for a status received after that, so
     the decision uses the map and estimate that include the new view. Until
     the first status arrives it waits up to ``startup_wait_s`` (from the first
-    decision after a reset), so a planner that is still starting is not taken
-    for one that is not running; a status without ``needs_view`` (the planner
+    decision after a reset; the pipeline decides once it has a stem cloud), so
+    a planner that is still starting is not taken for one that is not running; a status without ``needs_view`` (the planner
     has no target estimate yet) is waited on for up to ``startup_wait_s`` too.
 
     A view is chosen for what it adds to the map and the stem estimate, and
     leaves the planner does not know of can hide the target from it; the grasp
-    needs a stem cloud from the current pose. ``should_return`` says when to
-    go back to the pose the views started from (the scan pose, which saw the
-    target): no stem cloud since the last view ended within ``return_after_s``.
-    After that return no more views are asked for."""
+    needs a grasp candidate from the current pose's stem cloud. ``should_return``
+    says when to go back to the pose the views started from (the scan pose,
+    which saw the target): still scanning ``return_after_s`` after the last
+    view ended (no stem cloud there, or too little of the stem for a
+    candidate). After that return no more views are asked for."""
 
     max_views: int = 4
     status_max_age_s: float = 3.0
@@ -169,13 +170,11 @@ class ViewGate:
         self.settle_until = now + self.settle_s
         self.view_done_t = now
 
-    def should_return(self, now: float, cloud_t: Optional[float]) -> bool:
-        """After the views (``decide`` said "proceed"): True when no stem cloud
-        arrived since the last view ended (``cloud_t``: its receive time) within
-        ``return_after_s``; once only."""
+    def should_return(self, now: float) -> bool:
+        """Called while still scanning after the views (``decide`` said
+        "proceed"): True once ``return_after_s`` has gone by since the last
+        view ended without a grasp candidate; once only."""
         if self.views == 0 or self.returned or self.view_done_t is None:
-            return False
-        if cloud_t is not None and cloud_t >= self.view_done_t:
             return False
         return now - self.view_done_t > self.return_after_s
 

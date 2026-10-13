@@ -38,7 +38,8 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import Odometry
-from rclpy.executors import ExternalShutdownException
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, JointState, PointCloud2
@@ -163,17 +164,26 @@ class ActivePerceptionNode(Node):
         from scout_piper_scene_repr.msg import SemanticDistanceField  # noqa: PLC0415
         from scout_piper_scene_repr_py.field import snapshot_from_msg  # noqa: PLC0415
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        # State, field and the other plain inputs in their own group: a status tick or a
+        # plan takes up to a few seconds on a loaded CPU, and the robot state must not go
+        # stale behind it (plan_view then refused with "no fresh whole-body state"). The
+        # stem cloud and the target change the estimator, so they stay with the tick and
+        # the services in the default (mutually exclusive) group.
+        inputs = MutuallyExclusiveCallbackGroup()
         self.create_subscription(SemanticDistanceField, p("field_topic"),
-                                 lambda m: setattr(self, "snap", snapshot_from_msg(m)), 1)
+                                 lambda m: setattr(self, "snap", snapshot_from_msg(m)), 1,
+                                 callback_group=inputs)
         self.create_subscription(PointStamped, p("target_topic"), self._target, 5)
         self.create_subscription(String, p("target_state_topic"),
-                                 lambda m: setattr(self, "jepa_state", json.loads(m.data)), 5)
+                                 lambda m: setattr(self, "jepa_state", json.loads(m.data)), 5,
+                                 callback_group=inputs)
         self.create_subscription(String, p("twin_state_topic"),
-                                 lambda m: setattr(self, "twin_state", json.loads(m.data)), 5)
+                                 lambda m: setattr(self, "twin_state", json.loads(m.data)), 5,
+                                 callback_group=inputs)
         self.create_subscription(PointCloud2, p("stem_cloud_topic"), self._cloud, be)
-        self.create_subscription(CameraInfo, p("camera_info_topic"), self._info, be)
-        self.create_subscription(Odometry, "/odom", self._odom, 10)
-        self.create_subscription(JointState, "/joint_states", self._js, 20)
+        self.create_subscription(CameraInfo, p("camera_info_topic"), self._info, be, callback_group=inputs)
+        self.create_subscription(Odometry, "/odom", self._odom, 10, callback_group=inputs)
+        self.create_subscription(JointState, "/joint_states", self._js, 20, callback_group=inputs)
         self.pub_status = self.create_publisher(String, "/active_perception/status", 5)
         self.pub_view = self.create_publisher(PoseStamped, "/active_perception/next_view", 1)
         self.pub_cam = self.create_publisher(PoseStamped, "/active_perception/next_view_camera", 1)
@@ -359,8 +369,10 @@ class ActivePerceptionNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = ActivePerceptionNode()
+    ex = MultiThreadedExecutor(num_threads=2)
+    ex.add_node(node)
     try:
-        rclpy.spin(node)
+        ex.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except Exception:

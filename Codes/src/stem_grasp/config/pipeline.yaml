@@ -66,7 +66,7 @@ stem_grasp_pipeline:
     active_perception_max_views: 4
     active_perception_settle_sec: 1.5
     active_perception_startup_wait_sec: 5.0
-    active_perception_return_sec: 3.0      # no stem cloud this long after the last view: back to the scan pose
+    active_perception_return_sec: 3.0      # no grasp candidate this long after the last view: back to the scan pose
     active_perception_view_timeout_sec: 40.0
     active_perception_view_tolerance_m: 0.02
     active_perception_view_angle_deg: 20.0

@@ -604,7 +604,10 @@ ros2 run stem_grasp pipeline_node --ros-args ... -p operator_target_topic:=/oper
 
 1. STOP first: button, Esc, and typing "stop" during a base move (Drive tab)
    and during an MPC reach: everything halts, the bridge is disabled
-   (`/piper_servo_bridge/enable` must be called again).
+   (`/piper_servo_bridge/enable` must be called again). Then the dead-man
+   switch (bringup with `operator_heartbeat:=true`, TEST_PROCEDURE.md R6b):
+   closing the tab or dropping Wi-Fi during a base move and during an MPC
+   reach stops it within about 1.5 s; the banner's reset re-arms.
 2. Two flowers of different colours in view: "grasp the red flower" → the
    proposal names the right detection, cancel within 2 s → nothing moves;
    again without cancelling → the pipeline reaches the stem of that flower.

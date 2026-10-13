@@ -18,7 +18,9 @@ end-to-end (modulo Phase 0 hardware bring-up). Remaining stubs:
     ``grasp_close_gripper`` it then closes the gripper (GRASPING) until the
     opening settles on the stem (GRASPED). ``~/release`` opens the gripper
     (RELEASING), backs out along the gripper axis (RETREATING) and goes IDLE;
-    ``~/scan`` starts scanning again.
+    ``~/scan`` starts scanning again. ``~/abort`` stops wherever the pipeline
+    is (zero servo command, MPC cancelled, gripper left as it is) and goes
+    ABORTED; scout_piper_bringup's safety supervisor calls it on a trip.
   * Multi-view ring (deferred to Phase 4).
 
 References between ports and ROS 1 source (file line numbers):
@@ -158,8 +160,8 @@ class PipelineParams:
     # with the full TCP orientation (VIEWING, mpc_goal_pose_full_topic) and lets
     # the scene settle; then grasps as before. Not running (no status within
     # active_perception_startup_wait_sec) or no view needed: grasp as before.
-    # No stem cloud within active_perception_return_sec after the last view (the
-    # target hidden there): back to the pose the views started from. "" = off
+    # No grasp candidate within active_perception_return_sec after the last view
+    # (the target hidden there): back to the pose the views started from. "" = off
     active_perception_service: str = ""
     active_perception_status_topic: str = "/active_perception/status"
     active_perception_view_topic: str = "/active_perception/next_view"
@@ -448,6 +450,7 @@ class StemGraspPipeline(Node):
         self._retreat_pub_t = 0.0
         self.create_service(Trigger, "~/release", self._release_srv, callback_group=self.cb_group)
         self.create_service(Trigger, "~/scan", self._scan_srv, callback_group=self.cb_group)
+        self.create_service(Trigger, "~/abort", self._abort_srv, callback_group=self.cb_group)
         self._servo_status_t = 0.0
 
         # ---------- timers ----------
@@ -617,13 +620,13 @@ class StemGraspPipeline(Node):
     def _view_return_step(self) -> bool:
         """True when the pipeline drives back to the pose the views started from."""
         gate = self.view_gate
-        if not gate.should_return(self._now(), self.last_stem_cloud_stamp):
+        if not gate.should_return(self._now()):
             return False
         gate.returned = True
         if self.view_home is None:
-            self.get_logger().warn("active perception: no stem cloud after the views and no start pose to return to")
+            self.get_logger().warn("active perception: no grasp candidate after the views and no start pose to return to")
             return False
-        self.get_logger().info("active perception: no stem cloud after the last view; back to the scan pose")
+        self.get_logger().info("active perception: no grasp candidate from the last view; back to the scan pose")
         self.reach_goal = self.view_home
         self.reach_monitor = ReachMonitor(start_t=self._now(),
                                           timeout_s=self.params.active_perception_view_timeout_sec,
@@ -821,11 +824,14 @@ class StemGraspPipeline(Node):
             return
         if self.state != PipelineState.SCANNING:
             return
+        if self.last_stem_cloud is None:
+            return
+        # active perception once there is a stem to grasp: its startup wait then counts
+        # from the first cloud, so a cloud arriving before the planner's first status
+        # does not count as "active perception not running"
         if self.view_gate is not None and self._view_gate_step():
             return
         if self.view_gate is not None and self._view_return_step():
-            return
-        if self.last_stem_cloud is None:
             return
         if self._age(self.last_stem_cloud_stamp) > self.params.skeleton_cache_max_age_sec:
             return
@@ -1150,6 +1156,21 @@ class StemGraspPipeline(Node):
         self.release_t = self._now()
         self._set_state(PipelineState.RELEASING)
         res.success, res.message = True, "releasing"
+        return res
+
+    def _abort_srv(self, req, res):
+        prev = self.state
+        if prev in (PipelineState.IDLE, PipelineState.ABORTED):
+            res.success, res.message = True, f"nothing to abort ({prev.name})"
+            return res
+        self._stop_servo_commands()
+        self.pub_mpc_cancel.publish(Empty())
+        self.reach_monitor = None
+        self.reach_goal = None
+        self.retreat = None
+        self.get_logger().warn(f"abort requested in {prev.name}: stopped (ABORTED)")
+        self._set_state(PipelineState.ABORTED)
+        res.success, res.message = True, f"aborted ({prev.name})"
         return res
 
     def _scan_srv(self, req, res):

@@ -79,6 +79,25 @@ try {
   check("STOP button and Escape reach the robot", s2.stops >= 2, `${s2.stops} stops`);
   check("drive disabled after a stop", !(await page.isChecked("#drive-enable")) && s2.drive_enabled === false);
 
+  // heartbeat: four a second while the page is open
+  const hb0 = (await api(page, "api/state")).heartbeats;
+  await page.waitForTimeout(1000);
+  const hb1 = (await api(page, "api/state")).heartbeats;
+  check("page sends heartbeats", hb1 - hb0 >= 3, `${hb1 - hb0} in 1 s`);
+
+  // safety supervisor trip: banner, drive refused, reset clears it
+  await api(page, "api/debug_trip?reason=operator%20heartbeat%20lost");
+  await page.waitForSelector("#safety:not([hidden])", { timeout: 3000 });
+  const sfText = await page.textContent("#safety-text");
+  check("safety trip shown", /heartbeat lost/.test(sfText), sfText);
+  await page.click('.tabs button[data-tab="drive"]');
+  await page.check("#drive-enable");
+  await page.waitForTimeout(300);
+  check("drive refused while tripped", !(await page.isChecked("#drive-enable")));
+  await page.click("#safety-reset");
+  await page.waitForSelector("#safety", { state: "hidden", timeout: 3000 });
+  check("reset clears the safety stop", true);
+
   // watch tab renders the uncertainty
   await page.click('.tabs button[data-tab="watch"]');
   const ug = await page.$eval("#u-geo", (m) => m.value);

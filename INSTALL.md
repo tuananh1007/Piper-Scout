@@ -856,21 +856,29 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 15 checks, ~22 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 16 checks, ~23 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
 It runs the checks of 10.4 (servo), 10.13 (whole-body MPC, two goals) and
 10.9 (stem grasp: reach and servo; reach, servo and approach; full grasp
 and release at two stem positions; a full grasp with the MPPI servo on a
-semantic distance field; the lost-target and clearance gates) and 10.14 (the joint-effort force estimate and
-its calibration; the force abort while servoing) one after another, each with its own
+semantic distance field; the lost-target and clearance gates), 10.14 (the joint-effort force estimate and
+its calibration; the force abort while servoing), 10.15 (active perception, alone and
+inside the pipeline), 10.16 (operator instructions) and 10.17 (safety supervisor) one
+after another, each with its own
 bringup on the fake arm and base, with `ROS_LOCALHOST_ONLY=1` in a separate
 ROS domain (`HWF_DOMAIN`, default 77), so it cannot reach a real robot. It
 prints a PASS / FAIL summary, the MPC solve times and any
 `MPPI solves overrun` warning, keeps the logs in
 `test_logs/hwfree_<date>_<time>/`, and exits with 0 only when every check
-passes.
+passes. Each check is recorded with the trial recorder (`trials.jsonl`,
+`trials.md`, a `trials:` line in the output; `--no-record` turns it off):
+
+```bash
+ros2 run scout_piper_bringup trial_recorder.py --ros-args -p out:=session.jsonl   # any session, robot included
+ros2 run scout_piper_bringup trial_report.py session.jsonl --md session.md         # one row per trial
+```
 
 > **Safety (10.3 onward).** These steps command real hardware, and none of
 > them is validated on hardware yet. `bringup_arm:=true` enables the Piper
@@ -1018,8 +1026,11 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}"
 Neither `scout_ros2` (each `/cmd_vel` goes straight to `SetMotionCommand`) nor
 `ugv_sdk` has a command timeout, so whether the base stops when commands stop
 arriving depends on the Scout firmware, which these sources do not document.
-Find out with the wheels off the ground first: publish as above, press Ctrl-C
-**without** sending the zero twist, and watch the wheels.
+The safety supervisor (10.17, on by default) relays `/cmd_vel` to the driver
+and sends a zero 0.5 s after the last moving command, so with it the base
+stops either way. To learn what the firmware itself does, launch with
+`bringup_safety:=false` and the wheels off the ground: publish as above, press
+Ctrl-C **without** sending the zero twist, and watch the wheels.
 
 - **TODO(maintainer):** record the result of that test.
 
@@ -1601,7 +1612,7 @@ In the grasp pipeline: start `pipeline_node` with
 for views while `needs_view` holds (at most `active_perception_max_views`),
 drives the MPC to each with the full TCP orientation
 (`/whole_body_mpc/goal_pose_full`), returns to the scan pose when the last view
-does not show the stem, and reaches as before (stem_grasp README).
+gives no grasp candidate, and reaches as before (stem_grasp README).
 
 **Hardware-free check:** `./scripts/hardware_free_checks.sh --only active_perception`
 (fake arm and base, MPC executing; a simulated plant is rendered from the
@@ -1632,7 +1643,57 @@ whisper-cpp and Piper TTS binaries (`whisper_cmd`, `tts_cmd` in
 `config/operator.yaml`); without them the page is typed and speaks with the
 browser.
 
+With the safety supervisor started with `operator_heartbeat:=true` (10.17)
+the page is also a dead-man switch: it posts a heartbeat four times a second,
+and motion stops when it stops (tab closed, browser frozen or in the
+background, Wi-Fi dropped, GUI node gone). A trip shows as a red banner with
+**Reset safety stop**; manual drive is refused until it is reset.
+
 **Hardware-free check:** `./scripts/hardware_free_checks.sh --only operator`.
+
+### 10.17 Safety supervisor
+
+`safety_supervisor.py` (scout_piper_bringup) starts with every
+`full_system.launch.py` unless `bringup_safety:=false`. It is a software layer:
+it does not cut power, and the physical stops stay within reach (Step 9).
+
+```
+/cmd_vel (MPC, Nav2, GUI, teleop) -> safety_supervisor -> /cmd_vel_safe -> Scout driver
+```
+
+- **Base gate.** The Scout driver listens on `/cmd_vel_safe`, which only the
+  supervisor writes: `/cmd_vel` relayed and clamped (0.5 m/s, 1.0 rad/s), a zero
+  0.5 s after the last moving command (a sender that dies mid-motion no longer
+  leaves the base driving), nothing while tripped. Anything driving the base
+  must stream its command (the MPC and the page do; `ros2 topic pub --rate 5` does).
+- **Operator heartbeat** (`operator_heartbeat:=true`): no `/operator/heartbeat`
+  for 1 s while the base or an arm joint moves, or a base command without one,
+  trips.
+- **Watchdogs:** measured base speed above 0.7 m/s or 1.4 rad/s, an arm joint
+  above 1.5 rad/s twice in a row, odom stale while the base is commanded, joint
+  states stopping while the arm moves, contact force above 25 N (with
+  `bringup_force_estimate:=true`), the base leaving a geofence
+  (`geofence_radius_m`, off by default). Limits in `config/system.yaml`
+  (`safety_supervisor`).
+
+A trip latches: MPC cancelled, zero servo commands and base twist, the servo
+bridge disabled (it refuses `~/enable` while the supervisor reports a trip or
+falls silent for 1 s), the stem_grasp pipeline aborted (`~/abort`). State on
+`/safety/state`:
+
+```bash
+ros2 topic echo /safety/state                                  # ok, tripped, ages, speeds
+ros2 service call /safety_supervisor/reset std_srvs/srv/Trigger   # refused while still unsafe
+ros2 service call /safety_supervisor/trip std_srvs/srv/Trigger    # trip by hand
+```
+
+After a reset the servo bridge has to be enabled again. A geofence trip re-arms
+10 cm farther out, so the base can be driven back.
+
+**Hardware-free check:** `./scripts/hardware_free_checks.sh --only safety`
+(fake arm and base, heartbeat played by the check: gate, command timeout,
+heartbeat loss while driving and while jogging, pipeline abort, bridge refusal,
+reset).
 
 ## Research quick start without ROS (path D)
 

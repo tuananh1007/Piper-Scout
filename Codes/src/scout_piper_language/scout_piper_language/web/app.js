@@ -20,6 +20,20 @@ function stopNow() {
   if (de.checked) { de.checked = false; }
 }
 $("#stop").addEventListener("click", stopNow);
+
+// ---------------------------------------------------------------- heartbeat + safety supervisor
+// The robot keeps moving only while this page is alive (when the safety
+// supervisor requires it): four heartbeats a second.
+setInterval(() => { fetch("api/heartbeat", { method: "POST" }).catch(() => {}); }, 250);
+$("#safety-reset").addEventListener("click", async () => {
+  const r = await post("api/safety_reset");
+  logMsg(r.message || r.reason || (r.ok ? "Safety stop reset." : "Reset refused."));
+});
+function applySafety(sf) {
+  const tripped = !!(sf && sf.ok === false);
+  $("#safety").hidden = !tripped;
+  if (tripped) { $("#safety-text").textContent = "Safety stop: " + (sf.tripped || "tripped"); }
+}
 document.addEventListener("keydown", (e) => {
   const typing = e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA");
   if (e.key === "Escape" || (e.key === " " && !typing)) { e.preventDefault(); stopNow(); }
@@ -175,6 +189,7 @@ function applyState(s) {
   if (s.drive_enabled != null && $("#drive-enable").checked !== s.drive_enabled && !state.driveTimer) {
     $("#drive-enable").checked = s.drive_enabled;
   }
+  applySafety(s.safety);
   renderDets(s.detections || []);
   drawOverlay();
 }

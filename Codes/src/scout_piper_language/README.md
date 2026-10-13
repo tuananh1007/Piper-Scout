@@ -44,6 +44,15 @@ command holds 0.3 s (`hold_s`) and then zeros, so a dropped connection or a
 released button stops; speeds capped (0.2 m/s, 0.4 rad/s, 5 cm/s at the
 gripper). A STOP disables the drive.
 
+Dead-man switch: the page posts a heartbeat four times a second; the node
+publishes `/operator/heartbeat` while the page's are fresh (0.75 s). The
+safety supervisor (scout_piper_bringup `safety_supervisor.py`, launched with
+`operator_heartbeat:=true`) stops all motion when it stops. The page shows
+`/safety/state` as a red banner with **Reset safety stop** (`/api/safety_reset`
+→ `/safety_supervisor/reset`); drive is refused while tripped. Browsers slow
+the timers of background tabs, so the page must stay in front while the
+robot moves under the heartbeat.
+
 Voice: `whisper_cmd` (e.g. `whisper-cli -m /models/ggml-base.en.bin -nt -f {wav}`)
 and `tts_cmd` (e.g. `piper --model /models/en_US-lessac-medium.onnx --output_file {wav}`)
 in `config/operator.yaml`; without them the page is typed and speaks with the
@@ -65,7 +74,8 @@ and fallback, reachability reasons (including a crowded target in a
 synthetic field), the server's API and events, and the page in headless
 Chromium (Playwright, `test/gui_e2e.mjs`): proposal and countdown, cancel,
 commit, question and answer, hold-to-move with a stop on release, STOP button
-and Esc, the drive disabled after a stop, the Watch tab, phone width without
+and Esc, the drive disabled after a stop, heartbeats, the safety banner with
+the drive refused and the reset, the Watch tab, phone width without
 horizontal scrolling, no page errors. On the fake robot:
 `scout_piper_bringup/scripts/operator_chain_check.py` (`hardware_free_checks.sh`,
 check `operator`).

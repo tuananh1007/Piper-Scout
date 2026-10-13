@@ -17,6 +17,9 @@ Routes
   POST /api/drive           {"v", "w"} base, or {"arm": [vx, vy, vz, wx, wy, wz]} TCP jog; each
                             command holds for ``hold_s`` (0.3 s), then zero: hold-to-move
   POST /api/drive_enable    {"enable"} arm the drive tab (servo started, bridge enabled)
+  POST /api/heartbeat       the page is alive (4 Hz); the robot side relays it to the
+                            safety supervisor while fresh
+  POST /api/safety_reset    reset a latched safety-supervisor trip (refused while unsafe)
   POST /api/voice           WAV body -> transcript (whisper-cpp, when configured) -> instruction
   GET  /api/tts?text=       WAV of the text (Piper TTS, when configured); 501 otherwise, and
                             the page falls back to the browser's speech synthesis
@@ -80,6 +83,8 @@ class FakeBackend:
         self.pending: Optional[Dict] = None
         self.drive_enabled = False
         self.stops = 0
+        self.heartbeats = 0
+        self.safety = {"ok": True, "tripped": ""}
         self.dets = [{"index": 0, "class": "flower", "colour": "red", "bbox": [60, 50, 120, 110]},
                      {"index": 1, "class": "flower", "colour": "yellow", "bbox": [200, 60, 250, 115]},
                      {"index": 2, "class": "stem", "colour": "green", "bbox": [140, 80, 160, 230]}]
@@ -108,7 +113,24 @@ class FakeBackend:
                 "session": {"state": "countdown" if self.pending else "idle",
                             "countdown_remaining_s": max(0.0, self.pending["deadline"] - time.time()) if self.pending else 0.0},
                 "detections": self.dets, "drive_enabled": self.drive_enabled, "stops": self.stops,
-                "connected": True}
+                "connected": True, "safety": dict(self.safety), "heartbeats": self.heartbeats}
+
+    def heartbeat(self) -> Dict:
+        self.heartbeats += 1
+        return {"ok": True}
+
+    def trip(self, reason: str) -> Dict:
+        self.safety = {"ok": False, "tripped": reason}
+        self.drive_enabled = False
+        self._rec("trip", reason=reason)
+        return dict(self.safety)
+
+    def safety_reset(self) -> Dict:
+        self._rec("safety_reset")
+        if self.safety["ok"]:
+            return {"ok": True, "message": "not tripped"}
+        self.safety = {"ok": True, "tripped": ""}
+        return {"ok": True, "message": "reset"}
 
     def instruction(self, text: str) -> Dict:
         self._rec("instruction", text=text)
@@ -158,6 +180,8 @@ class FakeBackend:
         return {"ok": True}
 
     def drive_enable(self, enable: bool) -> Dict:
+        if enable and not self.safety["ok"]:
+            return {"ok": False, "enabled": False, "reason": "safety stop: " + self.safety["tripped"]}
         self.drive_enabled = bool(enable)
         self._rec("drive_enable", enable=self.drive_enabled)
         return {"ok": True, "enabled": self.drive_enabled}
@@ -213,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(b.snapshot())
         if u.path == "/api/debug_log" and isinstance(b, FakeBackend):
             return self._json(b.log)
+        if u.path == "/api/debug_trip" and isinstance(b, FakeBackend):     # browser test only
+            return self._json(b.trip(parse_qs(u.query).get("reason", ["test"])[0]))
         if u.path == "/api/events":
             return self._sse()
         if u.path == "/api/stream.mjpg":
@@ -235,6 +261,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/abort":                   # first, and without parsing anything
             return self._json(b.abort())
+        if path == "/api/heartbeat":
+            return self._json(b.heartbeat())
         raw = self._body()
         if path == "/api/voice":
             text = b.transcribe(raw)
@@ -257,6 +285,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(b.drive(data))
         if path == "/api/drive_enable":
             return self._json(b.drive_enable(bool(data.get("enable"))))
+        if path == "/api/safety_reset":
+            return self._json(b.safety_reset())
         return self._json({"error": "not found"}, 404)
 
     def _static(self, name):
