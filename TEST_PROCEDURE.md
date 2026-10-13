@@ -157,7 +157,7 @@ whole-body MPC, stem grasp (reach, servo, approach, grasp, release).
 ./scripts/hardware_free_checks.sh 2>&1 | tee $LOG/W4_hardware_free.txt
 ```
 
-It runs sixteen checks one after another (about 23 minutes), each with its
+It runs seventeen checks one after another (about 25 minutes), each with its
 own fake-driver bringup, on localhost only, and writes its logs to
 `test_logs/hwfree_<date>_<time>/`. Every bringup includes the safety
 supervisor (INSTALL.md 10.17), so the earlier checks also show that it does
@@ -166,13 +166,15 @@ not trip in normal operation. The last four are Phase 4
 planned and driven by the MPC; `active_perception_grasp`: the stem_grasp
 pipeline asks for the views itself, then reaches), Phase 5 (`operator`:
 instructions through the GUI's API, countdown, clarification, refusal, STOP)
-and `safety` (base gate and command timeout, operator heartbeat lost while
-driving and while jogging, pipeline abort, bridge refusal, reset).
+`bag` (record_bag.sh scene while the MPC moves the robot, the episode
+export and the offline semantic map) and `safety` (base gate and command
+timeout, operator heartbeat lost while driving and while jogging, pipeline
+abort, bridge refusal, reset).
 
 Each check's folder also holds `trials.jsonl` and `trials.md` (the trial
 recorder and report, R11), and the run prints a `trials:` line per check.
 
-**Pass:** the summary lists sixteen `PASS` lines and the script exits with 0.
+**Pass:** the summary lists seventeen `PASS` lines and the script exits with 0.
 **Record:** the summary, and the `info: ... MPPI solve median ... ms, max ... ms`
 lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 **If it fails:** open `check.out` and `pipeline.log` / `mpc.log` of the

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Records the topics a dataset needs into Codes/bags/<preset>_<date>_<time>/
-# (rosbag2, default storage). Stop with Ctrl-C.
+# (rosbag2, default storage; BAG_DIR=... records elsewhere). Stop with Ctrl-C.
 #
 #   ./scripts/record_bag.sh scene  [name]   # P1.4.1 plant scenes for the semantic-scene benchmark
 #   ./scripts/record_bag.sh e1     [name]   # P2A.5 Piper-JEPA tracking episodes (E1)
@@ -26,10 +26,10 @@ case "$preset" in
   *) echo "usage: $0 scene|e1|e3 [name]" >&2; exit 2 ;;
 esac
 if ! command -v ros2 > /dev/null; then echo "source the ROS environment first" >&2; exit 2; fi
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bags"
+root="${BAG_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bags}"   # BAG_DIR: elsewhere
 mkdir -p "$root"
 out="$root/${preset}_$(date +%Y%m%d_%H%M%S)${name:+_$name}"
-commit=$(git -C "$root/.." rev-parse --short HEAD 2>/dev/null || echo unknown)
+commit=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --short HEAD 2>/dev/null || echo unknown)
 printf '{"preset": "%s", "name": "%s", "commit": "%s", "topics": [%s]}\n' "$preset" "$name" "$commit" \
   "$(printf '"%s",' "${topics[@]}" | sed 's/,$//')" > "$out.json"
 echo "recording ${#topics[@]} topics to $out (Ctrl-C to stop)"

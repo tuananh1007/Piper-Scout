@@ -856,7 +856,7 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 16 checks, ~23 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 17 checks, ~25 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
@@ -865,8 +865,9 @@ It runs the checks of 10.4 (servo), 10.13 (whole-body MPC, two goals) and
 and release at two stem positions; a full grasp with the MPPI servo on a
 semantic distance field; the lost-target and clearance gates), 10.14 (the joint-effort force estimate and
 its calibration; the force abort while servoing), 10.15 (active perception, alone and
-inside the pipeline), 10.16 (operator instructions) and 10.17 (safety supervisor) one
-after another, each with its own
+inside the pipeline), 10.16 (operator instructions), 10.17 (safety supervisor) and the
+dataset path (`record_bag.sh scene` → episode export → offline semantic map, on a
+rendered plant) one after another, each with its own
 bringup on the fake arm and base, with `ROS_LOCALHOST_ONLY=1` in a separate
 ROS domain (`HWF_DOMAIN`, default 77), so it cannot reach a real robot. It
 prints a PASS / FAIL summary, the MPC solve times and any

@@ -14,17 +14,18 @@
 #          --log-dir DIR            where logs go (default Codes/test_logs/hwfree_<date>_<time>,
 #                                   which persists in the dev container too)
 #          --quick                  skip the extra stem positions, the semantic-field, gate,
-#                                   force-estimate, active-perception, operator and safety checks
+#                                   force-estimate, active-perception, operator, bag and safety checks
 #          --only REGEX             run only the checks whose name matches (bash regex)
 #          --no-record              do not record the trials (by default trial_recorder.py writes
 #                                   <check>/trials.jsonl and trial_report.py <check>/trials.md)
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 23 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 25 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
 profile=default quick=0 servo=ibvs only="" record=1
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/test_logs/hwfree_$(date +%Y%m%d_%H%M%S)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,6 +138,9 @@ if (( ! quick )); then
     ros2 run scout_piper_bringup active_perception_chain_check.py --pipeline
   # Phase 5: instruction -> proposal -> countdown -> target, clarification, refusal, GUI STOP
   run_check operator 1 0 - ros2 run scout_piper_bringup operator_chain_check.py
+  # Datasets: record_bag.sh scene while the MPC moves the robot, export the episode, offline map
+  run_check bag 1 1 - ros2 run scout_piper_bringup bag_chain_check.py \
+    --record-script "$here/record_bag.sh" --out-dir "$log_dir/bag/out"
   # Safety supervisor: base gate and command timeout, heartbeat loss while driving / jogging
   bringup_extra=(operator_heartbeat:=true)
   run_check safety 1 0 "" ros2 run scout_piper_bringup safety_chain_check.py
