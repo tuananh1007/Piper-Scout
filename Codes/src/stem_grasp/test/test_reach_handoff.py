@@ -112,3 +112,56 @@ def test_stem_axis_point_refuses_a_poor_fit():
     flat = np.column_stack([np.full(400, 1.25), rng.uniform(-0.03, 0.03, 400), rng.uniform(0.3, 0.5, 400)])
     assert stem_axis_point(flat, [1.25, 0.0, 0.4], [0.0, 0.0, 1.0]) is None   # a wall, not a stem
     assert stem_axis_point(flat[:5], [1.25, 0.0, 0.4], [0.0, 0.0, 1.0]) is None
+
+
+def test_view_gate_requests_views_then_proceeds():
+    from stem_grasp.reach_handoff import ViewGate
+    g = ViewGate(max_views=2, settle_s=1.0, request_timeout_s=5.0, startup_wait_s=3.0)
+    assert g.decide(0.0, None, None) == "wait"                             # planner may still be starting
+    assert g.decide(2.9, None, None) == "wait"
+    assert g.decide(3.1, None, None) == "proceed"                          # active perception not running
+    assert g.decide(4.0, {"field": True}, 3.9) == "wait"                   # running, no estimate yet
+    assert g.decide(7.1, {"field": True}, 7.0) == "proceed"                # still none after startup_wait_s
+    assert g.decide(10.0, {"needs_view": True}, 6.0) == "proceed"         # status too old
+    assert g.decide(10.0, {"needs_view": False}, 9.5) == "proceed"
+    assert g.decide(10.0, {"needs_view": True}, 9.5) == "request"
+    g.requested(10.0)
+    assert g.decide(11.0, {"needs_view": True}, 10.9) == "wait"            # view pending
+    g.view_started()
+    g.view_done(20.0)
+    assert g.decide(20.5, {"needs_view": True}, 20.4) == "wait"            # settling
+    assert g.decide(21.2, {"needs_view": True}, 20.9) == "wait"            # status from before the settle
+    assert g.decide(21.5, {"needs_view": True}, 21.3) == "request"
+    g.requested(21.5)
+    g.view_started()
+    g.view_done(30.0)
+    assert g.views == 2 and g.decide(40.0, {"needs_view": True}, 39.9) == "proceed"   # at most 2 views
+    g.reset()
+    assert g.decide(50.0, {"needs_view": True}, 49.9) == "request"
+    g.requested(50.0)
+    assert g.decide(56.0, {"needs_view": True}, 55.9) == "proceed" and g.gave_up == "no view published"
+    g.reset()
+    g.failed("plan_view service not available")
+    assert g.decide(60.0, {"needs_view": True}, 59.9) == "proceed"
+
+
+def test_view_gate_returns_to_the_scan_pose_without_a_stem_cloud():
+    from stem_grasp.reach_handoff import ViewGate
+    g = ViewGate(max_views=1, settle_s=1.0, return_after_s=3.0, startup_wait_s=0.0)
+    assert not g.should_return(10.0, None)                                 # no view yet
+    assert g.decide(0.0, {"needs_view": True}, 0.0) == "request"
+    g.requested(0.0)
+    g.view_started()
+    g.view_done(10.0)
+    assert g.decide(11.5, {"needs_view": True}, 11.2) == "proceed"         # at most 1 view
+    assert not g.should_return(12.0, 9.0)                                  # still within return_after_s
+    assert not g.should_return(14.0, 10.5)                                 # a stem cloud since the view
+    assert g.should_return(14.0, 9.0)                                      # none: go back
+    g.returned = True
+    assert not g.should_return(20.0, 9.0)                                  # once only
+    g2 = ViewGate(max_views=4, startup_wait_s=0.0)
+    g2.requested(0.0)
+    g2.view_started()
+    g2.view_done(1.0)
+    g2.returned = True
+    assert g2.decide(10.0, {"needs_view": True}, 9.9) == "proceed"         # no views after the return

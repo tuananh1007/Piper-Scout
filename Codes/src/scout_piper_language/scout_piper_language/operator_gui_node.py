@@ -47,7 +47,7 @@ from std_srvs.srv import SetBool, Trigger
 from .gui_server import EventHub, GuiServer
 from .safety_stop import SafetyStop
 
-MOVING_STATES = ("REACHING", "SERVOING", "APPROACHING", "GRASPING", "RELEASING")
+MOVING_STATES = ("VIEWING", "REACHING", "SERVOING", "APPROACHING", "GRASPING", "RELEASING", "RETREATING")
 
 
 class RosBackend:

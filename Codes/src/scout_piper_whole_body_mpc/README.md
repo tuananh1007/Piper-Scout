@@ -34,6 +34,7 @@ in   /odom                          nav_msgs/Odometry
 in   /joint_states                  sensor_msgs/JointState (joint_names param)
 in   /whole_body_mpc/goal           geometry_msgs/PointStamped in world_frame
 in   /whole_body_mpc/goal_pose      geometry_msgs/PoseStamped in world_frame; z axis = approach direction
+in   /whole_body_mpc/goal_pose_full geometry_msgs/PoseStamped in world_frame; full TCP orientation, no advance
 in   /whole_body_mpc/cancel         std_msgs/Empty: drop the goal, stop, mode "idle"
 in   geometry                       field_topic (SemanticDistanceField from scene_query_node or the
                                    nvblox bridge) or the in-process semantic map (use_semantic_scene)
@@ -54,7 +55,12 @@ cost (`w_orient`) and to the `reached` test (`approach_tolerance_deg`, 15°);
 re-sending the same goal keeps the solver's warm start. `stem_grasp` uses this
 to reach its pre-grasp pose and then cancels the MPC so its image-based servo
 has `moveit_servo` to itself (scout_piper_bringup `grasp_chain_check.py`,
-INSTALL.md 10.9).
+INSTALL.md 10.9). A `goal_pose_full` also fixes the roll about that axis:
+the orientation cost is the squared rotation angle, and `approach_error_deg`
+in the status (and the `reached` test) is the whole rotation error. For camera
+views (stem_grasp VIEWING, scout_piper_active_perception): the wrist camera
+sits about 5 cm off the TCP axis, so with the roll free it landed 4-10 cm
+from the planned camera pose in simulation, 0.7-5 cm with it fixed.
 
 **Reach margin (2026-10-08).** The node adds `w_reach` (1e4) times the squared
 excess of the shoulder-to-wrist distance over `reach_max_m` (0.36 m; the arm's

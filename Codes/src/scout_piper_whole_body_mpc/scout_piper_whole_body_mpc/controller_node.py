@@ -9,6 +9,10 @@ Inputs
                                  e.g. /piper_jepa/target_point
   goal_pose_topic                geometry_msgs/PoseStamped pre-grasp pose (world_frame); its
                                  z axis is the desired TCP approach direction (stem_grasp)
+  goal_pose_full_topic           geometry_msgs/PoseStamped TCP pose with the full orientation
+                                 (roll about the approach axis too), no advance; used for
+                                 camera views (stem_grasp VIEWING), where an off-axis camera
+                                 moves with the roll
   cancel_topic                   std_msgs/Empty: drop the goal, send one stop, go idle
                                  (hands the arm to another servo client)
   geometry (use_semantic_scene)  in-process SemanticVoxelMap from aligned depth +
@@ -51,7 +55,7 @@ from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Empty, String
 
-from .costs.terms import CostWeights, Goal, WholeBodyCost, same_goal
+from .costs.terms import CostWeights, Goal, WholeBodyCost, _rot_angle, same_goal
 from .dynamics.piper import PiperKinematics
 from .dynamics.scout import ScoutParams
 from .dynamics.whole_body import ArmParams, WholeBodyModel
@@ -64,6 +68,18 @@ def _yaw(q) -> float:
     return float(np.arctan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
 
 
+def _quat_matrix(q):
+    """Rotation matrix of a geometry_msgs quaternion (normalised); None if degenerate."""
+    v = np.array([q.w, q.x, q.y, q.z], dtype=float)
+    n = np.linalg.norm(v)
+    if not np.isfinite(v).all() or n < 0.5:
+        return None
+    w, x, y, z = v / n
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                     [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                     [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]])
+
+
 class WholeBodyMpcNode(Node):
     def __init__(self) -> None:
         super().__init__("whole_body_mpc")
@@ -73,6 +89,7 @@ class WholeBodyMpcNode(Node):
             ("world_frame", "odom"),
             ("goal_topic", "/whole_body_mpc/goal"),
             ("goal_pose_topic", "/whole_body_mpc/goal_pose"),
+            ("goal_pose_full_topic", "/whole_body_mpc/goal_pose_full"),
             ("cancel_topic", "/whole_body_mpc/cancel"),
             ("joint_names", [f"piper_joint{i}" for i in range(1, 7)]),
             ("tcp_offset_m", 0.14),
@@ -179,6 +196,7 @@ class WholeBodyMpcNode(Node):
         self.create_subscription(JointState, "/joint_states", self._js, 20)
         self.create_subscription(PointStamped, p("goal_topic"), self._goal, 5)
         self.create_subscription(PoseStamped, p("goal_pose_topic"), self._goal_pose, 5)
+        self.create_subscription(PoseStamped, p("goal_pose_full_topic"), self._goal_pose_full, 5)
         self.create_subscription(Empty, p("cancel_topic"), self._cancel, 5)
         pre = "" if self.execute else "/whole_body_mpc/preview"
         self.pub_twist = self.create_publisher(Twist, f"{pre}/cmd_vel", 1)
@@ -226,6 +244,15 @@ class WholeBodyMpcNode(Node):
         self._set_goal(msg.header.frame_id, Goal(p=np.array([pos.x, pos.y, pos.z]),
                                                  approach_axis=z_axis / np.linalg.norm(z_axis),
                                                  advance_m=self.pose_advance))
+
+    def _goal_pose_full(self, msg: PoseStamped) -> None:
+        R = _quat_matrix(msg.pose.orientation)
+        if R is None:
+            self.get_logger().warn("goal pose has an invalid orientation; ignored")
+            return
+        pos = msg.pose.position
+        self._set_goal(msg.header.frame_id, Goal(p=np.array([pos.x, pos.y, pos.z]), R=R,
+                                                 approach_axis=R[:, 2].copy()))
 
     def _cancel(self, msg: Empty) -> None:
         if self.goal is None:
@@ -293,10 +320,12 @@ class WholeBodyMpcNode(Node):
         T_tcp = self.model.tcp_world(x)
         err = float(np.linalg.norm(T_tcp[:3, 3] - self.goal.p))
         angle = None
-        if self.goal.approach_axis is not None:
+        if self.goal.R is not None:          # full pose goal: the whole rotation error
+            angle = float(np.degrees(_rot_angle(T_tcp[:3, :3], self.goal.R)))
+        elif self.goal.approach_axis is not None:
             angle = float(np.degrees(np.arccos(np.clip(T_tcp[:3, 2] @ self.goal.approach_axis, -1, 1))))
         t0 = time.perf_counter()
-        # with a pose goal, "reached" also needs the approach axis within tolerance
+        # with a pose goal, "reached" also needs the orientation within tolerance
         if err < self.tol and (angle is None or angle < self.approach_tol):
             u_mpc, mode = np.zeros(8), "reached"
         else:

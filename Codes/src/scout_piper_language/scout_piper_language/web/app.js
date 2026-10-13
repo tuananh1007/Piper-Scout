@@ -153,7 +153,7 @@ function chip(id, text, cls) { const c = $(id); c.textContent = text; c.classNam
 function applyState(s) {
   state.snap = s;
   chip("#chip-conn", s.connected === false ? "robot offline" : "connected", s.connected === false ? "bad" : "ok");
-  const busy = ["REACHING", "SERVOING", "APPROACHING", "GRASPING", "RELEASING"].includes(s.pipeline);
+  const busy = ["VIEWING", "REACHING", "SERVOING", "APPROACHING", "GRASPING", "RELEASING", "RETREATING"].includes(s.pipeline);
   chip("#chip-pipe", "pipeline " + (s.pipeline || "–"), s.pipeline === "ABORTED" ? "bad" : busy ? "busy" : "");
   const mode = (s.mpc && s.mpc.mode) || "–";
   chip("#chip-mpc", "MPC " + mode, mode === "whole_body" ? "busy" : "");

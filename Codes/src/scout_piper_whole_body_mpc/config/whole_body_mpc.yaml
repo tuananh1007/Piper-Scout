@@ -7,6 +7,7 @@ whole_body_mpc:
     world_frame: "odom"
     goal_topic: "/whole_body_mpc/goal"        # or /piper_jepa/target_point
     goal_pose_topic: "/whole_body_mpc/goal_pose"   # PoseStamped: position + approach (z) axis
+    goal_pose_full_topic: "/whole_body_mpc/goal_pose_full"   # PoseStamped: full orientation (views)
     cancel_topic: "/whole_body_mpc/cancel"    # std_msgs/Empty: drop the goal, stop, go idle
     # Names on /joint_states. The Piper driver itself publishes joint1..joint6
     # on /joint_states_single; full_system.launch.py relays them as these

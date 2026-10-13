@@ -59,6 +59,17 @@ stem_grasp_pipeline:
     target_point_timeout_sec: 3.5
     operator_target_topic: ""             # Phase 5: /operator/target from scout_piper_language
     operator_target_max_dist_m: 0.05
+    # Phase 4: /active_perception/plan_view asks for views in SCANNING (VIEWING) before the reach
+    active_perception_service: ""
+    active_perception_status_topic: "/active_perception/status"
+    active_perception_view_topic: "/active_perception/next_view"
+    active_perception_max_views: 4
+    active_perception_settle_sec: 1.5
+    active_perception_startup_wait_sec: 5.0
+    active_perception_return_sec: 3.0      # no stem cloud this long after the last view: back to the scan pose
+    active_perception_view_timeout_sec: 40.0
+    active_perception_view_tolerance_m: 0.02
+    active_perception_view_angle_deg: 20.0
     # grasp the stem axis: fit the stem cross-section around each skeleton
     # point (single-view clouds show only the camera-facing half)
     grasp_point_on_stem_axis: true
@@ -96,6 +107,7 @@ stem_grasp_pipeline:
     reach_executor: "none"
     mpc_world_frame: "odom"
     mpc_goal_pose_topic: "/whole_body_mpc/goal_pose"
+    mpc_goal_pose_full_topic: "/whole_body_mpc/goal_pose_full"   # views: full TCP orientation
     mpc_status_topic: "/whole_body_mpc/status"
     mpc_cancel_topic: "/whole_body_mpc/cancel"
     reach_timeout_sec: 60.0

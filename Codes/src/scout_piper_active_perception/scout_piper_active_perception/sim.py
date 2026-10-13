@@ -102,11 +102,12 @@ def run_episode(seed: int, policy: str, max_views: int = 8, camera: Optional[Cam
                 guess_sigma_m: float = 0.01, lambda_t: float = 0.02, lambda_turn: float = 0.15,
                 weights: Optional[Weights] = None,
                 executor: str = "teleport", n_candidates: int = 200, mpc_samples: int = 256,
-                mpc_steps: int = 150, reach_max_m: Optional[float] = 0.36, record_trace: bool = False) -> EpisodeResult:
+                mpc_steps: int = 150, reach_max_m: Optional[float] = 0.36, record_trace: bool = False,
+                prefer_branch: bool = True) -> EpisodeResult:
     camera = camera or Camera()
     sensor = sensor or DepthSensor()
     rng = np.random.default_rng(seed)
-    scene = make_ap_scene(seed)
+    scene = make_ap_scene(seed, prefer_branch=prefer_branch)
     model = WholeBodyModel()
     cam_fn = camera_pose_fn(model)
     p_true, d_true, r_true = scene.joint_axis()

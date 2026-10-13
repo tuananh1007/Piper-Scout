@@ -137,7 +137,8 @@ torch), `scout_piper_whole_body_mpc` 36 (+10 skipped without torch, 46 with
 torch) passed; no failures in `colcon test-result`. Added 2026-10-12:
 `scout_piper_active_perception` 13, `scout_piper_language` 16 (one of them
 drives the operator page in headless Chromium through Node's Playwright, and is
-skipped where Node or Playwright is missing).
+skipped where Node or Playwright is missing). 2026-10-13: `stem_grasp` 61,
+`scout_piper_bringup` 29, `scout_piper_whole_body_mpc` 52 (+10 skipped without torch).
 **Record:** the last line of each file.
 **If it fails:** `plant_twin` `test_jacobian.py` asserts a wall-clock
 speed-up and can fail on a busy machine; rerun it once on an idle machine.
@@ -154,14 +155,15 @@ whole-body MPC, stem grasp (reach, servo, approach, grasp, release).
 ./scripts/hardware_free_checks.sh 2>&1 | tee $LOG/W4_hardware_free.txt
 ```
 
-It runs fourteen checks one after another (about 20 minutes), each with its
+It runs fifteen checks one after another (about 22 minutes), each with its
 own fake-driver bringup, on localhost only, and writes its logs to
-`test_logs/hwfree_<date>_<time>/`. The last two are Phase 4
+`test_logs/hwfree_<date>_<time>/`. The last three are Phase 4
 (`active_perception`: a simulated plant rendered from the camera pose, views
-planned and driven by the MPC) and Phase 5 (`operator`: instructions through
-the GUI's API, countdown, clarification, refusal, STOP).
+planned and driven by the MPC; `active_perception_grasp`: the stem_grasp
+pipeline asks for the views itself, then reaches) and Phase 5 (`operator`:
+instructions through the GUI's API, countdown, clarification, refusal, STOP).
 
-**Pass:** the summary lists fourteen `PASS` lines and the script exits with 0.
+**Pass:** the summary lists fifteen `PASS` lines and the script exits with 0.
 **Record:** the summary, and the `info: ... MPPI solve median ... ms, max ... ms`
 lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 **If it fails:** open `check.out` and `pipeline.log` / `mpc.log` of the

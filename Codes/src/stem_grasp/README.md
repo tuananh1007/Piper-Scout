@@ -148,6 +148,28 @@ nearest is farther than `operator_target_max_dist_m` (5 cm): the segmented stem
 is then not the one the operator chose. An empty `frame_id` clears the target.
 The operator's target takes precedence over `grasp_strategy: nearest_target`.
 
+## Active perception views (Phase 4)
+
+With `active_perception_service: /active_perception/plan_view`, SCANNING asks
+scout_piper_active_perception for a view while its status reports
+`needs_view` (at most `active_perception_max_views`), drives the whole-body
+MPC there (VIEWING, on `mpc_goal_pose_full_topic`: the full TCP orientation,
+since the wrist camera sits off the TCP axis and the roll about the approach
+axis moves it), waits `active_perception_settle_sec` and a status newer than
+that, and asks again; then grasps as before. Decisions (`ViewGate` in
+`reach_handoff.py`):
+
+- no status within `active_perception_startup_wait_sec` (5 s), or a status
+  still without an assessment after that: active perception is not running,
+  grasp as before;
+- `plan_view` refused or no view published within 10 s: grasp without more views;
+- no stem cloud within `active_perception_return_sec` (3 s) after the last
+  view (leaves the planner had not seen hide the target there): back to the
+  pose the views started from, which saw the target, and no more views.
+
+Hardware-free: `hardware_free_checks.sh --only active_perception_grasp`
+(`active_perception_chain_check.py --pipeline`).
+
 ## Port plan
 
 Remaining port items are tracked under P0.4 in [`../../../PROGRESS.md`](../../../PROGRESS.md);

@@ -64,7 +64,7 @@ from stem_grasp import core
 from stem_grasp.approach import (ApproachConfig, GripperCloseMonitor, IterativeApproach, RetreatMonitor,
                                  ServoGates, servo_gate)
 from stem_grasp.moveit_planner import MoveItPlanner
-from stem_grasp.reach_handoff import ReachMonitor, candidate_goal_in_world, pick_operator_candidate
+from stem_grasp.reach_handoff import ReachMonitor, ViewGate, candidate_goal_in_world, pick_operator_candidate
 from stem_grasp.servo_geometry import desired_uv as servo_desired_uv
 from stem_grasp.servo_geometry import project, stem_feature_uv
 
@@ -77,6 +77,7 @@ from stem_grasp.servo_geometry import project, stem_feature_uv
 class PipelineState(Enum):
     IDLE = auto()
     SCANNING = auto()
+    VIEWING = auto()       # moving the camera to a view active perception asked for
     REACHING = auto()
     SERVOING = auto()
     APPROACHING = auto()   # servo + stepwise advance along the gripper axis (P0.4.13)
@@ -151,6 +152,24 @@ class PipelineParams:
     # operator_target_max_dist_m; an empty frame_id clears it. "" = off
     operator_target_topic: str = ""
     operator_target_max_dist_m: float = 0.05
+    # Active perception (Phase 4): with a plan_view service set, SCANNING first
+    # asks scout_piper_active_perception for views while its status says
+    # needs_view (at most active_perception_max_views), drives the MPC there
+    # with the full TCP orientation (VIEWING, mpc_goal_pose_full_topic) and lets
+    # the scene settle; then grasps as before. Not running (no status within
+    # active_perception_startup_wait_sec) or no view needed: grasp as before.
+    # No stem cloud within active_perception_return_sec after the last view (the
+    # target hidden there): back to the pose the views started from. "" = off
+    active_perception_service: str = ""
+    active_perception_status_topic: str = "/active_perception/status"
+    active_perception_view_topic: str = "/active_perception/next_view"
+    active_perception_max_views: int = 4
+    active_perception_settle_sec: float = 1.5
+    active_perception_startup_wait_sec: float = 5.0
+    active_perception_return_sec: float = 3.0
+    active_perception_view_timeout_sec: float = 40.0
+    active_perception_view_tolerance_m: float = 0.02
+    active_perception_view_angle_deg: float = 20.0
     # Single-view stem clouds show only the camera-facing half, so skeleton
     # points sit on that surface; fit the cross-section and grasp the axis.
     grasp_point_on_stem_axis: bool = True
@@ -226,6 +245,7 @@ class PipelineParams:
     reach_executor: str = "none"
     mpc_world_frame: str = "odom"
     mpc_goal_pose_topic: str = "/whole_body_mpc/goal_pose"
+    mpc_goal_pose_full_topic: str = "/whole_body_mpc/goal_pose_full"   # views (VIEWING)
     mpc_status_topic: str = "/whole_body_mpc/status"
     mpc_cancel_topic: str = "/whole_body_mpc/cancel"
     reach_timeout_sec: float = 60.0
@@ -363,6 +383,21 @@ class StemGraspPipeline(Node):
         if self.params.operator_target_topic:
             self.create_subscription(PointStamped, self.params.operator_target_topic, self._on_operator_target, 5,
                                      callback_group=self.cb_group)
+        self.view_gate: Optional[ViewGate] = None
+        self.ap_status: Optional[dict] = None
+        self.ap_status_t: Optional[float] = None
+        if self.params.active_perception_service:
+            self.view_gate = ViewGate(max_views=int(self.params.active_perception_max_views),
+                                      settle_s=float(self.params.active_perception_settle_sec),
+                                      startup_wait_s=float(self.params.active_perception_startup_wait_sec),
+                                      return_after_s=float(self.params.active_perception_return_sec))
+            self.view_home: Optional[PoseStamped] = None    # TCP pose the views started from
+            self.ap_client = self.create_client(Trigger, self.params.active_perception_service,
+                                                callback_group=self.cb_group)
+            self.create_subscription(String, self.params.active_perception_status_topic, self._on_ap_status, 5,
+                                     callback_group=self.cb_group)
+            self.create_subscription(PoseStamped, self.params.active_perception_view_topic, self._on_ap_view, 5,
+                                     callback_group=self.cb_group)
 
         # ---------- publishers ----------
         self.pub_state = self.create_publisher(
@@ -397,6 +432,11 @@ class StemGraspPipeline(Node):
         )
         self.pub_mpc_cancel = self.create_publisher(
             Empty, self.params.mpc_cancel_topic, 5
+        )
+        # a view fixes the camera pose, and the camera is off the TCP axis, so the
+        # roll about the approach axis matters too: full-orientation goal
+        self.pub_mpc_goal_full = self.create_publisher(
+            PoseStamped, self.params.mpc_goal_pose_full_topic, 5
         )
         self.pub_servo_status = self.create_publisher(
             String, "/stem_grasp/servo_status", 10
@@ -524,6 +564,106 @@ class StemGraspPipeline(Node):
         self.last_mask = mask > 0
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.last_mask_stamp = stamp if stamp > 0 else self._now()
+
+    def _on_ap_status(self, msg: String) -> None:
+        try:
+            self.ap_status = json.loads(msg.data)
+        except ValueError:
+            return
+        self.ap_status_t = self._now()
+
+    def _on_ap_view(self, msg: PoseStamped) -> None:
+        gate = self.view_gate
+        if gate is None or self.state != PipelineState.SCANNING or gate.requested_t is None:
+            return
+        if msg.header.frame_id and msg.header.frame_id != self.params.mpc_world_frame:
+            gate.failed(f"view in {msg.header.frame_id}, the MPC plans in {self.params.mpc_world_frame}")
+            self.get_logger().warn(f"active perception: {gate.gave_up}; grasping without more views")
+            return
+        gate.view_started()
+        self.reach_goal = msg
+        self.reach_monitor = ReachMonitor(start_t=self._now(),
+                                          timeout_s=self.params.active_perception_view_timeout_sec,
+                                          settle_s=0.5,
+                                          tcp_tolerance_m=self.params.active_perception_view_tolerance_m,
+                                          angle_tolerance_deg=self.params.active_perception_view_angle_deg)
+        self.get_logger().info(f"active perception: view {gate.views} of at most {gate.max_views}")
+        self._set_state(PipelineState.VIEWING)
+
+    def _view_gate_step(self) -> bool:
+        """True while SCANNING must wait for active perception."""
+        gate = self.view_gate
+        decision = gate.decide(self._now(), self.ap_status, self.ap_status_t)
+        if decision == "proceed":
+            return False
+        if decision == "request":
+            if not self.ap_client.service_is_ready():
+                gate.failed("plan_view service not available")
+                self.get_logger().warn("active perception: plan_view not available; grasping without views")
+                return False
+            if gate.views == 0:
+                self.view_home = self._tcp_pose_msg()
+            gate.requested(self._now())
+            fut = self.ap_client.call_async(Trigger.Request())
+
+            def done(f):
+                res = f.result()
+                if res is None or not res.success:
+                    gate.failed(res.message if res is not None else "no answer")
+                    self.get_logger().warn(f"active perception: no view ({gate.gave_up}); grasping without more views")
+            fut.add_done_callback(done)
+        return True
+
+    def _view_return_step(self) -> bool:
+        """True when the pipeline drives back to the pose the views started from."""
+        gate = self.view_gate
+        if not gate.should_return(self._now(), self.last_stem_cloud_stamp):
+            return False
+        gate.returned = True
+        if self.view_home is None:
+            self.get_logger().warn("active perception: no stem cloud after the views and no start pose to return to")
+            return False
+        self.get_logger().info("active perception: no stem cloud after the last view; back to the scan pose")
+        self.reach_goal = self.view_home
+        self.reach_monitor = ReachMonitor(start_t=self._now(),
+                                          timeout_s=self.params.active_perception_view_timeout_sec,
+                                          settle_s=0.5,
+                                          tcp_tolerance_m=self.params.active_perception_view_tolerance_m,
+                                          angle_tolerance_deg=self.params.active_perception_view_angle_deg)
+        self._set_state(PipelineState.VIEWING)
+        return True
+
+    def _tcp_pose_msg(self) -> Optional[PoseStamped]:
+        """Current TCP pose (eef_frame advanced by tcp_offset_m) in mpc_world_frame."""
+        T = self._lookup(self.params.mpc_world_frame, self.params.eef_frame)
+        if T is None:
+            return None
+        from scipy.spatial.transform import Rotation as R_scipy  # noqa: PLC0415
+        msg = PoseStamped()
+        msg.header.frame_id = self.params.mpc_world_frame
+        p = T[:3, 3] + self.params.tcp_offset_m * T[:3, 2]
+        msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = map(float, p)
+        q = R_scipy.from_matrix(T[:3, :3]).as_quat()
+        msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w = map(float, q)
+        return msg
+
+    def _view_tick(self) -> None:
+        if self.reach_monitor is None or self.reach_goal is None:
+            self._set_state(PipelineState.SCANNING)
+            return
+        decision = self.reach_monitor.update(self.mpc_mode, self.mpc_status_t, self._now(),
+                                             self.mpc_tcp_error, self.mpc_angle)
+        if decision == "wait":
+            self.reach_goal.header.stamp = self.get_clock().now().to_msg()
+            self.pub_mpc_goal_full.publish(self.reach_goal)
+            return
+        self.pub_mpc_cancel.publish(Empty())
+        self.reach_monitor = None
+        self.reach_goal = None
+        if decision != "handoff":
+            self.get_logger().warn("active perception: view not reached; scanning from here")
+        self.view_gate.view_done(self._now())
+        self._set_state(PipelineState.SCANNING)
 
     def _on_operator_target(self, msg: PointStamped) -> None:
         if not msg.header.frame_id:
@@ -676,7 +816,14 @@ class StemGraspPipeline(Node):
         if self.state == PipelineState.RELEASING:
             self._release_tick()
             return
+        if self.state == PipelineState.VIEWING:
+            self._view_tick()
+            return
         if self.state != PipelineState.SCANNING:
+            return
+        if self.view_gate is not None and self._view_gate_step():
+            return
+        if self.view_gate is not None and self._view_return_step():
             return
         if self.last_stem_cloud is None:
             return
@@ -1009,6 +1156,9 @@ class StemGraspPipeline(Node):
         if self.state not in (PipelineState.IDLE, PipelineState.ABORTED):
             res.success, res.message = False, f"scan needs IDLE or ABORTED, not {self.state.name}"
             return res
+        if self.view_gate is not None:
+            self.view_gate.reset()
+            self.view_home = None
         self._set_state(PipelineState.SCANNING)
         res.success, res.message = True, "scanning"
         return res

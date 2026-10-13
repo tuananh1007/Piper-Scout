@@ -22,6 +22,13 @@ a branch, leaves in front of it on the approach line), placed in odom:
      looking at the target, the joint estimate fitted from the new views
      with a small axis error, and the uncertainty reported falling.
 
+With ``--pipeline`` the stem_grasp pipeline runs as well (launched with
+``-p active_perception_service:=/active_perception/plan_view``): it asks for
+the views itself (VIEWING, full-orientation MPC goals) while active
+perception reports needs_view, goes back to the scan pose when the last view
+does not show the stem, and then reaches; this script only renders and
+publishes what the camera sees.
+
 Starts moveit_servo and enables the servo bridge (the MPC's arm commands go
 through them); runs only against the fake drivers; cancels the MPC and
 disables the bridge at the end.
@@ -38,11 +45,25 @@ import time
 import numpy as np
 
 
+def _pose_matrix(pose) -> np.ndarray:
+    """4x4 of a geometry_msgs Pose."""
+    w, x, y, z = pose.orientation.w, pose.orientation.x, pose.orientation.y, pose.orientation.z
+    T = np.eye(4)
+    T[:3, :3] = [[1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+                 [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+                 [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)]]
+    T[:3, 3] = [pose.position.x, pose.position.y, pose.position.z]
+    return T
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=3)
     ap.add_argument("--views", type=int, default=2, help="views to plan after the first")
     ap.add_argument("--reach-timeout", type=float, default=60.0)
+    ap.add_argument("--pipeline", action="store_true",
+                    help="the stem_grasp pipeline asks for the views (active_perception_service) and then reaches")
+    ap.add_argument("--timeout", type=float, default=240.0, help="--pipeline: seconds until REACHING")
     a = ap.parse_args()
 
     import rclpy  # noqa: PLC0415
@@ -130,7 +151,7 @@ def main() -> int:
         check("TF odom -> camera", False, "no transform")
         return 1
 
-    scene = make_ap_scene(a.seed)
+    scene = make_ap_scene(a.seed, prefer_branch=not a.pipeline)    # the pipeline grasps a main stem
     p_true, d_true, _ = scene.joint_axis()
     camera = Camera()
     sensor = DepthSensor()
@@ -181,13 +202,19 @@ def main() -> int:
     stamp = [0.0]
 
     def observe():
-        """Render from the camera in TF, integrate, publish field + target points."""
+        """Render from the camera in TF, integrate; the target's points (with
+        --pipeline: the stem and target points within 8 cm of the target, the
+        pipeline's stem cloud)."""
         T = lookup(world, cam_frame)
         fr = sensor.sense(render(scene, T, camera), camera, rng)
         masks = {c: fr["label"] == i for i, c in enumerate(CLASSES)}
         stamp[0] = n.get_clock().now().nanoseconds * 1e-9
         vmap.integrate(np.nan_to_num(fr["depth"], nan=0.0), masks, K, T, stamp[0], stride=2)
-        P = backproject(fr["depth"], K, T, masks["target"])
+        if a.pipeline:
+            P = backproject(fr["depth"], K, T, masks["target"] | masks["stem"])
+            P = P[np.linalg.norm(P - scene.target, axis=1) < 0.08]
+        else:
+            P = backproject(fr["depth"], K, T, masks["target"])
         return T, P, int(masks["target"].sum())
 
     def publish(P, sec=3.0):
@@ -208,6 +235,93 @@ def main() -> int:
                 pub_cloud.publish(point_cloud2.create_cloud_xyz32(h, P.astype(np.float32).tolist()))
             spin(0.3)
 
+    def pipeline_flow(T_render, P):
+        """The pipeline asks for views (VIEWING) while active perception says
+        needs_view, then reaches. This loop is the camera: it re-renders when
+        the pipeline is back in SCANNING at a settled new pose, and publishes
+        the stem cloud only for the pose it was rendered at."""
+        states, planned_cam, view_err = [], [], []
+        n.create_subscription(String, "/stem_grasp/pipeline_state",
+                              lambda m: (not states or states[-1] != m.data) and states.append(m.data), 20)
+        n.create_subscription(PoseStamped, "/active_perception/next_view_camera", planned_cam.append, 5)
+        renders, px_views, returned = 0, [], []
+        moving_since, last_T = None, lookup(world, cam_frame)
+        t0 = time.time()
+        first = None
+        while time.time() - t0 < a.timeout:
+            Tc = lookup(world, cam_frame)
+            moved = Tc is not None and (np.linalg.norm(Tc[:3, 3] - T_render[:3, 3]) > 0.005
+                                        or abs(np.trace(Tc[:3, :3].T @ T_render[:3, :3]) - 3.0) > 1e-3)
+            still = Tc is not None and last_T is not None and np.linalg.norm(Tc[:3, 3] - last_T[:3, 3]) < 1e-3
+            last_T = Tc
+            scanning = bool(states) and states[-1] == "SCANNING"
+            if moved:
+                moving_since = moving_since or time.time()
+                # render once the pipeline is back in SCANNING at a settled pose (the view
+                # reached): rendering at every pause of a motion only starves the MPC
+                if scanning and still and time.time() - moving_since > 0.6:
+                    T_render, P, px = observe()
+                    renders += 1
+                    if "VIEWING" in states and "REACHING" not in states and len(px_views) >= len(planned_cam):
+                        returned.append(px)            # more renders than planned views: the return
+                        print(f"info back at the scan pose (no stem cloud after the views): {px} target pixels",
+                              flush=True)
+                    elif "VIEWING" in states and "REACHING" not in states:      # a view, not the reach
+                        px_views.append(px)
+                        rel = scene.target - T_render[:3, 3]
+                        ang = np.degrees(np.arccos(np.clip(rel @ T_render[:3, 2] / np.linalg.norm(rel), -1, 1)))
+                        lc = (ap_status[-1] if ap_status else {}).get("last_choice") or {}
+                        err, px_plan = float("nan"), None
+                        if planned_cam:
+                            pc = planned_cam[-1].pose
+                            err = float(np.linalg.norm(T_render[:3, 3] - [pc.position.x, pc.position.y, pc.position.z]))
+                            T_plan = _pose_matrix(pc)
+                            px_plan = int((render(scene, T_plan, camera)["label"] == CLASSES.index("target")).sum())
+                        view_err.append(err)
+                        print(f"info view {len(px_views)}: camera {100 * err:.1f} cm from the planned one, {px} "
+                              f"target pixels ({px_plan} at the planned pose, {lc.get('vis_px')} predicted), "
+                              f"{ang:.0f} deg off axis at "
+                              f"{np.linalg.norm(rel):.2f} m, turn {lc.get('turn_deg')} deg", flush=True)
+                    moving_since = None
+            now = n.get_clock().now()
+            snap = export_field(query)
+            snap.stamp = now.nanoseconds * 1e-9
+            pub_field.publish(fill_msg(SemanticDistanceField(), snap, world))
+            info.header.stamp = now.to_msg()
+            pub_info.publish(info)
+            pt = PointStamped()
+            pt.header.frame_id, pt.header.stamp = world, now.to_msg()
+            pt.point.x, pt.point.y, pt.point.z = map(float, target_noisy)
+            pub_target.publish(pt)
+            st = ap_status[-1] if ap_status else {}
+            if first is None and "u_total" in st:
+                first = st
+            # the stem cloud only once active perception reports (else the pipeline grasps
+            # without asking) and only for the pose it was rendered at
+            if first is not None and not moved and len(P):
+                h = Header(frame_id=world, stamp=now.to_msg())
+                pub_cloud.publish(point_cloud2.create_cloud_xyz32(h, P.astype(np.float32).tolist()))
+            spin(0.25)
+            if "REACHING" in states:
+                spin(2.0)
+                break
+        views = states.count("VIEWING") - len(returned)
+        last = ap_status[-1] if ap_status else {}
+        check("pipeline asked for views before reaching (VIEWING)", views >= 1 and "REACHING" in states
+              and states.index("VIEWING") < states.index("REACHING") if views else False,
+              f"states {' -> '.join(states)}; {renders} new camera poses rendered")
+        # views after the joint is known look into the approach corridor, not at the target
+        check("views reached (camera within 4 cm of the planned camera pose)",
+              view_err and all(e < 0.04 for e in view_err), f"{[round(100 * e, 1) for e in view_err]} cm")
+        check("uncertainty fell over the views", first is not None and (
+              last.get("u_joint", 1.0) < first.get("u_joint", 1.0)
+              or (last.get("corridor_unknown") or 1.0) < (first.get("corridor_unknown") or 1.0)),
+              f"u_joint {first and first.get('u_joint')} -> {last.get('u_joint')}, corridor unknown "
+              f"{first and first.get('corridor_unknown')} -> {last.get('corridor_unknown')}, unmet {last.get('unmet')}")
+        ok = all(results)
+        print("ACTIVE PERCEPTION GRASP", "OK" if ok else "FAILED", flush=True)
+        return 0 if ok else 1
+
     # the MPC's arm commands go through moveit_servo and the servo bridge
     call(Trigger, "/servo_node/start_servo", Trigger.Request())
     en = call(SetBool, "/piper_servo_bridge/enable", SetBool.Request(data=True))
@@ -227,6 +341,8 @@ def main() -> int:
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                               start_new_session=True)
     try:
+        if a.pipeline:
+            return pipeline_flow(T0, P)
         publish(P, 6.0)
         first = ap_status[-1] if ap_status else {}
         check("status published with the uncertainty terms", "u_total" in first and first.get("field"),

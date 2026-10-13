@@ -856,7 +856,7 @@ masks (see 10.9). `use_sim:=true` only sets
 **All hardware-free chain checks in one run.** With no bringup running:
 
 ```bash
-./scripts/hardware_free_checks.sh                  # 14 checks, ~20 min; --quick: 3 checks, ~3 min
+./scripts/hardware_free_checks.sh                  # 15 checks, ~22 min; --quick: 3 checks, ~3 min
 ./scripts/hardware_free_checks.sh --profile orin   # on the Jetson AGX Orin (Path A)
 ```
 
@@ -1596,9 +1596,17 @@ aligned depth with the stem's holes filled on `/active_perception/fused_depth`
 (the scene stack's `depth_topic`); `-p model:=stand_in` exercises the plumbing
 without a GPU.
 
+In the grasp pipeline: start `pipeline_node` with
+`-p active_perception_service:=/active_perception/plan_view`; SCANNING then asks
+for views while `needs_view` holds (at most `active_perception_max_views`),
+drives the MPC to each with the full TCP orientation
+(`/whole_body_mpc/goal_pose_full`), returns to the scan pose when the last view
+does not show the stem, and reaches as before (stem_grasp README).
+
 **Hardware-free check:** `./scripts/hardware_free_checks.sh --only active_perception`
 (fake arm and base, MPC executing; a simulated plant is rendered from the
-camera pose in TF).
+camera pose in TF; `active_perception_grasp`: the same with the pipeline asking
+for the views).
 
 ### 10.16 Operator GUI and instructions (Phase 5)
 

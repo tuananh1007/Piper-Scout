@@ -581,6 +581,13 @@ that calibrated force estimate.
    Watch `/active_perception/status` (U terms, `unmet`) and the camera.
    **Pass:** each view reached, the target in view afterwards, `u_joint` and
    `u_corridor` falling; then the grasp (R11) from there.
+   Then the same through the pipeline (`pipeline_node ... -p
+   active_perception_service:=/active_perception/plan_view -p
+   active_perception_max_views:=3`, the MPC without `goal_pose_topic` remapped):
+   VIEWING before REACHING in `/stem_grasp/pipeline_state`; note how often the
+   last view hides the target and the pipeline returns to the scan pose
+   (`back to the scan pose` in its log), and the target pixels predicted
+   (`last_choice.vis_px`) against those seen.
 3. **Ablation:** 10 plants, policies `fixed_ring`, `geometry`, `fused`
    (`-p policy:=...`), same start: views and time until `needs_view` is false,
    and the grasp outcome afterwards.

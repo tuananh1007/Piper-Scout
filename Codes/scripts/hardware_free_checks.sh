@@ -19,7 +19,7 @@
 #
 # Everything runs with ROS_LOCALHOST_ONLY=1 in its own ROS domain
 # (HWF_DOMAIN, default 77), so it cannot reach a real robot on the network.
-# Takes about 20 minutes (3 with --quick). Exit code 0 when every check passes.
+# Takes about 22 minutes (3 with --quick). Exit code 0 when every check passes.
 set -uo pipefail
 
 profile=default quick=0 servo=ibvs only=""
@@ -123,6 +123,9 @@ if (( ! quick )); then
   bringup_extra=()
   # Phase 4: next view planned from a simulated plant, driven by the MPC, joint estimate refined
   run_check active_perception 1 1 - ros2 run scout_piper_bringup active_perception_chain_check.py
+  # ... and inside the grasp pipeline: views asked for in SCANNING (VIEWING), then the reach
+  run_check active_perception_grasp 1 1 "-p active_perception_service:=/active_perception/plan_view -p active_perception_max_views:=3" \
+    ros2 run scout_piper_bringup active_perception_chain_check.py --pipeline
   # Phase 5: instruction -> proposal -> countdown -> target, clarification, refusal, GUI STOP
   run_check operator 1 0 - ros2 run scout_piper_bringup operator_chain_check.py
 fi
