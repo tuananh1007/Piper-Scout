@@ -8,10 +8,17 @@ Run without ROS:
 import importlib
 
 import numpy as np
+import pytest
+
+
+def _ros_module(name):
+    """The node modules import rclpy at the top: skip (per test) without ROS."""
+    pytest.importorskip("rclpy")
+    return importlib.import_module(name)
 
 
 def test_pipeline_node_imports():
-    mod = importlib.import_module("stem_grasp.pipeline_node")
+    mod = _ros_module("stem_grasp.pipeline_node")
     assert hasattr(mod, "StemGraspPipeline")
     assert hasattr(mod, "PipelineParams")
     assert hasattr(mod, "main")
@@ -79,7 +86,7 @@ def test_skeleton_on_small_synthetic_cloud():
 def test_segmentation_keeps_masks_flowing_while_servoing():
     """The motion gate pauses segmentation while the robot moves (clean scans),
     but not while the servo or the final approach needs a mask every step."""
-    seg = importlib.import_module("stem_grasp.segmentation_node")
+    seg = _ros_module("stem_grasp.segmentation_node")
     off = ["SERVOING", "APPROACHING"]
     assert seg.motion_gate_applies(True, "SCANNING", off)
     assert seg.motion_gate_applies(True, "REACHING", off)
@@ -91,7 +98,7 @@ def test_segmentation_keeps_masks_flowing_while_servoing():
 def test_semantic_label_image_paints_classes_in_order():
     """P1.1.4: the merged label image class_demux reads (stem 1, branch 2,
     leaf 3, target 4); a target on a stem stays target, leaves are painted first."""
-    seg = importlib.import_module("stem_grasp.segmentation_node")
+    seg = _ros_module("stem_grasp.segmentation_node")
     shape = (4, 6)
     stem = np.zeros(shape, np.uint8); stem[:, 2] = 255
     leaf = np.zeros(shape, np.uint8); leaf[1:3, 1:4] = 1

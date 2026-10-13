@@ -82,9 +82,14 @@ Algorithms only (path D), from the repository root:
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate   # Ubuntu: sudo apt-get install -y python3-venv first
-python -m pip install 'numpy<2' scipy pyyaml pytest opencv-python-headless
-cd Codes/src/scout_piper_jepa && python -m pytest test -q    # likewise in the other pure-Python packages
+python -m pip install -r Codes/ci/requirements-test.txt     # + torch (CPU wheel) for the torch tests
+Codes/ci/run_unit_tests.sh                                  # every package's unit tests, without ROS
 ```
+
+The same runs on GitHub Actions for every push and pull request that touches
+`Codes/src` (`.github/workflows/unit-tests.yml`: Ubuntu 22.04, Python 3.10,
+CPU torch, headless Chromium for the operator page). Tests that need ROS
+(node imports, launch files) skip there and run in the container (TEST_PROCEDURE.md W3).
 
 > **Before driving hardware** read
 > [what works today](INSTALL.md#before-you-start-what-works-today): the robot

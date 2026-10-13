@@ -129,6 +129,8 @@ colcon test-result --verbose 2>&1 | tee $LOG/W3_colcon_test.txt
 
 If `python3 -m pytest` is missing in the container, install it first with
 `sudo apt-get install -y python3-pytest` (lost when the container exits).
+`Codes/ci/run_unit_tests.sh` runs the same per-package pytest calls with a
+summary; GitHub Actions runs it without ROS on every push (README).
 
 **Pass** (counts on 2026-10-09; more tests may have been added since):
 `stem_grasp` 41, `scout_piper_bringup` 24, `scout_piper_scene_repr` 31,
