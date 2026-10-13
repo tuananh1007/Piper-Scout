@@ -26,6 +26,7 @@ install(
     scripts/trial_recorder.py
     scripts/trial_report.py
     scripts/bag_chain_check.py
+    scripts/moveit_demo_check.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

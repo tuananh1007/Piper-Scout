@@ -63,7 +63,7 @@
 | P0.3.6 | Verify Scout base driver alone launches and `/cmd_vel` moves wheels | ☐ | Requires hardware + CAN1 |
 | P0.3.7 | Verify both drivers run simultaneously without CAN contention | ☐ | |
 | P0.3.8 | RealSense launches with aligned depth + point cloud | ☐ | |
-| P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☐ | Run separately: `ros2 launch piper_with_gripper_moveit demo.launch.py` |
+| P0.3.9 | MoveIt 2 demo plans a canned home→pose motion | ☑ | 2026-10-13 — headless (`demo.launch.py use_rviz:=false` + `scout_piper_bringup/moveit_demo_check.py`, MoveGroup action): home → canned joint pose planned in 3 ms (OMPL) without moving anything, executed on the demo's mock hardware (joints within 0.001 rad), a flange pose from `/compute_fk` planned and executed through IK (1.5 mm), back to `zero`. Found: the upstream xacro needs `piper_sim/piper_gazebo` built even without Gazebo. Run separately from `full_system.launch.py` (INSTALL.md 10.4b) |
 | P0.3.10 | All six subsystems running concurrently with stable TF tree | ◐ | 2026-05-17 — verified for: RSP (unified URDF), stem_grasp (pipeline/segmentation/pointcloud), RViz, jsp_gui. Pending: arm/base/camera (need hardware). Phase 0 exit gate. |
 | P0.3.11 | Hardware-free defaults — `full_system.launch.py` boots without CAN/USB | ☑ | 2026-05-17 — bringup_arm/base/camera default false; jsp_gui auto-spawned for URDF sliders |
 | P0.3.12 | MoveIt include separated due to URDF conflict | ☑ | 2026-05-17 — MoveIt demo brings its own RSP that fights our unified URDF; documented; Phase 3A unifies via cuMotion |

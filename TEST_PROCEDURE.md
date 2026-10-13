@@ -181,6 +181,24 @@ lines of the two MPC checks. Note any `MPPI solves overrun` warning.
 failing check in the log folder; rerun that check once to see whether it
 repeats.
 
+### W4b — MoveIt 2 upstream demo, headless (P0.3.9)
+
+**Goal:** move_group plans and executes for the Piper on the demo's mock
+hardware (INSTALL.md 10.4b). Nothing of the bringup may be running.
+
+```bash
+ros2 launch piper_with_gripper_moveit demo.launch.py use_rviz:=false > $LOG/W4b_demo.txt 2>&1 &
+sleep 10
+ros2 run scout_piper_bringup moveit_demo_check.py 2>&1 | tee $LOG/W4b_moveit.txt
+kill %1
+```
+
+**Pass:** `MOVEIT DEMO OK` (six PASS lines: plan only, nothing moved,
+execution, forward kinematics, a pose goal through IK, back to `zero`).
+**Record:** the planning times and the flange error of the pose goal.
+**If it fails:** `package 'piper_gazebo' not found` in `W4b_demo.txt` means
+`piper_sim/piper_gazebo` was not built (INSTALL.md 10.4b).
+
 ### W5 — Memory of the GPU components (needs only the RealSense)
 
 **Goal:** measure what the GPU parts cost on 16 GB (not measurable without a

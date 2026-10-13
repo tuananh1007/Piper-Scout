@@ -990,11 +990,25 @@ commands are on `/piper/joint_cmd`).
 > and "Plan & Execute" moves it. Do not use that combination on this robot.
 
 ```bash
-ros2 launch piper_with_gripper_moveit demo.launch.py
+ros2 launch piper_with_gripper_moveit demo.launch.py                    # with RViz
+ros2 launch piper_with_gripper_moveit demo.launch.py use_rviz:=false    # headless, then:
+ros2 run scout_piper_bringup moveit_demo_check.py
 ```
 
-**Pass** (planning only, no driver running): the RViz MotionPlanning plugin
-plans from home to a manual pose target (not yet validated: P0.3.9).
+The upstream `piper_description.xacro` names the `piper_gazebo` package (its
+Gazebo controller file), so `piper_sim/piper_gazebo` must be built with the
+other piper_ros packages even without Gazebo, or xacro fails with
+`package 'piper_gazebo' not found`.
+
+**Pass** (no driver running): in RViz, the MotionPlanning plugin plans from
+home to a manual pose target; headless, `moveit_demo_check.py` prints
+`MOVEIT DEMO OK`: a joint-space plan home → canned pose without execution
+(nothing moves), its execution on the demo's mock hardware, a plan and
+execution to a flange pose from `/compute_fk` (IK), and the way back to the
+SRDF state `zero`. Checked 2026-10-13 with OMPL (MoveIt 2.5.9): 3 ms to plan,
+joints within 0.001 rad, flange 1.5 mm from the pose goal. The Pilz and CHOMP
+pipelines in the upstream config only load when their packages are installed
+(`ros-humble-moveit-planners`); OMPL alone is enough.
 
 `moveit_py` has no Humble binary, so `stem_grasp` cannot plan and execute;
 the documented options are building moveit2 from source in the container
