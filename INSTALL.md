@@ -998,7 +998,16 @@ ros2 run scout_piper_bringup moveit_demo_check.py
 The upstream `piper_description.xacro` names the `piper_gazebo` package (its
 Gazebo controller file), so `piper_sim/piper_gazebo` must be built with the
 other piper_ros packages even without Gazebo, or xacro fails with
-`package 'piper_gazebo' not found`.
+`package 'piper_gazebo' not found`. The Step 6 package lists do not include
+the MoveIt config; build it with:
+
+```bash
+./scripts/colcon_build_safe.sh --symlink-install --packages-up-to piper_with_gripper_moveit piper_gazebo
+```
+
+It needs MoveIt's OMPL planner and ros2_control (`ros-humble-moveit-planners-ompl`,
+`ros-humble-controller-manager`, `ros-humble-joint-trajectory-controller`,
+`ros-humble-joint-state-broadcaster`; `ros-humble-moveit` brings them all).
 
 **Pass** (no driver running): in RViz, the MotionPlanning plugin plans from
 home to a manual pose target; headless, `moveit_demo_check.py` prints
