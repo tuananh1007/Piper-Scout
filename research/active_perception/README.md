@@ -29,9 +29,10 @@ What exists and what it showed:
   on a joint already known); a view is needed while a required term is unmet.
 - **Reachable views.** Candidates are whole-body poses the MPC reaches: inside
   its reach margin and with a penalty on approach-axis turns (on the fake
-  robot it stalled short of stretched-arm views). This constraint costs most
-  of the simulated success rate: with views at any valid arm pose the
-  policies clear the corridor in far more scenes (package README table).
+  robot it stalled short of stretched-arm views). In simulation the fused
+  policy is the fastest to a ready scene (14.5 s, 4.5 views) but not more
+  often ready than a fixed ring of views (17 vs 19 of 30); with views at any
+  arm pose the ring reaches 24/30 and the fused policy 18/30 (package README).
 - **Thin structures.** The sensor model drops depth on stems narrower than a
   few pixels; a corridor voxel clears only with a depth return behind it.
   VGGT is wrapped (sparse-view batching, metric scale from the D405 or the

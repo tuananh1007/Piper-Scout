@@ -232,3 +232,23 @@ def corridor_mask(grid: OccupancyGrid, start: np.ndarray, end: np.ndarray, radiu
     if exclude is not None:
         m &= ~exclude(C.reshape(-1, 3)).reshape(m.shape)
     return m
+
+
+def blocked_distance_fn(grid: OccupancyGrid, outside_fn=None):
+    """Distance to the nearest occupied or unknown voxel (minus half a voxel)
+    inside the grid, ``outside_fn`` (or free) outside it; (dist, valid)."""
+    blocked = grid.occupied | grid.unknown
+    from scipy.ndimage import distance_transform_edt  # noqa: PLC0415
+    D = distance_transform_edt(~blocked) * grid.voxel_size - 0.5 * grid.voxel_size if blocked.any() else None
+
+    def fn(P):
+        P = np.asarray(P, float).reshape(-1, 3)
+        idx, inb = grid.index(P)
+        out = np.full(len(P), np.inf)
+        if outside_fn is not None and (~inb).any():
+            out[~inb] = outside_fn(P[~inb])[0]
+        if D is not None and inb.any():
+            i = idx[inb]
+            out[inb] = D[i[:, 0], i[:, 1], i[:, 2]]
+        return out, np.ones(len(P), bool)
+    return fn

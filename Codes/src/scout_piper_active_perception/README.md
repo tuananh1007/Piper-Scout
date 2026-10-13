@@ -18,8 +18,8 @@ fixed ring / random / geometry-only / JEPA-only / fused, exit criterion
 | `stem_joint.py` | Stem joint (grasp-point axis) as a cylinder fitted to the target's points (Gauss-Newton, radius prior, trimming); Fisher information of the axis per point (depth noise σ_z = σ₀ + k₂z² along the ray, one pixel across it, projected on the surface normal); per-view camera pose error mapped to the joint parameters and fused per view, I = I_prior + Σ_v (I + I_v P_v)⁻¹ I_v; predicted information of a candidate camera (surface facing it, in the image, pixel count, the sensor's thin-structure survival, transmittance through the map); `axis_sigma` (worst 1-σ lateral axis uncertainty over ±3 cm) |
 | `grid.py` | Occupancy view of the semantic scene (from the CPU `SemanticVoxelMap` or the `/scene_repr/distance_field` snapshot): occupied (leaves included), unknown; transmittance with an unknown voxel occupied with the canopy fill fraction (0.02); `voxel_gain`: expected corridor voxels a camera clears (reached *and* a depth return behind them within range); unknown share of the approach corridor without the one-voxel skin in front of surfaces |
 | `uncertainty.py` | U_joint = σ/(σ + 1 mm), U_corridor = f/(f + 5 %), U_geometry = max, U_JEPA from `/piper_jepa/target_state` (1 lost or uninitialised, 0.75 occluded, 1 − confidence tracking), U_twin = 1 − `/plant_twin/state` confidence while touching; 0.5 = requirement just met. A view is needed while a required term is above 0.5; U_total is reported and ranks |
-| `candidates.py` | Reachable camera poses looking at the target: arm joints sampled (0.15 rad from the limits), base pose solved so the optical axis hits the target at 0.2–0.45 m, or arm-only with the target within 10° of the axis; collision-checked against the map (occupied and unknown block, as the MPC's no_entry policy would); `move_time` |
-| `nbv.py` | `ViewPlanner`: gains per candidate (target pixels, joint Fisher gain, corridor voxels cleared, twin point), normalised; policies `fixed_ring`, `random`, `geometry` (unknown space seen, unweighted), `target` (JEPA-only: target pixels), `fused` (weights by how far each required term is from being met), minus 0.02 per second of motion |
+| `candidates.py` | Reachable camera poses looking at the target: arm joints sampled (0.15 rad from the limits, shoulder-to-wrist within the MPC's 0.36 m reach margin), base pose solved so the optical axis hits the target at 0.2–0.45 m, or arm-only with the target within 10° of the axis; collision-checked against the map (occupied and unknown block, as the MPC's no_entry policy would); `move_time`, `axis_turn` |
+| `nbv.py` | `ViewPlanner`: gains per candidate (target pixels, joint Fisher gain, corridor voxels cleared, twin point), normalised; policies `fixed_ring`, `random`, `geometry` (unknown space seen, unweighted), `target` (JEPA-only: target pixels), `fused` (weights by how far each required term is from being met), minus 0.02 per second of motion and 0.15 per radian of approach-axis turn |
 | `scene.py` | Simulated plant (scout_piper_whole_body_mpc plant rows, target moved to the middle of a branch, leaves in front of it): exact ray casting of depth + class labels, D405-like sensor (noise, thin-structure dropout) |
 | `sim.py` | One simulated episode: scan pose, first view, then plan / move / render / integrate / refit until the requirements are met; teleport or the whole-body MPPI as executor (P4.3) |
 | `vggt.py` | P4.1 helpers: `SparseViewBatcher` (keyframes by baseline / angle, anchor kept), lazy VGGT wrapper (`facebook/VGGT-1B`, or any `model_fn`), metric scale from the D405 depth or the robot's camera baselines, `fuse_depth` (sensor where valid, VGGT where the sensor dropped and VGGT is confident, agreement reported) |
@@ -30,6 +30,12 @@ Why the corridor and not only the joint: in simulation one clear view at
 about 0.5–1 mm). What takes views is seeing past the leaves into the space
 the gripper will move through: the MPC's `unknown_policy: no_entry` cannot
 enter unknown space, so an approach corridor left unknown blocks the grasp.
+
+The fake-robot check (`scout_piper_bringup/scripts/active_perception_chain_check.py`)
+runs the node, the MPC and moveit_servo on the fake arm and base with a
+simulated plant rendered from the camera pose in TF: scan pose and two planned
+views reached in 3.5-6.6 s, the target in view from both, stem axis error
+0.56 mm (σ 0.52 mm), uncertainty falling.
 
 ## Node
 
@@ -71,35 +77,52 @@ policy starts from the same scan pose and first view, uses the same stopping
 rule (required terms met), at most 8 views. Per-view camera pose error 0.5 mm
 / 0.1°, depth noise 0.5 mm + 0.002·z², thin-structure dropout below 6 px.
 
-30 scenes (2026-10-12, teleport executor; medians over scenes):
+30 scenes (2026-10-12, teleport executor, medians over scenes). Views are
+whole-body poses inside the MPC's reach margin (shoulder-to-wrist ≤ 0.36 m),
+scored with 0.02 per second of motion and 0.15 per radian of approach-axis
+turn:
 
 | policy | success | views | time [s] | views to success | axis error [mm] | corridor unknown | min. clearance to stems [cm] | leaf penetration |
 |---|---|---|---|---|---|---|---|---|
-| fixed ring | 14/30 | 3.0 | 19.2 | 4.0 | 0.94 | 4.8 % | 2.6 | 0 |
-| random | 21/30 | 6.0 | 43.6 | 3.0 | 1.03 | 3.2 % | 2.2 | 0 |
-| geometry-only | 24/30 | 4.0 | 19.6 | 3.0 | 0.61 | 3.6 % | 2.0 | 0 |
-| target-only (JEPA-only) | 18/30 | 3.0 | 19.4 | 2.0 | 0.70 | 4.7 % | 2.2 | 0 |
-| **fused** | **23/30** | **2.5** | **13.2** | **2.0** | 0.82 | 3.5 % | 4.0 | 0 |
+| fixed ring | 19/30 | 3.5 | 23.7 | 4.0 | 1.09 | 4.0 % | 3.1 | 0 |
+| random | 18/30 | 7.5 | 40.0 | 3.0 | 0.86 | 3.7 % | 2.2 | 0 |
+| geometry-only | 13/30 | 8.0 | 21.0 | 4.0 | 1.27 | 5.5 % | 2.6 | 0 |
+| target-only (JEPA-only) | 8/30 | 8.0 | 29.9 | 3.0 | 0.66 | 6.2 % | 2.4 | 0 |
+| **fused** | **17/30** | **4.5** | **14.5** | **2.0** | 0.79 | 4.3 % | 4.1 | 0 |
 
-The fused policy needs a median 2.5 views and 13 s, against 4 views and 20 s
-for geometry-only NBV, at one success fewer (23 vs 24 of 30): the exit
-criterion's "fewer views or lower acquisition time" holds, "equal grasp
-readiness" within one scene. The fixed ring runs out of reachable ring
-points (it stops after its six), random wanders (6 views, 44 s) and
-target-only views fix the joint fastest but leave the corridor unknown. The
-misses of all policies are mostly corridors that stay above 5 % unknown
-within 8 views (space between dense leaves).
+Upper bound, views at any valid arm pose (`--no-reach-margin`; the real MPC
+does not reach a stretched arm): fixed ring 24/30 (4 views, 34.5 s), random
+21/30 (5, 40.9 s), fused 18/30 (5, 12.7 s), target-only 16/30, geometry-only
+15/30.
+
+Reading: the fused policy has the lowest acquisition time (14.5 s against
+23.7 s for the fixed ring, 21-40 s for the others) and needs the fewest views
+to a ready scene (median 2), but it is not more often ready than the fixed
+ring (17 vs 19 of 30, within the scatter of 30 scenes). The exit criterion's
+"lower acquisition time" holds in simulation; "equal or better grasp
+readiness" is not shown. In these scenes the ring's wide side views are what
+clears the approach corridor, and most misses of every policy are corridors
+left above 5 % unknown after 8 views: a voxel clears only with a depth return
+from behind it, and from the folded-arm poses the MPC reaches there is often
+nothing within the D405's range behind the corridor. The stem joint itself is
+fixed within one or two good views by every policy except random. Lowering the
+turn penalty (0 or 0.05) gave 16/30 with 6-6.5 views; aiming views at corridor
+points instead of the target did not help on 10 scenes. The real test is the
+ablation on plants (MODULE_TASKS.md C10).
+
+An earlier run that ignored the reach margin and the turn penalty (and drew
+fewer candidates) gave fused 23/30 in 2.5 views; it overstated what the MPC
+can execute: on the fake robot the MPC stalled 25-35 cm short of such views.
 
 Found on the way (each made the predicted gains disagree with rendering):
 an unknown voxel counted as occupied with p = 0.5 or 0.15 blocked every line
 of sight through the 20-30 unknown voxels left after one view (the canopy's
-fill fraction, 0.02, is the right prior); a corridor voxel only clears with
-a depth return behind it; independent per-point noise made one view's
-pose error look averaged away (σ 0.3 mm with 2-4 mm true error) and a
-per-point inflation overcorrected (σ up to 5 mm with 1 mm error), the
-per-view fusion is consistent (true error / σ ≈ 1.1-1.4); weighting terms by
-U instead of by how far they are from being met spent views on a joint
-already known.
+fill fraction, 0.02, is the right prior); a corridor voxel only clears with a
+depth return behind it; independent per-point noise made one view's pose
+error look averaged away (σ 0.3 mm with 2-4 mm true error) and a per-point
+inflation overcorrected (σ up to 5 mm with 1 mm error), the per-view fusion is
+consistent (true error / σ ≈ 1.1-1.4); weighting terms by U instead of by how
+far they are from being met spent views on a joint already known.
 
 ## Tests
 

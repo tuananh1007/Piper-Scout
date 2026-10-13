@@ -226,27 +226,34 @@ class OperatorGuiNode(Node):
         return {"ok": True}
 
     def _drive_tick(self) -> None:
+        """Publish the held command while it is fresh, then one zero; nothing
+        otherwise (a steady stream of zeros would fight the MPC or the pipeline)."""
         if not self.drive_enabled:
             return
         fresh = time.time() - self.cmd_t < float(self.p("hold_s"))
         c = self.cmd if fresh else {}
         vmax, wmax, amax = float(self.p("base_v_max")), float(self.p("base_w_max")), float(self.p("arm_v_max"))
-        tw = Twist()
-        tw.linear.x = float(np.clip(c.get("v", 0.0), -vmax, vmax))
-        tw.angular.z = float(np.clip(c.get("w", 0.0), -wmax, wmax))
-        self.pub_base.publish(tw)
+        v = float(np.clip(c.get("v", 0.0), -vmax, vmax))
+        w = float(np.clip(c.get("w", 0.0), -wmax, wmax))
         arm = np.clip(np.asarray(c.get("arm", [0.0] * 6), float)[:6], -amax, amax)
-        if fresh or self._arm_was_moving:
+        base_moving = bool(fresh and (v != 0.0 or w != 0.0))
+        arm_moving = bool(fresh and np.any(arm != 0))
+        if base_moving or self._base_was_moving:
+            tw = Twist()
+            tw.linear.x, tw.angular.z = v, w
+            self.pub_base.publish(tw)
+        if arm_moving or self._arm_was_moving:
             ts = TwistStamped()
             ts.header.stamp = self.get_clock().now().to_msg()
             ts.header.frame_id = str(self.p("camera_frame"))
             ts.twist.linear.x, ts.twist.linear.y, ts.twist.linear.z = map(float, arm[:3])
             ts.twist.angular.x, ts.twist.angular.y, ts.twist.angular.z = map(float, arm[3:])
             self.pub_twist.publish(ts)
-        self._arm_was_moving = bool(fresh and np.any(arm != 0))
+        self._base_was_moving, self._arm_was_moving = base_moving, arm_moving
         if not fresh:
             self.cmd = {}
 
+    _base_was_moving = False
     _arm_was_moving = False
 
     # ------------------------------------------------------------- voice

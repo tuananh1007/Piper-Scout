@@ -17,6 +17,7 @@ active_perception:
     beta: 0.5                           # U_geometry weight
     gamma: 0.2                          # U_twin weight
     lambda_t: 0.02                      # score per second of motion to the view
+    lambda_turn: 0.15                   # score per radian the approach axis turns (the MPC closes large turns slowly)
     required: [joint, corridor, jepa]   # terms that must be met (U <= 0.5) before the grasp
     sigma_req_mm: 1.0                   # stem joint: worst 1-sigma lateral axis uncertainty
     corridor_req: 0.05                  # approach corridor: unknown share

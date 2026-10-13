@@ -80,6 +80,7 @@ def main():
     ap.add_argument("--max-views", type=int, default=8)
     ap.add_argument("--executor", choices=("teleport", "mpc"), default="teleport")
     ap.add_argument("--lambda-t", type=float, default=0.02, help="score per second of motion")
+    ap.add_argument("--lambda-turn", type=float, default=0.15, help="score per radian of approach-axis turn")
     ap.add_argument("--pose-sigma-mm", type=float, default=0.5)
     ap.add_argument("--pose-sigma-deg", type=float, default=0.1)
     ap.add_argument("--no-reach-margin", action="store_true",
@@ -87,7 +88,7 @@ def main():
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--out", default="")
     a = ap.parse_args()
-    kw = {"max_views": a.max_views, "executor": a.executor, "lambda_t": a.lambda_t,
+    kw = {"max_views": a.max_views, "executor": a.executor, "lambda_t": a.lambda_t, "lambda_turn": a.lambda_turn,
           "pose_sigma_m": a.pose_sigma_mm / 1000.0, "pose_sigma_deg": a.pose_sigma_deg,
           "reach_max_m": None if a.no_reach_margin else 0.36}
     jobs = [(s, p, kw) for s in range(a.first_seed, a.first_seed + a.scenes) for p in a.policies.split(",")]

@@ -34,13 +34,12 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
 
 from scout_piper_scene_repr_py.voxel_map import SemanticVoxelMap, grid_around
 from scout_piper_whole_body_mpc.dynamics.whole_body import WholeBodyModel
 
 from .candidates import camera_pose_fn, move_time, sample_views
-from .grid import OccupancyGrid, corridor_mask
+from .grid import OccupancyGrid, blocked_distance_fn, corridor_mask
 from .nbv import ViewPlanner
 from .scene import CLASSES, Camera, DepthSensor, backproject, make_ap_scene, render
 from .stem_joint import NoiseModel, StemJointEstimator, axis_error
@@ -55,25 +54,6 @@ def _small_rotation(rng, sigma_rad):
     k = w / th
     Kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
     return np.eye(3) + np.sin(th) * Kx + (1 - np.cos(th)) * Kx @ Kx
-
-
-def blocked_distance_fn(grid: OccupancyGrid, outside_fn=None):
-    """Distance to the nearest occupied or unknown voxel (minus half a voxel)
-    inside the grid, ``outside_fn`` (or free) outside it; (dist, valid)."""
-    blocked = grid.occupied | grid.unknown
-    D = distance_transform_edt(~blocked) * grid.voxel_size - 0.5 * grid.voxel_size if blocked.any() else None
-
-    def fn(P):
-        P = np.asarray(P, float).reshape(-1, 3)
-        idx, inb = grid.index(P)
-        out = np.full(len(P), np.inf)
-        if outside_fn is not None and (~inb).any():
-            out[~inb] = outside_fn(P[~inb])[0]
-        if D is not None and inb.any():
-            i = idx[inb]
-            out[inb] = D[i[:, 0], i[:, 1], i[:, 2]]
-        return out, np.ones(len(P), bool)
-    return fn
 
 
 @dataclass
@@ -119,7 +99,8 @@ def initial_state(model, cam_fn, scene, guess, axis, standoff_m=0.4, rng=None):
 
 def run_episode(seed: int, policy: str, max_views: int = 8, camera: Optional[Camera] = None,
                 sensor: Optional[DepthSensor] = None, pose_sigma_m: float = 0.0005, pose_sigma_deg: float = 0.1,
-                guess_sigma_m: float = 0.01, lambda_t: float = 0.02, weights: Optional[Weights] = None,
+                guess_sigma_m: float = 0.01, lambda_t: float = 0.02, lambda_turn: float = 0.15,
+                weights: Optional[Weights] = None,
                 executor: str = "teleport", n_candidates: int = 200, mpc_samples: int = 256,
                 mpc_steps: int = 150, reach_max_m: Optional[float] = 0.36, record_trace: bool = False) -> EpisodeResult:
     camera = camera or Camera()
@@ -142,7 +123,7 @@ def run_episode(seed: int, policy: str, max_views: int = 8, camera: Optional[Cam
                        thin_hi_px=sensor.thin_hi_px, pose_m=pose_sigma_m, pose_rad=float(np.radians(pose_sigma_deg)))
     est = StemJointEstimator(guess, noise=noise, rng=np.random.default_rng(seed + 7))
     planner = ViewPlanner(model, camera.K, camera.image_hw, camera.near_m, camera.far_m, lambda_t=lambda_t,
-                          rng=np.random.default_rng(seed + 11))
+                          lambda_turn=lambda_turn, rng=np.random.default_rng(seed + 11))
     hard_true = scene.plant.distance_fn()
     from scout_piper_whole_body_mpc.scene_adapter import disc_distance  # noqa: PLC0415
 

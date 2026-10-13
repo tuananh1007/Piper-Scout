@@ -48,7 +48,7 @@ from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
 from .candidates import camera_pose_fn, sample_views
-from .grid import OccupancyGrid, corridor_mask
+from .grid import OccupancyGrid, blocked_distance_fn, corridor_mask
 from .nbv import ViewPlanner
 from .stem_joint import NoiseModel, StemJointEstimator
 from .uncertainty import Weights, assess, u_jepa_from_state, u_twin_from_state
@@ -108,7 +108,8 @@ class ActivePerceptionNode(Node):
             ("camera_info_topic", "/camera/color/camera_info"),
             ("policy", "fused"),
             ("alpha", 0.3), ("beta", 0.5), ("gamma", 0.2),
-            ("lambda_t", 0.03),
+            ("lambda_t", 0.02),
+            ("lambda_turn", 0.15),
             ("required", ["joint", "corridor", "jepa"]),
             ("sigma_req_mm", 1.0),
             ("corridor_req", 0.05),
@@ -298,7 +299,6 @@ class ActivePerceptionNode(Node):
         if grid is None:
             return False, "no fresh distance field"
         u = self._assess(grid, x)
-        from .sim import blocked_distance_fn  # noqa: PLC0415
         cam_fn = camera_pose_fn(self.model, self.T_flange_cam)
         p = self.p
         corr = self._corridor(x)
@@ -308,7 +308,7 @@ class ActivePerceptionNode(Node):
                             max_base_move_m=float(p("max_base_move_m")), distance_fn=blocked_distance_fn(grid),
                             clearance_m=float(p("clearance_m")), max_candidates=int(p("n_candidates")))
         planner = ViewPlanner(self.model, self.K, self.hw, lambda_t=float(p("lambda_t")),
-                              corridor_radius_m=float(p("corridor_radius_m")))
+                              lambda_turn=float(p("lambda_turn")), corridor_radius_m=float(p("corridor_radius_m")))
         twin_pt = None
         if self.twin_state and u.twin > 0:
             twin_pt = self.est.cyl.p                       # the contact region is the target's
