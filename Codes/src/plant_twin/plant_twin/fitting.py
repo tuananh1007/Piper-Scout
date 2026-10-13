@@ -106,14 +106,25 @@ class PlantTwinFitter:
       'fd'  — scipy least_squares with finite-difference Jacobian (slow
               reference for debugging the analytic one).
     ``max_iter`` is the per-frame step budget (LM iterations or scipy nfev).
+    ``leaf_backend``: 'numpy' (default) or 'torch' (``leaf_torch.py``: the leaf's
+    residual and Jacobian on ``device``, e.g. the Orin's GPU; LM solver only).
     Each frame is warm-started from a constant-velocity prediction of the
     previous two leaf solutions.
     """
 
     def __init__(self, leaf: LeafModel, stem: StemModel, max_iter: int = 10,
                  solver: str = "lm", predict: bool = True, ftol: float = 1e-3,
-                 max_nfev: Optional[int] = None, analytic_jac: Optional[bool] = None):
+                 max_nfev: Optional[int] = None, analytic_jac: Optional[bool] = None,
+                 leaf_backend: str = "numpy", device: str = "cpu"):
         self.leaf, self.stem = leaf, stem
+        self._leaf_eval = None
+        if leaf_backend == "torch":
+            import torch  # noqa: PLC0415 — optional dependency
+            from .leaf_torch import TorchLeafEvaluator  # noqa: PLC0415
+            dtype = torch.float64 if device == "cpu" else torch.float32
+            self._leaf_eval = TorchLeafEvaluator(leaf, device=device, dtype=dtype)
+        elif leaf_backend != "numpy":
+            raise ValueError(f"unknown leaf_backend {leaf_backend!r}")
         self.ftol = ftol
         # Backwards-compatible aliases from the first version.
         if max_nfev is not None:
@@ -133,8 +144,9 @@ class PlantTwinFitter:
     # --------------------------------------------------------------- solvers
     def _solve(self, model, x0, args):
         if self.solver == "lm":
+            ev = self._leaf_eval.evaluate if (model is self.leaf and self._leaf_eval is not None) else model.evaluate
             res = levenberg_marquardt(
-                lambda x: model.evaluate(x, *args, want_jac=True), x0,
+                lambda x: ev(x, *args, want_jac=True), x0,
                 max_iter=self.max_iter, ftol=self.ftol)
             return res.x, res.cost
         jac = model.jacobian if self.solver == "trf" else "2-point"

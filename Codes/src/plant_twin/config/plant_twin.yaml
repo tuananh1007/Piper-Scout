@@ -14,3 +14,11 @@ plant_twin:
     rate_hz: 10.0
     stem_ctrl_points: 6
     stem_radius_m: 0.003
+    color_topic: "/camera/color/image_raw"   # baked into the UV texture
+    reinit_min_iou: 0.6            # mesh silhouette vs mask; below it for reinit_frames
+    reinit_frames: 5               #   frames in a row without contact: re-initialise
+    texture_size: 256              # texels per side
+    texture_every_n: 3             # bake every n-th frame
+    export_dir: "/tmp/plant_twin"  # ~/export writes OBJ + MTL + PNG here
+    leaf_backend: "numpy"          # "torch": leaf residual + Jacobian on `device` (leaf_torch.py)
+    device: "cpu"                  # e.g. "cuda" on the Orin

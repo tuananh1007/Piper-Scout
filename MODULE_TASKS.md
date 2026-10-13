@@ -427,6 +427,32 @@ batch size (`max_views`) that keeps the total memory under 48 GB and one
 reconstruction under 2 s, or record that VGGT runs on the workstation over the
 LAN instead.
 
+### B9 — plant_twin leaf evaluation on the GPU (P1.6.12)
+
+On the workstation (A1) and then the Orin (B1):
+
+```bash
+cd Codes/src/plant_twin
+python3 -m pytest test/test_leaf_torch.py -q -s          # equality with numpy; CPU ms/frame printed
+python3 - <<'PY'
+import time, numpy as np, torch
+from plant_twin.leaf import LeafModel
+from plant_twin.leaf_torch import TorchLeafEvaluator
+th = np.linspace(0, 2 * np.pi, 40, endpoint=False)
+leaf = LeafModel(np.column_stack([0.06 * np.cos(th), 0.05 * np.sin(th)]), mesh_res=20)
+x = leaf.initial_params([0.2, 0, 0], [0, 0, 0.3]); obs = leaf.vertices(x)[::2] + 0.001
+for name, ev in (("numpy", leaf.evaluate), ("cuda fp32", TorchLeafEvaluator(leaf, "cuda", torch.float32).evaluate)):
+    ev(x, obs); t0 = time.perf_counter()
+    for _ in range(200): ev(x, obs)
+    print(name, f"{(time.perf_counter() - t0) / 200 * 1e3:.2f} ms per evaluate")
+PY
+```
+
+**Pass:** the torch tests pass. **Record:** ms per evaluate for numpy and CUDA
+on both machines; with CUDA clearly faster on the Orin, set `leaf_backend:
+torch`, `device: cuda` in `plant_twin.yaml` and note the frame rate of the
+twin in `/plant_twin/state` (stamps) during C-tests.
+
 ---
 
 ## Part C — On the robot
@@ -698,6 +724,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | B6 C3 node hardware-free | | | cost active, solve ms |
 | B7 MPPI servo on the Orin | | | median ms, chosen samples |
 | B8 VGGT on the Orin | | | s and GB per batch, chosen max_views |
+| B9 plant_twin evaluate on the GPU | | | ms per evaluate, numpy vs CUDA, PC and Orin |
 | C1 self-filter | | | boxes, filtered px |
 | C2 calibration | | | tcp offset, hand-eye origin, k_v, k_omega, effort σ, 3-σ force, known-mass reading |
 | C3 MPC with profile | | | time, error |
