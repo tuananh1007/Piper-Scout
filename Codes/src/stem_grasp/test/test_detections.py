@@ -36,3 +36,24 @@ def test_colour_names():
     assert colour_name(0, 200, 200) == "red" and colour_name(176, 200, 200) == "red"
     assert colour_name(60, 200, 200) == "green" and colour_name(60, 10, 230) == "white"
     assert colour_name(60, 200, 20) == "black"
+
+
+def test_caption_instances_become_detections():
+    """Grounded-SAM's per-caption instances (stand-in boxes for the models)
+    become classes named after the captions."""
+    from stem_grasp.detections import collect_caption_instances
+    H, W = 100, 120
+
+    def box(x0, y0, x1, y1):
+        m = np.zeros((H, W), bool)
+        m[y0:y1, x0:x1] = True
+        return m
+    found = {"flower": [(box(20, 20, 44, 40), 0.6), (box(80, 20, 104, 40), 0.55)], "leaf": [(box(40, 70, 76, 90), 0.5)]}
+    masks, classes, confs, names = collect_caption_instances(
+        "stem", [(box(58, 40, 62, 100), 0.9)], ["flower", "leaf", "Flower", ""], lambda c: found.get(c, []))
+    assert names == {0: "stem", 1: "flower", 2: "leaf"}                 # repeated and empty captions skipped
+    assert classes == [0, 1, 1, 2] and confs == [0.9, 0.6, 0.55, 0.5]
+    bgr = np.zeros((H, W, 3), np.uint8)
+    bgr[20:40, 20:44] = (0, 0, 220)
+    dets = describe_instances(masks, classes, confs, names, bgr)
+    assert [d["class"] for d in dets] == ["stem", "flower", "flower", "leaf"] and dets[1]["colour"] == "red"

@@ -20,6 +20,10 @@ them and turns its output into metric depth that fills the sensor's holes.
     camera, normalised). The scale comes from the D405 where both have depth
     (median ratio over confident pixels) or, without sensor depth, from the
     robot's camera baselines (FK + hand-eye) against VGGT's.
+  * ``DepthFiller``: keeps the newest keyframe's reconstruction and fills
+    the current frame only while the camera is still at that keyframe (the
+    scene integrators pair depth with the newest masks); ``fused_depth_node``
+    publishes the result for the semantic map;
   * ``fuse_depth``: sensor depth where valid; scaled VGGT depth where the
     sensor has none and VGGT is confident. Where both have depth, the share
     agreeing within ``max_rel_diff`` is reported (a low value means a wrong
@@ -197,3 +201,82 @@ def reconstruct(batcher: SparseViewBatcher, model: VGGTReconstructor, min_conf: 
         sensor = v.depth if v.depth is not None else np.full(hw, np.nan)
         out.append(fuse_depth(sensor, d, c, min_conf))
     return {"scale": s, "views": out}
+
+
+class DepthFiller:
+    """Fills the current depth frame's holes from the last reconstruction.
+
+    The scene integrators pair each depth frame with the newest class masks,
+    so filled depth must belong to the current camera pose. A reconstruction
+    is kept for its newest keyframe, and frames are filled only while the
+    camera stays within ``still_m`` / ``still_deg`` of that keyframe (after a
+    planned view is reached the camera settles there); otherwise the sensor
+    depth passes through unchanged."""
+
+    def __init__(self, model: VGGTReconstructor, batcher: SparseViewBatcher, min_views: int = 2,
+                 still_m: float = 0.01, still_deg: float = 2.0, min_conf: float = 3.0):
+        self.model, self.batcher = model, batcher
+        self.min_views, self.still_m, self.still_deg, self.min_conf = min_views, still_m, still_deg, min_conf
+        self.result: Optional[Dict] = None
+        self.dirty = False
+
+    def add_frame(self, view: View) -> bool:
+        added = self.batcher.offer(view)
+        self.dirty |= added
+        return added
+
+    def ready(self) -> bool:
+        return self.dirty and self.batcher.ready(self.min_views)
+
+    def reconstruct(self) -> Optional[Dict]:
+        """Run the model on the keyframes; keep the newest keyframe's metric
+        depth and confidence. None without a scale."""
+        import time  # noqa: PLC0415
+        views = list(self.batcher.views)
+        self.dirty = False
+        t0 = time.perf_counter()
+        pred = self.model(np.stack([v.rgb for v in views]))
+        s = metric_scale(pred, views, self.min_conf)
+        if s is None:
+            return None
+        k = len(views) - 1
+        hw = views[k].depth.shape if views[k].depth is not None else views[k].rgb.shape[:2]
+        self.result = {"T": views[k].T_world_cam.copy(), "depth": s * resize_to(pred["depth"][k], hw),
+                       "conf": resize_to(pred["depth_conf"][k], hw), "scale": s, "views": len(views),
+                       "seconds": time.perf_counter() - t0, "stamp": views[k].stamp}
+        return self.result
+
+    def fill(self, depth: np.ndarray, T_world_cam: np.ndarray):
+        """(depth out, info dict): fused when the camera is at the
+        reconstructed keyframe, else the input unchanged."""
+        r = self.result
+        if r is None:
+            return depth, {"filled": 0, "reason": "no reconstruction"}
+        moved = float(np.linalg.norm(T_world_cam[:3, 3] - r["T"][:3, 3]))
+        turned = float(np.degrees(_rot_angle(T_world_cam[:3, :3], r["T"][:3, :3])))
+        if moved > self.still_m or turned > self.still_deg or r["depth"].shape != depth.shape:
+            return depth, {"filled": 0, "reason": f"camera moved {100 * moved:.1f} cm / {turned:.1f} deg"}
+        fused, src, agree = fuse_depth(depth, r["depth"], r["conf"], self.min_conf)
+        return fused, {"filled": int((src == 2).sum()), "agreement": agree, "reason": "fused"}
+
+
+def inpaint_stand_in(batcher: SparseViewBatcher, scale: float = 2.5) -> Callable[[np.ndarray], Dict[str, np.ndarray]]:
+    """A stand-in for VGGT (tests, hardware-free checks): each keyframe's
+    sensor depth with its holes inpainted, in VGGT-like units (÷ ``scale``),
+    confident everywhere. Not a reconstruction."""
+    import cv2  # noqa: PLC0415
+
+    def fn(x: np.ndarray) -> Dict[str, np.ndarray]:
+        S, _, h, w = x.shape
+        out = []
+        for v in batcher.views[:S]:
+            d = np.nan_to_num(v.depth if v.depth is not None else np.zeros(v.rgb.shape[:2]), nan=0.0).astype(np.float32)
+            hole = (d <= 0).astype(np.uint8)
+            dmax = max(float(d.max()), 1e-3)
+            filled = cv2.inpaint((d / dmax * 255).astype(np.uint8), hole, 3, cv2.INPAINT_TELEA).astype(np.float32) / 255 * dmax
+            filled = np.where(hole > 0, filled, d)
+            out.append(cv2.resize(filled, (w, h), interpolation=cv2.INTER_NEAREST) / scale)
+        E = np.stack([np.c_[np.eye(3), np.zeros(3)] for _ in range(S)])
+        return {"depth": np.stack(out), "depth_conf": np.full((S, h, w), 5.0, np.float32), "extrinsic": E,
+                "intrinsic": np.repeat(np.eye(3)[None], S, 0)}
+    return fn

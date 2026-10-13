@@ -135,7 +135,7 @@ If `python3 -m pytest` is missing in the container, install it first with
 `plant_twin` 22, `scout_piper_jepa` 20 (+4 skipped without torch, 24 with
 torch), `scout_piper_whole_body_mpc` 36 (+10 skipped without torch, 46 with
 torch) passed; no failures in `colcon test-result`. Added 2026-10-12:
-`scout_piper_active_perception` 12, `scout_piper_language` 16 (one of them
+`scout_piper_active_perception` 13, `scout_piper_language` 16 (one of them
 drives the operator page in headless Chromium through Node's Playwright, and is
 skipped where Node or Playwright is missing).
 **Record:** the last line of each file.

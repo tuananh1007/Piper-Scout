@@ -1590,7 +1590,11 @@ candidates keep the arm within the MPC's reach margin (`reach_max_m`, as
 `whole_body_mpc.yaml`). The depth noise model (`depth_sigma0_m`, `depth_k2`) is
 a placeholder until MODULE_TASKS.md C10 measures the D405. VGGT (multi-view
 depth for thin stems, `vggt.py`) is not installed with the workspace: GPU
-environment only (MODULE_TASKS.md A14, B8).
+environment only (MODULE_TASKS.md A14, B8). With it,
+`ros2 run scout_piper_active_perception fused_depth_node` republishes the
+aligned depth with the stem's holes filled on `/active_perception/fused_depth`
+(the scene stack's `depth_topic`); `-p model:=stand_in` exercises the plumbing
+without a GPU.
 
 **Hardware-free check:** `./scripts/hardware_free_checks.sh --only active_perception`
 (fake arm and base, MPC executing; a simulated plant is rendered from the

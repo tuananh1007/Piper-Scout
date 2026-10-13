@@ -22,8 +22,9 @@ fixed ring / random / geometry-only / JEPA-only / fused, exit criterion
 | `nbv.py` | `ViewPlanner`: gains per candidate (target pixels, joint Fisher gain, corridor voxels cleared, twin point), normalised; policies `fixed_ring`, `random`, `geometry` (unknown space seen, unweighted), `target` (JEPA-only: target pixels), `fused` (weights by how far each required term is from being met), minus 0.02 per second of motion and 0.15 per radian of approach-axis turn |
 | `scene.py` | Simulated plant (scout_piper_whole_body_mpc plant rows, target moved to the middle of a branch, leaves in front of it): exact ray casting of depth + class labels, D405-like sensor (noise, thin-structure dropout) |
 | `sim.py` | One simulated episode: scan pose, first view, then plan / move / render / integrate / refit until the requirements are met; teleport or the whole-body MPPI as executor (P4.3) |
-| `vggt.py` | P4.1 helpers: `SparseViewBatcher` (keyframes by baseline / angle, anchor kept), lazy VGGT wrapper (`facebook/VGGT-1B`, or any `model_fn`), metric scale from the D405 depth or the robot's camera baselines, `fuse_depth` (sensor where valid, VGGT where the sensor dropped and VGGT is confident, agreement reported) |
+| `vggt.py` | P4.1 helpers: `SparseViewBatcher` (keyframes by baseline / angle, anchor kept), lazy VGGT wrapper (`facebook/VGGT-1B`, or any `model_fn`), metric scale from the D405 depth or the robot's camera baselines, `fuse_depth` (sensor where valid, VGGT where the sensor dropped and VGGT is confident, agreement reported), `DepthFiller` (fills the current frame only while the camera is still at the newest reconstructed keyframe: the scene integrators pair depth with the newest masks) |
 | `active_perception_node.py` | ROS 2 node (below) |
+| `fused_depth_node.py` | ROS 2 node: keyframes from the wrist camera, VGGT in a worker thread, `/active_perception/fused_depth` (32FC1, the depth frame's header: holes filled at the keyframe, sensor depth otherwise), `~/status`, `~/reconstruct`; `model: stand_in` inpaints instead (tests) |
 
 Why the corridor and not only the joint: in simulation one clear view at
 0.2–0.4 m fixes the joint to well under a millimetre (with the pose error,
@@ -141,11 +142,12 @@ short episode. The node runs end to end on the fake robot in
 
 ## Open
 
-- **VGGT on the GPU / Orin** (P4.1): the wrapper is tested with a fake model
-  only; inference time, memory and depth quality on thin stems are
-  MODULE_TASKS.md A14 (workstation) and B8 (Orin). The fused depth is not yet
-  wired into the semantic map (a remap of the aligned depth topic once A14
-  shows it helps).
+- **VGGT on the GPU / Orin** (P4.1): the wrapper and `fused_depth_node` are
+  tested with a stand-in model only (in ROS: 4 keyframes, the stem's missing
+  depth filled, scale recovered); inference time, memory and depth quality on
+  thin stems are MODULE_TASKS.md A14 (workstation) and B8 (Orin). The semantic
+  map takes the fused depth by setting its `depth_topic` to
+  `/active_perception/fused_depth` once A14 shows it helps.
 - **Robot runs** (P4.3, P4.4): MODULE_TASKS.md C10.
 - The simulation's leaves are flat discs and the sensor model is a
   hypothesis (dropout below 6 px, σ_z); the noise parameters should come from

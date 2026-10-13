@@ -330,7 +330,10 @@ the MPPI servo. **Record:** the timing table; servo approach time and the
    **Record:** seconds and GPU memory per batch of 2 / 4 / 8 views, the scale,
    the agreement with the D405 (`fuse_depth` third value; expect > 0.8 within
    5 %), and how many stem pixels VGGT fills where the D405 dropped out
-   (source 2 on the target mask).
+   (source 2 on the target mask). Live, with the camera running:
+   `ros2 run scout_piper_active_perception fused_depth_node`, move the arm
+   through 3-4 views and hold still; `ros2 topic echo /fused_depth/status`
+   (keyframes, seconds, scale, `filled`, `agreement`).
 2. Simulated ablation (CPU, about 15 min with 4 jobs):
 
    ```bash

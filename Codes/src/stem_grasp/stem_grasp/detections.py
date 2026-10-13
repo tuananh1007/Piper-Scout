@@ -81,3 +81,27 @@ def describe_instances(masks: Sequence[np.ndarray], classes: Sequence[int], conf
                                    round(zc, 4)]
         out.append(det)
     return out
+
+
+def collect_caption_instances(base: str, stem_instances, captions, instances_for):
+    """(masks, class ids, confs, names) from open-vocabulary queries: the stem
+    caption's instances as class 0, then each further caption (target and
+    detection captions; empty and repeated ones skipped) as the next class,
+    its instances from ``instances_for(caption) -> [(mask, conf)]``."""
+    names = {0: base}
+    masks, classes, confs = [], [], []
+    for m, c in stem_instances:
+        masks.append(m)
+        classes.append(0)
+        confs.append(float(c))
+    for cap in captions:
+        cap = str(cap).strip()
+        if not cap or cap.lower() in (n.lower() for n in names.values()):
+            continue
+        cid = len(names)
+        names[cid] = cap
+        for m, c in instances_for(cap):
+            masks.append(m)
+            classes.append(cid)
+            confs.append(float(c))
+    return masks, classes, confs, names

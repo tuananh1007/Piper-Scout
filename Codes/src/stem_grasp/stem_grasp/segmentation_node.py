@@ -13,6 +13,9 @@ full inference pipeline:
   - Stationary gate via joint_states
   - Target caption channel (fruit/flower) → /stem_grasp/target_mask and
     /stem_grasp/target_point in camera optical frame
+  - Per-instance detections for the operator layer (Phase 5) →
+    /stem_grasp/detections: every YOLO instance, or with Grounded-SAM the
+    stem, target and ``detection_captions`` instances (open vocabulary)
   - Debug overlay image
 
 The only behavioral changes vs the ROS 1 source are mechanical ROS 1→2 swaps:
@@ -189,6 +192,10 @@ class StemSegmentationNode(Node):
             # operator layer (scout_piper_language, Phase 5)
             publish_detections=True,
             detections_topic="/stem_grasp/detections",
+            # Grounded-SAM: open-vocabulary classes published as detections as
+            # well (each caption one Grounding-DINO query + SAM masks), e.g.
+            # ["flower", "leaf", "fruit"]; [""] = only the stem and target captions
+            detection_captions=[""],
         )
         self.p = p
         self.throttle = _Throttle()
@@ -279,6 +286,7 @@ class StemSegmentationNode(Node):
         )
         self.detections_pub = self.create_publisher(String, str(self.p["detections_topic"]), 1)
         self._yolo_instances = None
+        self._gsam_instances = None             # (masks, class ids, confs, names) of the last Grounded-SAM run
 
         # --- Subscribers ---------------------------------------------------
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -519,6 +527,10 @@ class StemSegmentationNode(Node):
                 if tmask is not None:
                     self._latest_target_mask = tmask
 
+            if bool(self.p["publish_detections"]):
+                self._gsam_instances = self._collect_gsam_instances(
+                    bgr, image_tensor, [(m > 0, c) for m, c in zip(mask_list, conf_list)],
+                    box_thr, txt_thr)
             return self._select_instance_mask(mask_list, conf_list)
         except Exception as exc:
             if self.throttle.ok("gsam_fail", 2.0):
@@ -527,6 +539,34 @@ class StemSegmentationNode(Node):
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def _gsam_caption_instances(self, bgr, image_tensor, caption, box_thr, txt_thr):
+        """[(mask bool (H, W), confidence)] for one Grounding-DINO caption,
+        each box segmented by SAM."""
+        caption = str(caption).strip()
+        if not caption:
+            return []
+        boxes, logits, _ = self._gdino_predict(
+            model=self._gdino_model, image=image_tensor, caption=caption,
+            box_threshold=box_thr, text_threshold=txt_thr, device=self._device,
+        )
+        if boxes is None or len(boxes) == 0:
+            return []
+        h, w = bgr.shape[:2]
+        xyxy = self._box_convert(boxes=boxes * self._torch.Tensor([w, h, w, h]),
+                                 in_fmt="cxcywh", out_fmt="xyxy").to(self._device)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        self._sam_predictor.set_image(rgb)
+        transformed = self._sam_predictor.transform.apply_boxes_torch(xyxy, rgb.shape[:2])
+        masks, _, _ = self._sam_predictor.predict_torch(
+            point_coords=None, point_labels=None, boxes=transformed, multimask_output=False)
+        out = []
+        for i in range(masks.shape[0]):
+            m = masks[i, 0].detach().cpu().numpy().astype(bool)
+            if m.shape != (h, w):
+                m = cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+            out.append((m, float(logits[i].item()) if i < len(logits) else 0.0))
+        return out
 
     def _segment_grounded_sam_target_mask(
         self, bgr, image_source, image_tensor, caption, box_thr, txt_thr
@@ -562,6 +602,15 @@ class StemSegmentationNode(Node):
         if int(np.count_nonzero(target)) < int(self.p["target_min_pixels"]):
             return None
         return target
+
+    def _collect_gsam_instances(self, bgr, image_tensor, stem_instances, box_thr, txt_thr):
+        """(masks, class ids, confs, names) for the detections topic: the stem
+        caption's instances, the target caption's and each detection caption's."""
+        from stem_grasp.detections import collect_caption_instances  # noqa: PLC0415
+        captions = [self.p["target_caption"]] + list(self.p["detection_captions"] or [])
+        return collect_caption_instances(
+            str(self.p["text_prompt"]).strip() or "stem", stem_instances, captions,
+            lambda cap: self._gsam_caption_instances(bgr, image_tensor, cap, box_thr, txt_thr))
 
     def _segment_yolo(self, bgr: np.ndarray) -> Tuple[np.ndarray, float]:
         self._yolo_class_masks = {}
@@ -1017,8 +1066,9 @@ class StemSegmentationNode(Node):
         self._publish_centroid(msg.header, centroid)
         self._publish_target(msg.header)
         self._publish_combined_centroid(msg.header, mask, self._cached_target_mask)
-        if bool(self.p["publish_detections"]) and mode == "yolo_seg":
-            self._publish_detections(msg.header, bgr)
+        if bool(self.p["publish_detections"]) and mode in ("yolo_seg", "grounded_sam"):
+            self._publish_detections(msg.header, bgr, self._yolo_instances if mode == "yolo_seg"
+                                     else self._gsam_instances)
 
         if bool(self.p["publish_debug"]):
             self._publish_debug(bgr, mask, stem_conf, centroid)
@@ -1120,11 +1170,12 @@ class StemSegmentationNode(Node):
         ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
         self.target_point_pub.publish(ps)
 
-    def _publish_detections(self, header, bgr) -> None:
-        """Every YOLO instance of this frame as JSON (detections.py)."""
+    def _publish_detections(self, header, bgr, instances) -> None:
+        """Every instance of this frame (YOLO, or the last Grounded-SAM run)
+        as JSON (detections.py)."""
         import json  # noqa: PLC0415
         from stem_grasp.detections import describe_instances  # noqa: PLC0415
-        inst = self._yolo_instances or ([], [], [], {})
+        inst = instances or ([], [], [], {})
         depth, K = None, None
         if self.latest_depth is not None and self._fx is not None:
             try:

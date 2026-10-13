@@ -23,6 +23,7 @@ setup(
     entry_points={
         "console_scripts": [
             "active_perception_node = scout_piper_active_perception.active_perception_node:main",
+            "fused_depth_node = scout_piper_active_perception.fused_depth_node:main",
         ],
     },
 )

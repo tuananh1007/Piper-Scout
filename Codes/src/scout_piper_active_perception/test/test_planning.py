@@ -102,3 +102,30 @@ def test_short_episode_runs_and_scores():
     assert r.min_hard_clearance_m > 0.0
     assert r.stop in ("requirements met", "max views", "no reachable view")
     assert len(r.trace) == r.views
+
+
+def test_depth_filler_fills_holes_only_at_the_keyframe():
+    from scout_piper_active_perception.vggt import DepthFiller, inpaint_stand_in
+    H, W = 48, 64
+    K = np.array([[50.0, 0, 32], [0, 50.0, 24], [0, 0, 1]])
+    b = SparseViewBatcher(max_views=4)
+    f = DepthFiller(VGGTReconstructor(model_fn=inpaint_stand_in(b, scale=2.5)), b, min_views=2)
+    poses = []
+    for i in range(3):
+        T = np.eye(4)
+        T[0, 3] = 0.05 * i
+        poses.append(T)
+        d = np.full((H, W), 0.4)
+        d[:, 30:33] = np.nan                                    # the stem the sensor misses
+        f.add_frame(View(np.zeros((H, W, 3), np.uint8), d, T, K, float(i)))
+    assert f.ready()
+    r = f.reconstruct()
+    assert r["scale"] == pytest.approx(2.5, rel=1e-3) and r["views"] == 3 and not f.ready()
+    cur = np.full((H, W), 0.4)
+    cur[:, 30:33] = np.nan
+    out, info = f.fill(cur, poses[-1])
+    assert info["filled"] == 3 * H and np.isfinite(out).all() and np.allclose(out, 0.4, atol=0.02)
+    moved = poses[-1].copy()
+    moved[1, 3] = 0.05
+    out2, info2 = f.fill(cur, moved)
+    assert info2["filled"] == 0 and np.isnan(out2[:, 31]).all()       # camera moved: passed through
