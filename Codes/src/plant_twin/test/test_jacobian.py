@@ -82,18 +82,34 @@ def test_analytic_fit_matches_numeric_and_is_faster():
     obs = _sample_surface(leaf, truth, 600, rng) + rng.normal(0, 5e-4, (600, 3))
     x0 = leaf.initial_params(rv + 0.05, t + 0.02)
 
+    calls = {"r": 0, "j": 0}
+
+    def res(*a):
+        calls["r"] += 1
+        return leaf.residuals(*a)
+
+    def jac(*a):
+        calls["j"] += 1
+        return leaf.jacobian(*a)
+
     t0 = time.perf_counter()
-    ra = least_squares(leaf.residuals, x0, jac=leaf.jacobian, args=(obs, None, None), max_nfev=60)
+    ra = least_squares(res, x0, jac=jac, args=(obs, None, None), max_nfev=60)
     ta = time.perf_counter() - t0
+    analytic = dict(calls)
+    calls.update(r=0, j=0)
     t0 = time.perf_counter()
-    rn = least_squares(leaf.residuals, x0, args=(obs, None, None), max_nfev=60)
+    rn = least_squares(res, x0, args=(obs, None, None), max_nfev=60)
     tn = time.perf_counter() - t0
 
     ea = np.linalg.norm(leaf.vertices(ra.x) - leaf.vertices(truth), axis=1).mean()
     en = np.linalg.norm(leaf.vertices(rn.x) - leaf.vertices(truth), axis=1).mean()
     assert abs(ea - en) < 1e-3, (ea, en)      # same optimum
     assert ea < 5e-3
-    assert ta < 0.5 * tn, (ta, tn)            # measured ~4-5x
+    # the work, not the wall clock (a shared CI runner measured 2.0x where an idle
+    # machine gives 4-5x): finite differences evaluate the residual once per
+    # parameter for every Jacobian, the analytic fit once per Jacobian
+    assert calls["r"] > 5 * (analytic["r"] + analytic["j"]), (analytic, calls)
+    assert ta < tn, (ta, tn)
 
 
 def test_fitter_tracks_moving_leaf():
