@@ -198,5 +198,45 @@ else
   echo "isaac_ros_nvblox not found at ${NVBLOX_REPO} — run vcs import first."
 fi
 
+# ----------------------------------------------------------------------------
+# 6. moveit_calibration: the only ROS 2 port upstream targets Jazzy, which
+#    renamed several headers from .h to .hpp. Humble only ships the .h
+#    spelling for these, so map them back. Nothing else needs changing.
+# ----------------------------------------------------------------------------
+MC_REPO="${SRC_DIR}/moveit_calibration"
+if [[ -d "${MC_REPO}" ]]; then
+  MC_FILES=$(grep -rlE '<(cv_bridge/cv_bridge|image_geometry/pinhole_camera_model|moveit/(common_planning_interface_objects/common_objects|move_group_interface/move_group_interface|planning_scene_monitor/planning_scene_monitor|utils/moveit_error_code|utils/rclcpp_utils))\.hpp>' \
+             --include='*.h' --include='*.hpp' --include='*.cpp' "${MC_REPO}" || true)
+  if [[ -n "${MC_FILES}" ]]; then
+    echo "Patching moveit_calibration → Humble header names ($(echo "${MC_FILES}" | wc -l) files)"
+    echo "${MC_FILES}" | xargs sed -i -E \
+      -e 's#<cv_bridge/cv_bridge\.hpp>#<cv_bridge/cv_bridge.h>#' \
+      -e 's#<image_geometry/pinhole_camera_model\.hpp>#<image_geometry/pinhole_camera_model.h>#' \
+      -e 's#<moveit/(common_planning_interface_objects/common_objects|move_group_interface/move_group_interface|planning_scene_monitor/planning_scene_monitor|utils/moveit_error_code|utils/rclcpp_utils)\.hpp>#<moveit/\1.h>#'
+  else
+    echo "moveit_calibration: Humble header patch already applied. Skipping."
+  fi
+fi
+
+# ----------------------------------------------------------------------------
+# 7. piper_ros driver: exact millidegree <-> radian constants. The firmware
+#    reports and takes joint angles in 0.001 deg. Upstream converts feedback
+#    with 0.017444 (pi/180 = 0.0174533) and commands with 1000*180/3.14, so
+#    every published angle is 0.05% short of the true one (~1 mrad at 2 rad)
+#    and every command lands 0.05% long. Use exact pi in both directions.
+# ----------------------------------------------------------------------------
+PIPER_PY_DIR="${SRC_DIR}/piper_ros/src/piper/piper"
+if [[ -d "${PIPER_PY_DIR}" ]]; then
+  PIPER_FILES=$(grep -lE '\* 0\.017444$|factor = 57324\.840764' "${PIPER_PY_DIR}"/*.py || true)
+  if [[ -n "${PIPER_FILES}" ]]; then
+    echo "Patching piper_ros driver → exact rad/millidegree constants ($(echo "${PIPER_FILES}" | wc -l) files)"
+    echo "${PIPER_FILES}" | xargs sed -i -E \
+      -e 's|\* 0\.017444$|* 0.017453292519943295  # pi/180 (patched: upstream 0.017444)|' \
+      -e 's|factor = 57324\.840764  # 1000\*180/3\.14|factor = 57295.77951308232  # 1000*180/pi (patched: upstream used 3.14)|'
+  else
+    echo "piper_ros: angle-constant patch already applied. Skipping."
+  fi
+fi
+
 echo
 echo "Patches applied. You can now run colcon build."

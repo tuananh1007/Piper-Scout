@@ -15,6 +15,10 @@ src/isaac_ros_nitros/
 src/isaac_ros_gxf/
 src/negotiated/
 src/nvblox/
+src/moveit_calibration/
+
+# Isaac ROS assets downloaded at build time into $ISAAC_ROS_WS (= /workspace in the dev container)
+isaac_ros_assets/
 
 # tf2_tools view_frames artifacts (often dumped into Codes/)
 frames*.gv
@@ -34,6 +38,10 @@ __pycache__/
 
 # Local hand-eye calibration (machine-specific)
 **/config/hand_eye.local.yaml
+/calibration/*.local.yaml
+
+# Recorded episodes (piper_quickstart record_episode)
+/data/
 
 # OS
 .DS_Store

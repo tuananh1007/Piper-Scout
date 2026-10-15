@@ -1,0 +1,16 @@
+# NOMINAL camera mount, used only until a hand-eye calibration exists.
+#
+# A real calibration lives in <workspace>/calibration/hand_eye.local.yaml
+# (written by `ros2 run piper_quickstart import_handeye <MoveIt Calibration export>`)
+# and takes precedence automatically.
+#
+# Meaning: pose of `child_frame` in `parent_frame`. This guess places the
+# RealSense 5 cm out along the flange axis, looking along it (camera_link +x
+# = link6 +z). It is NOT measured; episodes recorded with it are flagged
+# "calibrated: false".
+parent_frame: link6
+child_frame: camera_link
+translation: [0.0, 0.0, 0.05]
+rotation_xyzw: [0.0, -0.7071068, 0.0, 0.7071068]
+calibrated: false
+source: nominal placeholder (piper_quickstart/config/hand_eye.nominal.yaml)

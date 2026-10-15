@@ -40,11 +40,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # rclpy_message_converter, sensor_msgs_py) were compiled against NumPy 1.x
 # and emit `_ARRAY_API not found` tracebacks under NumPy 2 — cv_bridge then
 # falls through to a slow Python path. NumPy 1.26.x is the last 1.x release.
+#
+# packaging>=22: these installs pull a recent setuptools into /usr/local,
+# which calls canonicalize_version(strip_trailing_zero=...). Jammy's apt
+# python3-packaging (21.3) lacks that argument, so every ament_python package
+# fails `colcon build` with a TypeError unless packaging is upgraded too.
 RUN pip3 install --no-cache-dir \
       'numpy<2' scipy scikit-image scikit-learn networkx \
       open3d \
       ultralytics \
-      'transforms3d>=0.4'
+      'transforms3d>=0.4' \
+      'packaging>=22'
 
 # CUDA toolkit + nvblox build-time deps.
 # Needed because NVIDIA dropped the Isaac ROS apt builds for Ubuntu 22.04 +
@@ -93,6 +99,32 @@ RUN git clone --depth 1 -b v0.9.7 https://github.com/Neargye/magic_enum.git /tmp
     cmake --install /tmp/magic_enum/build && \
     ln -sfn /usr/local/include/magic_enum/magic_enum.hpp /usr/local/include/magic_enum.hpp && \
     rm -rf /tmp/magic_enum
+
+# Piper quickstart / data collection (src/piper_quickstart).
+#   - piper_sdk + python-can: imported by piper_ros's driver node. piper_sdk
+#     checks the CAN bitrate with `ip -details link show`, hence iproute2.
+#   - can-utils: candump/cansend for debugging the bus from inside the container.
+#   - rosbag2 MCAP storage: episodes are recorded as .mcap bags.
+#   - moveit/rviz visual tools: build deps of moveit_calibration (repos.yaml).
+#   - moveit_ros_perception: the octomap updater plugins (PointCloudOctomapUpdater).
+#     ros-humble-moveit does not pull it in; without it move_group loads no
+#     3D sensor and the octomap stays empty.
+# Kept as its own layer after the CUDA/VPI layers so adding it doesn't
+# invalidate their cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      iproute2 can-utils \
+      ros-humble-rosbag2-storage-mcap \
+      ros-humble-moveit-visual-tools ros-humble-rviz-visual-tools \
+      ros-humble-moveit-ros-perception \
+    && rm -rf /var/lib/apt/lists/* && \
+    pip3 install --no-cache-dir 'piper_sdk==0.6.2' 'python-can>=4,<5' 'setuptools<80'
+
+# setuptools<80 (above): the pip installs earlier pull setuptools 80+ into
+# /usr/local, which dropped `setup.py develop --editable`. colcon needs that for
+# --symlink-install on ament_python packages and otherwise silently falls back
+# to copying, so every edit to a Python package's code, launch or config files
+# would need a rebuild. Pinned here rather than in the first pip layer so
+# changing it doesn't invalidate the CUDA/VPI layers.
 
 # Optional Grounded-SAM stack — installed lazily by the user when they have
 # the checkpoints (see the README in scout_piper_bringup). Heavy install,

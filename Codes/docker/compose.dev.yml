@@ -28,6 +28,7 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: all
       ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:-42}
+      ISAAC_ROS_WS: /workspace        # Isaac ROS asset scripts (e.g. nvblox_test_data) refuse to run without it
     volumes:
       - ..:/workspace                                                # workspace bind-mount
       - /tmp/.X11-unix:/tmp/.X11-unix:rw                             # X11 for RViz

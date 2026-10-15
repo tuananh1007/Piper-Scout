@@ -19,6 +19,7 @@ Codes/
 ├── scripts/                # host setup + post-import patches (patch_upstream.sh, fork_piper_arm.py, ...)
 ├── .gitignore
 └── src/
+    ├── piper_quickstart/           # NEW: Piper + wrist RealSense only — preflight, MoveIt on the real arm, episode recording/export
     ├── plant_twin/                 # NEW: deformable leaf + stem twin fitted during grasps (Phase 1B)
     ├── scout_piper_bringup/        # NEW: integrated system launch + system config
     ├── scout_piper_description/    # NEW: unified URDF (Piper on Scout) + RViz
@@ -35,12 +36,15 @@ Upstream packages will be cloned into `src/` by `vcs import`:
 - `piper_ros/` from `agilexrobotics/piper_ros@humble` (arm driver, ros2_control, MoveIt 2 config)
 - `scout_ros2/` from `agilexrobotics/scout_ros2@humble` (Scout base CAN driver)
 - `scout_nav2/` from `AIRLab-POLIMI/scout_nav2` (Nav2 stack tuned for Scout)
-- `realsense-ros/` from `IntelRealSense/realsense-ros@ros2-development` (camera driver)
 - `ugv_sdk/` from `westonrobot/ugv_sdk@main` (CAN SDK used by `scout_base`)
+- `moveit_calibration/` from `moveit/moveit_calibration@ros2` (hand-eye calibration RViz plugin, used by `piper_quickstart`)
 - Phase 1 nvblox source build (`release-3.2`, the last Humble tags): `isaac_ros_common/`, `isaac_ros_nvblox/`,
   `isaac_ros_nitros/`, `isaac_ros_gxf/` (repo `NVIDIA-ISAAC-ROS/gxf`), plus `negotiated/` from `osrf/negotiated@master`
 
 Run `./scripts/patch_upstream.sh` after every `vcs import`.
+
+The RealSense driver (`realsense2_camera`) is not cloned: the dev image installs it from apt
+(`ros-humble-realsense2-camera`), built against the image's apt `librealsense2`.
 
 ## Quick start
 
@@ -82,7 +86,7 @@ See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
 | Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; cross-build later via Docker or native rebuild. |
 | Arm driver | `agilexrobotics/piper_ros@humble` | Official, ros2_control + MoveIt 2 included. |
 | Base driver | `agilexrobotics/scout_ros2` + POLIMI `scout_nav2` | Official CAN driver + community Nav2 tuning. |
-| Camera | `realsense-ros@ros2-development` | Upstream; no functional change vs ROS 1. |
+| Camera | apt `ros-humble-realsense2-camera` (in the dev image) | Upstream driver; no functional change vs ROS 1. Prebuilt against the matching apt SDK, so no source build. |
 
 ## Cross-references
 

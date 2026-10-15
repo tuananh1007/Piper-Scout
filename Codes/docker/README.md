@@ -34,6 +34,21 @@ ros2 launch scout_piper_description view_robot.launch.py
 ros2 launch scout_piper_bringup full_system.launch.py bringup_camera:=false bringup_base:=false
 ```
 
+### Piper arm + camera only (data collection quickstart)
+
+For the arm and wrist RealSense alone (MoveIt control, camera feed, point cloud,
+episode recording), you don't need the full workspace build. Bring up CAN on the
+host (`bash src/piper_ros/can_activate.sh can0 1000000`), then in the container:
+
+```bash
+colcon build --symlink-install --packages-up-to piper_quickstart
+source install/setup.bash
+ros2 launch piper_quickstart quickstart.launch.py
+```
+
+See [`../src/piper_quickstart/README.md`](../src/piper_quickstart/README.md) for
+hand-eye calibration and recording.
+
 The container is configured for:
 - GPU passthrough (RealSense + YOLO + servo math + nvblox).
 - X11 forwarding (RViz works from inside the container).

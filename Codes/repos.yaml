@@ -15,10 +15,17 @@ repositories:
     type: git
     url: https://github.com/AIRLab-POLIMI/scout_nav2.git
     version: main
-  realsense-ros:
+  # Hand-eye (AX=XB) calibration RViz plugin, used by piper_quickstart's
+  # calibrate:=true mode. No Humble release exists: the ros2 branch was ROS 1
+  # code until this Jazzy port (Nov 2025). Pinned to that commit;
+  # patch_upstream.sh maps its Jazzy header names back to Humble's.
+  moveit_calibration:
     type: git
-    url: https://github.com/IntelRealSense/realsense-ros.git
-    version: ros2-development
+    url: https://github.com/moveit/moveit_calibration.git
+    version: 3f9d48ebe843caf1de060bfafe78160585c7c26f
+  # realsense-ros is NOT pulled from source: the dev image installs
+  # ros-humble-realsense2-camera from apt, built against the matching apt
+  # librealsense2. A source copy would shadow it and must track the SDK version.
 
   # ---- NVIDIA Isaac ROS (Phase 1: nvblox semantic SDF) ----
   # Source builds because the apt repo dropped jammy/Humble in Q4 2025.

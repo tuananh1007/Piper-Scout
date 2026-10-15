@@ -26,7 +26,7 @@ Estimated total time: **6–8 weeks** of single-engineer effort.
 cd Codes                              # from the repository root
 vcs import src < repos.yaml
 ./scripts/patch_upstream.sh           # post-import fixes (ugv_sdk build_type, Isaac ROS VPI 4/NITROS patches, GXF LFS pull, nvblox submodule)
-ls src   # Expect: piper_ros/ scout_ros2/ ugv_sdk/ scout_nav2/ realsense-ros/
+ls src   # Expect: piper_ros/ scout_ros2/ ugv_sdk/ scout_nav2/
          #         isaac_ros_common/ isaac_ros_nvblox/ isaac_ros_nitros/ isaac_ros_gxf/ negotiated/
          #         plant_twin/ scout_piper_bringup/ scout_piper_description/ scout_piper_jepa/
          #         scout_piper_scene_repr/ scout_piper_whole_body_mpc/ stem_grasp/
@@ -36,7 +36,7 @@ ls src   # Expect: piper_ros/ scout_ros2/ ugv_sdk/ scout_nav2/ realsense-ros/
 - [x] `piper_ros@humble` has `src/piper/` (`launch/start_single_piper.launch.py`), `src/piper_humble/`, `src/piper_description/`, `src/piper_moveit/piper_with_gripper_moveit/`, `src/piper_msgs/`, `src/piper_sim/`.
 - [x] `scout_ros2` has `scout_base/`, `scout_description/`, `scout_msgs/`.
 - [x] `scout_nav2` has `scout_nav2/launch/nav2.launch.py`.
-- [x] `realsense-ros@ros2-development` has `realsense2_camera/launch/rs_launch.py`.
+- [x] `realsense2_camera` comes from apt in the dev image (not cloned): `ros2 pkg prefix realsense2_camera` → `/opt/ros/humble`, and it has `launch/rs_launch.py`.
 
 If any of these paths drift, fix the references in:
 - `src/scout_piper_bringup/launch/full_system.launch.py`

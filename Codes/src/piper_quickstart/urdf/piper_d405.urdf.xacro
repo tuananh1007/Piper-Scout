@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<!--
+  Piper arm + gripper (upstream piper_description) plus a collision box for the
+  wrist-mounted RealSense D405.
+
+  quickstart.launch.py fills the camera_* args from the hand-eye calibration
+  file (piper_quickstart.robot_model.camera_body_xacro_args), so the box sits
+  where the camera TF says the camera is. camera_body is placed at the
+  camera_link pose; the box is offset inside it to the D405's body centre.
+
+  No ros2_control block: the real arm is driven by piper_quickstart's
+  moveit_bridge, not ros2_control.
+-->
+<robot name="piper" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="camera_parent" default="link6"/>
+  <xacro:arg name="camera_xyz" default="0 0 0.05"/>
+  <xacro:arg name="camera_rpy" default="0 -1.5708 0"/>
+  <xacro:arg name="camera_body_size" default="0.033 0.052 0.052"/>
+  <xacro:arg name="camera_body_center" default="-0.0078 -0.009 0"/>
+
+  <xacro:include filename="$(find piper_description)/urdf/piper_description.xacro"/>
+
+  <link name="camera_body">
+    <visual>
+      <origin xyz="$(arg camera_body_center)" rpy="0 0 0"/>
+      <geometry><box size="$(arg camera_body_size)"/></geometry>
+      <material name="d405_gray"><color rgba="0.25 0.25 0.28 1.0"/></material>
+    </visual>
+    <collision>
+      <origin xyz="$(arg camera_body_center)" rpy="0 0 0"/>
+      <geometry><box size="$(arg camera_body_size)"/></geometry>
+    </collision>
+    <inertial>
+      <origin xyz="$(arg camera_body_center)" rpy="0 0 0"/>
+      <mass value="0.04"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+
+  <joint name="camera_body_joint" type="fixed">
+    <parent link="$(arg camera_parent)"/>
+    <child link="camera_body"/>
+    <origin xyz="$(arg camera_xyz)" rpy="$(arg camera_rpy)"/>
+  </joint>
+</robot>

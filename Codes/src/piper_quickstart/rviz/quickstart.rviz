@@ -1,0 +1,98 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Reference Frame: world
+      Value: true
+    - Class: moveit_rviz_plugin/MotionPlanning
+      Name: MotionPlanning
+      Move Group Namespace: ""
+      Planned Path:
+        Loop Animation: false
+        Show Robot Visual: true
+        State Display Time: 0.05 s
+        Trajectory Topic: /display_planned_path
+      Planning Request:
+        Planning Group: arm
+        Interactive Marker Size: 0.15
+        Query Goal State: true
+        Query Start State: false
+      Planning Scene Topic: /monitored_planning_scene
+      Robot Description: robot_description
+      Scene Geometry:
+        Scene Alpha: 0.9
+        Show Scene Geometry: true
+        Voxel Rendering: Occupied Voxels
+      Scene Robot:
+        Robot Alpha: 1
+        Show Robot Visual: true
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Name: RealSense point cloud
+      Topic:
+        Value: /camera/depth/color/points
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Color Transformer: RGB8
+      Position Transformer: XYZ
+      Style: Points
+      Size (Pixels): 2
+      Decay Time: 0
+      Use Fixed Frame: true
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: RealSense color
+      Topic:
+        Value: /camera/color/image_raw
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+      Normalize Range: true
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: Camera frames
+      Frames:
+        All Enabled: false
+        camera_link:
+          Value: true
+        camera_color_optical_frame:
+          Value: true
+        link6:
+          Value: true
+      Show Names: false
+      Show Arrows: false
+      Marker Scale: 0.3
+      Value: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 1.4
+      Focal Point:
+        X: 0.15
+        Y: 0.0
+        Z: 0.25
+      Name: Current View
+      Pitch: 0.45
+      Target Frame: world
+      Yaw: 2.6
+Window Geometry:
+  Height: 1000
+  Width: 1600

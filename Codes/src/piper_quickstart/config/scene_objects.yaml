@@ -1,0 +1,30 @@
+# Static collision objects added to MoveIt's planning scene at startup
+# (quickstart.launch.py scene_objects:=true, the default).
+#
+# Boxes: `size` = full edge lengths [x, y, z] in metres, `center` = box centre
+# in `frame_id`, axis-aligned with it.
+#
+# `allow_collision_with` lists robot links that may touch the objects without
+# counting as a collision. Only use this for links that cannot move: base_link
+# here, because base_slab passes through the Piper's base mesh (z 0-0.086) and
+# the floor box's top face touches its underside at z = 0. Without it every
+# robot state is "in collision" and MoveIt refuses to plan. link1 and above are
+# fully checked against every object.
+frame_id: base_link
+allow_collision_with: [base_link]
+
+objects:
+  - id: base_slab
+    type: box
+    size: [0.32, 0.20, 0.02]
+    center: [0.00, 0.00, 0.06]
+
+  - id: pc_monitor
+    type: box
+    size: [0.08, 0.55, 1.30]
+    center: [0.20, -0.725, 0.65]
+
+  - id: base_z_below_floor_no_go
+    type: box
+    size: [3.00, 3.00, 1.00]
+    center: [0.00, 0.00, -0.50]
