@@ -11,6 +11,9 @@ callers can map between pixels and tokens.
   lazily so the rest of the package works without it. The hub repository,
   entry point and checkpoint are configuration, because their exact names
   must be checked against the release being deployed.
+* ``DinoV2Encoder`` — DINOv2 patch features through ``torch.hub``: the strong
+  dense self-supervised image baseline T2 of the E1 comparison (per frame, no
+  temporal context).
 """
 
 from __future__ import annotations
@@ -126,9 +129,55 @@ class VJepaEncoder:
         return feat.cpu().numpy()
 
 
+@dataclass
+class DinoV2Encoder:
+    """DINOv2 dense patch features (E1 baseline T2), lazy torch.
+
+    ``hub_entry`` e.g. ``dinov2_vits14`` / ``dinov2_vitb14`` (facebookresearch/dinov2
+    README). The frame is resized to ``image_size`` (a multiple of 14) and the
+    normalised patch tokens of the last frame are returned."""
+
+    hub_repo: str = "facebookresearch/dinov2"
+    hub_entry: str = "dinov2_vits14"
+    image_size: int = 448
+    patch_size: int = 14
+    device: str = "cuda"
+    fp16: bool = True
+    _model: Optional[object] = None
+
+    def _load(self):
+        if self._model is None:
+            import torch  # noqa: PLC0415
+            model = torch.hub.load(self.hub_repo, self.hub_entry).to(self.device).eval()
+            if self.fp16 and self.device.startswith("cuda"):
+                model = model.half()
+            self._model = model
+        return self._model
+
+    def encode(self, clip: Sequence[np.ndarray]) -> np.ndarray:
+        import torch  # noqa: PLC0415
+        import torch.nn.functional as F  # noqa: PLC0415
+
+        model = self._load()
+        x = torch.from_numpy(np.asarray(clip[-1])).float().permute(2, 0, 1)[None] / 255.0
+        x = F.interpolate(x, size=(self.image_size, self.image_size), mode="bilinear", align_corners=False)
+        mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        x = ((x - mean) / std).to(self.device)
+        if self.fp16 and self.device.startswith("cuda"):
+            x = x.half()
+        with torch.no_grad():
+            tok = model.forward_features(x)["x_norm_patchtokens"][0]          # N, C
+        g = self.image_size // self.patch_size
+        feat = F.normalize(tok.float().reshape(g, g, -1), dim=-1)
+        return feat.cpu().numpy()
+
+
 def make_encoder(kind: str, **kw) -> DenseEncoder:
     if kind == "color_patch":
         return ColorPatchEncoder(patch_size=int(kw.get("patch_size", 16)))
     if kind == "vjepa":
         return VJepaEncoder(**kw)
+    if kind == "dinov2":
+        return DinoV2Encoder(**kw)
     raise ValueError(f"unknown encoder {kind!r}")

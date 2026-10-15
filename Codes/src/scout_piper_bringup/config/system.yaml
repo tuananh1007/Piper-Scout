@@ -34,6 +34,33 @@ scout_driver:
     simulated_robot: false
 
 # ----------------------------------------------------------------------------
+# Contact force from joint efforts (bringup_force_estimate:=true; no F/T sensor)
+# ----------------------------------------------------------------------------
+effort_force_estimator:
+  ros__parameters:
+    tcp_offset_m: 0.14             # as stem_grasp_pipeline and the MPC
+    wrench_topic: "/ft_sensor/raw"
+    frame_id: "base_link"
+    filter_s: 0.1                  # s, low-pass on the joint-torque residual
+
+# ----------------------------------------------------------------------------
+# Safety supervisor (bringup_safety:=true, the default): base command gate,
+# operator heartbeat (operator_heartbeat:=true), watchdogs. safety_supervisor.py
+# ----------------------------------------------------------------------------
+safety_supervisor:
+  ros__parameters:
+    heartbeat_timeout_s: 1.0
+    cmd_timeout_s: 0.5             # zero to the base this long after the last moving command
+    max_cmd_v_mps: 0.5             # relayed /cmd_vel clamped to these
+    max_cmd_w_rps: 1.0
+    max_base_speed_mps: 0.7        # measured (odom): trip above
+    max_base_omega_rps: 1.4
+    max_joint_speed_rps: 1.5       # measured: trip above, two samples in a row
+    max_feedback_age_s: 0.5
+    max_force_n: 25.0              # with bringup_force_estimate (or an F/T sensor on force_topic)
+    geofence_radius_m: 0.0         # around the first odom pose; 0 = off
+
+# ----------------------------------------------------------------------------
 # Stem-grasp pipeline (ports the dense ROS 1 launch arguments)
 # ----------------------------------------------------------------------------
 stem_grasp_pipeline:
@@ -48,7 +75,145 @@ stem_grasp_pipeline:
     camera_optical_frame: "camera_color_optical_frame"
     move_group: "arm"
 
-    # --- Segmentation ---
+    # --- Iterative approach (P0.4.13, stem_grasp/approach.py) ---
+    # After the reach handoff: servo, then advance along the gripper axis in
+    # approach_step steps, re-aligning (image error <= approach_align_tolerance_px
+    # for approach_settle_sec) between steps, until the grasp point is within
+    # approach_distance_tolerance or contact_threshold_n is felt. Aborts when the
+    # TCP starts farther than approach_target_distance, after approach_max_steps,
+    # without a stem mask (>= approach_min_leaf_pixels) for approach_mask_wait_sec,
+    # or after approach_timeout_sec. approach_goal_orientation_tolerance (a ROS 1
+    # MoveIt tolerance) is unused. Off by default: it moves the gripper onto the
+    # stem, and the Piper has no force sensor; contact_threshold_n then relies on
+    # the joint-effort estimate (bringup_force_estimate:=true, see Force below).
+    approach_enabled: false
+    approach_target_distance: 0.25
+    approach_step: 0.05
+    approach_max_steps: 8
+    approach_settle_sec: 0.4
+    approach_distance_tolerance: 0.01
+    approach_mask_wait_sec: 2.0
+    approach_min_leaf_pixels: 60
+    approach_goal_orientation_tolerance: 0.05
+    approach_speed_mps: 0.02
+    approach_align_tolerance_px: 8.0
+    approach_align_window_sec: 1.5   # judged on the mean error vector over this window (stem sway)
+    approach_timeout_sec: 60.0
+    # Grasp after AT_GRASP (needs approach_enabled): open the gripper before
+    # the approach, close it on arrival through piper_servo_bridge
+    # (~/gripper_cmd, enabled bridge only), GRASPED once the opening settles.
+    grasp_close_gripper: false
+    grasp_gripper_topic: "/piper_servo_bridge/gripper_cmd"
+    grasp_open_width_m: 0.06
+    grasp_closed_width_m: 0.0
+    grasp_settle_sec: 0.5
+    grasp_timeout_sec: 5.0
+    grasp_min_object_m: 0.002
+    gripper_finger_joints: "piper_joint7,piper_joint8"
+    # Release (~/release, std_srvs/Trigger, from GRASPED or AT_GRASP): open the
+    # gripper, back out release_retreat_m along the gripper axis, go IDLE;
+    # ~/scan starts scanning again from IDLE or ABORTED.
+    release_retreat_m: 0.10
+    release_speed_mps: 0.03
+    release_open_timeout_sec: 5.0
+    release_timeout_sec: 15.0
+
+    # --- Skeleton stability ---
+    skeleton_min_stem_points: 6
+    skeleton_max_endpoint_jump_m: 0.05
+    skeleton_cache_max_age_sec: 2.0
+
+    # --- Planning (Phase 0: still MoveIt 2 OMPL; Phase 3 replaces with cuMotion) ---
+    goal_position_tolerance: 0.01
+    goal_orientation_tolerance: 0.35
+    target_position_offset_m: 0.12
+    velocity_scale: 0.12
+    acceleration_scale: 0.12
+    grasp_strategy: "nearest_target"
+    target_point_timeout_sec: 3.5
+    operator_target_topic: ""             # Phase 5: /operator/target from scout_piper_language
+    operator_target_max_dist_m: 0.05
+    # grasp the stem axis: fit the stem cross-section around each skeleton
+    # point (single-view clouds show only the camera-facing half)
+    grasp_point_on_stem_axis: true
+    stem_radius_max_m: 0.02
+
+    # --- Multi-view capture (ROS 1 values; not ported, no ROS 2 node reads them) ---
+    # enable_autonomous_viewpoint_capture: false
+    # capture_ring_views: 8
+    # capture_ring_arc_deg: 160.0
+    # capture_min_viewpoint_separation_deg: 20.0
+
+    # --- Force / safety ---
+    # No wrist F/T sensor: with bringup_force_estimate:=true, effort_force_node
+    # publishes the joint-effort force estimate on force_topic and is tared
+    # through force_tare_service when servoing starts. Both thresholds must exceed
+    # the estimate's 3-sigma noise (calibrate_effort report, ~/status
+    # threshold_3sigma_n); 0.15 N is a wrist-sensor value, far below it.
+    max_force_n: 2.0
+    contact_threshold_n: 0.15
+    contact_hold_sec: 0.1          # the force above contact_threshold_n this long is a contact
+    force_topic: "/ft_sensor/raw"
+    force_tare_service: "/effort_force_estimator/tare"
+    force_max_age_sec: 0.5
+    # Phase 2B hard gates while servoing / approaching: above max_force_n back
+    # out force_retract_m along the gripper axis, then ABORTED; target lost for
+    # servo_lost_target_sec -> SCANNING; MPPI servo inside the semantic field's
+    # hard clearance -> stop (ABORTED).
+    force_retract_m: 0.05
+    servo_lost_target_sec: 2.0
+    stop_on_clearance_violation: true
+
+    # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
+    servo_cmd_topic: "/servo_node/delta_twist_cmds"
+    # Image-based servo (P0.4.12). The target must appear where the gripper
+    # approach axis (eef_frame z, TCP tcp_offset_m along it) crosses its depth;
+    # the stem position is read from the mask rows around the target's row.
+    # The gain is lambda_inf + (lambda_0 - lambda_inf) exp(-rho e_px), scaled
+    # down within 0.25 m of the stem; above ~10 px it is lambda_inf. moveit_servo
+    # realises ~55 % of a commanded velocity, so 0.5 converges 60 -> 4 px in
+    # ~15 s hardware-free (ROS 1 used 0.07: ~4x slower). Tune on the robot.
+    tcp_offset_m: 0.14
+    servo_lambda_0: 0.8
+    servo_lambda_inf: 0.5
+    servo_rho: 0.3
+    servo_row_band_px: 12
+    target_point_max_age_sec: 0.5
+    servo_mask_max_age_sec: 0.3
+    # Phase 2B: "mppi" replaces the IBVS with the arm-only MPPI visual servo
+    # (JointJog; mppi_* parameters in stem_grasp/config/pipeline.yaml)
+    servo_controller: "ibvs"
+    # MPPI servo clearance from the semantic scene (bringup_scene_repr:=true,
+    # /scene_repr/distance_field); the target stem is released within
+    # grasp_exclusion_radius_m of the grasp point. Set, the servo stops while
+    # the field is older than scene_field_max_age_sec (INSTALL.md 10.9).
+    scene_field_topic: ""
+    scene_field_max_age_sec: 2.5
+    grasp_exclusion_radius_m: 0.10
+    # Move to the pre-grasp pose (P0.4.11): "none" only publishes
+    # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
+    # (run it with execute:=true and bringup_servo:=true), waits for "reached",
+    # cancels the MPC and starts the image-based servo (INSTALL.md 10.9).
+    reach_executor: "none"
+    mpc_world_frame: "odom"
+    mpc_goal_pose_topic: "/whole_body_mpc/goal_pose"
+    mpc_status_topic: "/whole_body_mpc/status"
+    mpc_cancel_topic: "/whole_body_mpc/cancel"
+    reach_timeout_sec: 60.0
+    reach_settle_sec: 1.0
+    # hand off once the MPC reports the TCP within 2 cm and the approach axis
+    # within 15 deg for reach_settle_sec (its own "reached" is 1 cm; the servo
+    # and the final approach correct the rest)
+    reach_handoff_tolerance_m: 0.02
+    reach_handoff_angle_deg: 15.0
+
+# ----------------------------------------------------------------------------
+# Segmentation (stem_grasp/segmentation_node.py; the full list of parameters
+# and their defaults is in stem_grasp/config/pipeline.yaml and the node)
+# ----------------------------------------------------------------------------
+stem_grasp_segmentation:
+  ros__parameters:
+    camera_optical_frame: "camera_color_optical_frame"
     mask_mode: "yolo_seg"
     enable_depth_prefilter: false
     enable_depth_postfilter: true
@@ -63,10 +228,13 @@ stem_grasp_pipeline:
     min_valid_depth_pixels: 50
 
     # --- YOLO ---
+    # Stock Ultralytics yolo26n-seg weights are trained on COCO, where class 58
+    # is "potted plant" (the ROS 1 setting). With a custom stem model, set its
+    # stem class id here.
     yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
     yolo_conf: 0.15
     yolo_iou: 0.45
-    yolo_stem_class_id: 58           # COCO potted plant
+    yolo_stem_class_id: 58
     yolo_imgsz: 960
     yolo_mask_threshold: 0.25
 
@@ -85,39 +253,18 @@ stem_grasp_pipeline:
     enable_context_prompt: false
     context_prompt_fallback_to_base: true
 
-    # --- Iterative approach ---
-    approach_target_distance: 0.25
-    approach_step: 0.05
-    approach_max_steps: 8
-    approach_settle_sec: 0.4
-    approach_distance_tolerance: 0.01
-    approach_mask_wait_sec: 2.0
-    approach_min_leaf_pixels: 60
-    approach_goal_orientation_tolerance: 0.05
+    # --- Motion gate and semantic label (as in pipeline.yaml) ---
+    grounded_sam_every_n_frames: 5
+    segment_only_when_stationary: true
+    motion_gate_off_states: ["SERVOING", "APPROACHING"]
+    # merged label image for the semantic scene (class_demux input_mode:
+    # merged); the yolo_stem_class_id instances are labelled stem (1), other
+    # classes through yolo_class_labels (pipeline.yaml)
+    publish_semantic_label: true
 
-    # --- Skeleton stability ---
-    skeleton_min_stem_points: 6
-    skeleton_max_endpoint_jump_m: 0.05
-    skeleton_cache_max_age_sec: 2.0
-
-    # --- Planning (Phase 0: still MoveIt 2 OMPL; Phase 3 replaces with cuMotion) ---
-    goal_position_tolerance: 0.01
-    goal_orientation_tolerance: 0.35
-    target_position_offset_m: 0.12
-    velocity_scale: 0.12
-    acceleration_scale: 0.12
-    grasp_strategy: "nearest_target"
-    target_point_timeout_sec: 3.5
-
-    # --- Multi-view capture (kept off by default in Phase 0) ---
-    enable_autonomous_viewpoint_capture: false
-    capture_ring_views: 8
-    capture_ring_arc_deg: 160.0
-    capture_min_viewpoint_separation_deg: 20.0
-
-    # --- Force / safety ---
-    max_force_n: 2.0
-    contact_threshold_n: 0.15
-
-    # --- Servo (Phase 0: routes to moveit_servo; Phase 2 replaces with MPPI-VS) ---
-    servo_cmd_topic: "/servo_node/delta_twist_cmds"
+# ----------------------------------------------------------------------------
+# Masked point cloud (stem_grasp/pointcloud_node.py)
+# ----------------------------------------------------------------------------
+stem_grasp_pointcloud:
+  ros__parameters:
+    depth_topic: "/camera/aligned_depth_to_color/image_raw"

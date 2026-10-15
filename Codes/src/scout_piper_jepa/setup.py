@@ -10,7 +10,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/target_state.launch.py"]),
-        ("share/" + package_name + "/config", ["config/target_memory.yaml"]),
+        ("share/" + package_name + "/config", ["config/target_memory.yaml", "config/e1_methods.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -23,6 +23,12 @@ setup(
         "console_scripts": [
             "target_state_node = scout_piper_jepa.target_state_node:main",
             "jepa_episode = scout_piper_jepa.episode:main",
+            "jepa_annotate = scout_piper_jepa.annotate:main",
+            "jepa_e1 = scout_piper_jepa.e1:main",
+            "jepa_train = scout_piper_jepa.train:main",
+            "jepa_latency = scout_piper_jepa.latency:main",
+            "predictive_mpc_node = scout_piper_jepa.predictive_mpc_node:main",
+            "jepa_ground = scout_piper_jepa.ground:main",
         ],
     },
 )

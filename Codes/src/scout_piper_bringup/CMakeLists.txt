@@ -8,4 +8,31 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(
+  PROGRAMS
+    scripts/piper_joint_state_relay.py
+    scripts/piper_servo_bridge.py
+    scripts/fake_piper_driver.py
+    scripts/fake_scout_base.py
+    scripts/servo_chain_check.py
+    scripts/mpc_chain_check.py
+    scripts/grasp_chain_check.py
+    scripts/effort_chain_check.py
+    scripts/active_perception_chain_check.py
+    scripts/operator_chain_check.py
+    scripts/print_tcp.py
+    scripts/safety_supervisor.py
+    scripts/safety_chain_check.py
+    scripts/trial_recorder.py
+    scripts/trial_report.py
+    scripts/bag_chain_check.py
+    scripts/moveit_demo_check.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(bringup_python test TIMEOUT 120)
+endif()
+
 ament_package()

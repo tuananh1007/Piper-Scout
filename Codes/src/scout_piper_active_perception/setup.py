@@ -1,0 +1,29 @@
+from setuptools import find_packages, setup
+
+package_name = "scout_piper_active_perception"
+
+setup(
+    name=package_name,
+    version="0.0.1",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", ["launch/active_perception.launch.py"]),
+        ("share/" + package_name + "/config", ["config/active_perception.yaml"]),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    maintainer="Vu Tuan Anh",
+    maintainer_email="tuananh05253@gmail.com",
+    description="Phase 4: uncertainty-driven next view for the wrist camera (stem joint Fisher information, "
+                "approach-corridor coverage, JEPA and plant_twin uncertainty), VGGT multi-view depth helpers.",
+    license="Apache-2.0",
+    tests_require=["pytest"],
+    entry_points={
+        "console_scripts": [
+            "active_perception_node = scout_piper_active_perception.active_perception_node:main",
+            "fused_depth_node = scout_piper_active_perception.fused_depth_node:main",
+        ],
+    },
+)

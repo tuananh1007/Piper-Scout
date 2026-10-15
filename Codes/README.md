@@ -36,6 +36,7 @@ Upstream packages will be cloned into `src/` by `vcs import`:
 - `piper_ros/` from `agilexrobotics/piper_ros@humble` (arm driver, ros2_control, MoveIt 2 config)
 - `scout_ros2/` from `agilexrobotics/scout_ros2@humble` (Scout base CAN driver)
 - `scout_nav2/` from `AIRLab-POLIMI/scout_nav2` (Nav2 stack tuned for Scout)
+- `realsense-ros/` from `IntelRealSense/realsense-ros@4.58.4` (camera driver; matches ROS Humble's librealsense2 2.58)
 - `ugv_sdk/` from `westonrobot/ugv_sdk@main` (CAN SDK used by `scout_base`)
 - `moveit_calibration/` from `moveit/moveit_calibration@ros2` (hand-eye calibration RViz plugin, used by `piper_quickstart`)
 - Phase 1 nvblox source build (`release-3.2`, the last Humble tags): `isaac_ros_common/`, `isaac_ros_nvblox/`,
@@ -68,11 +69,12 @@ PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml
 # 4. Drop into the container — workspace bind-mounted at /workspace
 docker compose -f docker/compose.dev.yml run --rm dev
 
-# Inside the container:
-colcon build --symlink-install
+# Inside the container (colcon_build_safe.sh limits parallel compiles to the free RAM;
+# a plain colcon build can freeze a 16 GB machine, INSTALL.md Step 6):
+./scripts/colcon_build_safe.sh --symlink-install
 source install/setup.bash
 ros2 launch scout_piper_description view_robot.launch.py     # URDF viz
-ros2 launch scout_piper_bringup full_system.launch.py        # hardware-free defaults; add bringup_arm/base/camera:=true on the rig
+ros2 launch scout_piper_bringup full_system.launch.py        # hardware-free defaults; add bringup_arm:=true bringup_base:=true bringup_camera:=true on the rig
 ```
 
 See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
@@ -83,7 +85,7 @@ See [`PHASE0_CHECKLIST.md`](PHASE0_CHECKLIST.md) for the full migration plan.
 |---|---|---|
 | ROS 2 distro | **Humble** | AgileX official branch is `humble`; EOL May 2027 gives 12 months. |
 | Vendoring | **vcs import** via `repos.yaml` | Standard ROS 2 way; cheap to update versions. |
-| Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; cross-build later via Docker or native rebuild. |
+| Build target | **Workstation first**, Jetson Orin AGX in Month 2 | Faster iteration; then a native rebuild on the Orin (JetPack 6.1/6.2, INSTALL.md Path A). |
 | Arm driver | `agilexrobotics/piper_ros@humble` | Official, ros2_control + MoveIt 2 included. |
 | Base driver | `agilexrobotics/scout_ros2` + POLIMI `scout_nav2` | Official CAN driver + community Nav2 tuning. |
 | Camera | apt `ros-humble-realsense2-camera` (in the dev image) | Upstream driver; no functional change vs ROS 1. Prebuilt against the matching apt SDK, so no source build. |

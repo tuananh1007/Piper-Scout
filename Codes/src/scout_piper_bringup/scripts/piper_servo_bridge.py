@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""Forward moveit_servo's joint targets to the Piper driver, with safety latches.
+
+moveit_servo publishes ``trajectory_msgs/JointTrajectory`` (``piper_joint1..6``,
+one point, absolute positions). The Piper driver (piper_ros
+``piper_single_ctrl``) takes ``sensor_msgs/JointState`` with names
+``joint1..joint6`` + ``gripper`` on its command input, which full_system.launch.py
+maps to ``/piper/joint_cmd``. The driver executes every message immediately:
+missing joints are commanded to 0, a message with fewer than seven positions
+closes the gripper, and the speed is ``velocity[6]`` percent (100 % otherwise).
+
+This bridge therefore always sends all six joints plus the *measured* gripper
+opening, sets the speed percent explicitly, and only forwards while:
+
+- it has been enabled (``~/enable``, std_srvs/SetBool; starts disabled unless
+  ``start_enabled``);
+- the driver feedback (``/joint_states_single``) is fresher than
+  ``max_feedback_age_s`` (servo itself stops publishing when its input times
+  out, and the driver holds the last target);
+- each target is clamped into the joint limits and to within ``max_step_rad`` of
+  the measured position, so the arm never jumps even if servo's internal state
+  drifts from the real arm.
+
+Disabling sends one command holding the measured position.
+
+With ``safety_state_topic`` (full_system.launch.py sets ``/safety/state`` when
+the safety supervisor runs) the bridge disables itself when the supervisor
+reports a trip or falls silent for ``safety_max_age_s``, and refuses
+``~/enable`` until it reports ok again (``~/reset`` on the supervisor).
+
+The gripper follows its measured opening (it never moves on its own) until a
+target arrives on ``~/gripper_cmd`` (opening in metres, clamped to
+[0, ``gripper_max_m``]). That target is sent at once, with the arm held at its
+measured pose, and then kept in every later command, holding included, so a
+grasp stays closed. It is honoured only while the bridge is enabled. The grip
+force is ``effort[6]`` = ``gripper_effort`` (the driver clips it to 0.5-3; it
+uses 1.0 without one).
+
+    in   /piper/servo/joint_trajectory  trajectory_msgs/JointTrajectory  (servo)
+    in   /joint_states_single           sensor_msgs/JointState           (driver feedback)
+    in   ~/gripper_cmd                  std_msgs/Float64                 (gripper opening, m)
+    out  /piper/joint_cmd               sensor_msgs/JointState           (driver command input)
+    in   safety_state_topic             std_msgs/String JSON from safety_supervisor.py (optional)
+    srv  ~/enable                       std_srvs/SetBool
+"""
+
+import json
+import math
+import signal
+from typing import Dict, List, Optional, Sequence, Tuple
+
+DRIVER_JOINTS = ("joint1", "joint2", "joint3", "joint4", "joint5", "joint6")
+GRIPPER = "gripper"
+# piper_joint1..6 limits of the unified URDF (_piper_arm.xacro)
+URDF_LOWER = (-2.618, 0.0, -2.967, -1.745, -1.22, -2.0944)
+URDF_UPPER = (2.618, 3.14, 0.0, 1.745, 1.22, 2.0944)
+JOINT_STATE_TOPICS = ("/joint_states", "/joint_states_single", "/joint_states_feedback")
+
+
+def driver_command(target_names: Sequence[str], target_positions: Sequence[float],
+                   measured: Dict[str, float], gripper_opening: float,
+                   lower: Sequence[float] = URDF_LOWER, upper: Sequence[float] = URDF_UPPER,
+                   max_step_rad: float = 0.1, speed_percent: int = 30, prefix: str = "piper_"
+                   ) -> Optional[Tuple[List[str], List[float], List[float]]]:
+    """Servo target -> (names, positions, velocities) for the driver, or None.
+
+    ``measured`` maps driver joint names to measured positions. Returns None
+    unless the target names exactly the six arm joints (in any order) and all
+    six are measured. Joints are clamped into [lower, upper] and to within
+    ``max_step_rad`` of the measured position.
+    """
+    tgt = {}
+    for n, p in zip(target_names, target_positions):
+        tgt[n[len(prefix):] if n.startswith(prefix) else n] = float(p)
+    if set(tgt) != set(DRIVER_JOINTS) or not all(j in measured for j in DRIVER_JOINTS):
+        return None
+    positions = []
+    for i, j in enumerate(DRIVER_JOINTS):
+        q = min(max(tgt[j], lower[i]), upper[i])
+        m = float(measured[j])
+        positions.append(min(max(q, m - max_step_rad), m + max_step_rad))
+    speed = float(min(max(int(speed_percent), 1), 100))
+    return (list(DRIVER_JOINTS) + [GRIPPER], positions + [float(gripper_opening)],
+            [0.0] * 6 + [speed])
+
+
+def hold_command(measured: Dict[str, float], gripper_opening: float, speed_percent: int = 30
+                 ) -> Optional[Tuple[List[str], List[float], List[float]]]:
+    """Command that holds the measured pose (sent when the bridge is disabled)."""
+    if not all(j in measured for j in DRIVER_JOINTS):
+        return None
+    speed = float(min(max(int(speed_percent), 1), 100))
+    return (list(DRIVER_JOINTS) + [GRIPPER], [float(measured[j]) for j in DRIVER_JOINTS]
+            + [float(gripper_opening)], [0.0] * 6 + [speed])
+
+
+def gripper_target(opening: float, max_opening: float) -> Optional[float]:
+    """A commanded gripper opening clamped to [0, max_opening]; None if not finite."""
+    if not math.isfinite(opening):
+        return None
+    return min(max(float(opening), 0.0), float(max_opening))
+
+
+def safety_block(state: Optional[dict], age_s: float, max_age_s: float) -> str:
+    """Why the safety supervisor's state forbids moving the arm, or ""."""
+    if state is None:
+        return "no state from the safety supervisor yet"
+    if age_s > max_age_s:
+        return f"safety supervisor silent for {age_s:.1f} s"
+    if not state.get("ok", False):
+        return f"safety supervisor tripped: {state.get('tripped') or 'unknown reason'}"
+    return ""
+
+
+def check_command_topic(topic: str) -> str:
+    t = "/" + topic.strip().lstrip("/")
+    if t in JOINT_STATE_TOPICS:
+        raise RuntimeError(f"command_topic {topic} is a joint-state topic")
+    return t
+
+
+def _interrupt(signum, frame) -> None:
+    raise KeyboardInterrupt
+
+
+def main() -> None:
+    import rclpy  # noqa: PLC0415 — keep the conversion importable without ROS
+    from rclpy.executors import ExternalShutdownException  # noqa: PLC0415
+    from rclpy.signals import SignalHandlerOptions  # noqa: PLC0415
+    from rclpy.node import Node  # noqa: PLC0415
+    from sensor_msgs.msg import JointState  # noqa: PLC0415
+    from std_msgs.msg import Float64, String  # noqa: PLC0415
+    from std_srvs.srv import SetBool  # noqa: PLC0415
+    from trajectory_msgs.msg import JointTrajectory  # noqa: PLC0415
+
+    class Bridge(Node):
+        def __init__(self) -> None:
+            super().__init__("piper_servo_bridge")
+            p = self.declare_parameter
+            traj_topic = p("trajectory_topic", "/piper/servo/joint_trajectory").value
+            fb_topic = p("feedback_topic", "/joint_states_single").value
+            cmd_topic = check_command_topic(p("command_topic", "/piper/joint_cmd").value)
+            self.enabled = bool(p("start_enabled", False).value)
+            self.speed = int(p("speed_percent", 30).value)
+            self.max_step = float(p("max_step_rad", 0.1).value)
+            self.max_fb_age = float(p("max_feedback_age_s", 0.2).value)
+            self.lower = list(p("joint_lower", list(URDF_LOWER)).value)
+            self.upper = list(p("joint_upper", list(URDF_UPPER)).value)
+            self.prefix = p("prefix", "piper_").value
+            self.gripper_max = float(p("gripper_max_m", 0.07).value)
+            self.gripper_effort = float(p("gripper_effort", 0.5).value)
+            self.measured: Dict[str, float] = {}
+            self.gripper = 0.0
+            self.gripper_cmd: Optional[float] = None    # None: follow the measured opening
+            self.fb_time = None
+            self.pub = self.create_publisher(JointState, cmd_topic, 10)
+            self.create_subscription(JointState, fb_topic, self._feedback, 10)
+            self.create_subscription(JointTrajectory, traj_topic, self._target, 10)
+            self.create_subscription(Float64, "~/gripper_cmd", self._gripper, 10)
+            self.create_service(SetBool, "~/enable", self._enable)
+            self.safety_topic = p("safety_state_topic", "").value
+            self.safety_max_age = float(p("safety_max_age_s", 1.0).value)
+            self.safety_state: Optional[dict] = None
+            self.safety_t = None
+            if self.safety_topic:
+                self.create_subscription(String, self.safety_topic, self._safety, 10)
+                self.create_timer(0.2, self._safety_watch)
+            self.get_logger().info(f"{traj_topic} -> {cmd_topic}; "
+                                   f"{'ENABLED' if self.enabled else 'disabled (call ~/enable)'}; "
+                                   f"speed {self.speed} %, max step {self.max_step} rad")
+
+        def _age(self, t) -> float:
+            return float("inf") if t is None else (self.get_clock().now() - t).nanoseconds * 1e-9
+
+        def _feedback(self, msg: JointState) -> None:
+            pos = dict(zip(msg.name, msg.position))
+            self.measured = {j: pos[j] for j in DRIVER_JOINTS if j in pos}
+            self.gripper = float(pos.get(GRIPPER, self.gripper))
+            self.fb_time = self.get_clock().now()
+
+        def _gripper_out(self) -> float:
+            return self.gripper if self.gripper_cmd is None else self.gripper_cmd
+
+        def _send(self, cmd) -> None:
+            out = JointState()
+            out.header.stamp = self.get_clock().now().to_msg()
+            out.name, out.position, out.velocity = cmd
+            out.effort = [0.0] * 6 + [self.gripper_effort]
+            self.pub.publish(out)
+
+        def _gripper(self, msg) -> None:
+            target = gripper_target(msg.data, self.gripper_max)
+            if target is None or not self.enabled or self._age(self.fb_time) > self.max_fb_age:
+                self.get_logger().warn("gripper command ignored (bridge disabled, stale feedback "
+                                       "or not a number)", throttle_duration_sec=2.0)
+                return
+            hold = hold_command(self.measured, target, self.speed)
+            if hold is not None:
+                self.gripper_cmd = target
+                self._send(hold)
+                self.get_logger().info(f"gripper -> {1000 * target:.1f} mm")
+
+        def _target(self, msg: JointTrajectory) -> None:
+            if not self.enabled or not msg.points:
+                return
+            if self._age(self.fb_time) > self.max_fb_age:
+                self.get_logger().warn("driver feedback stale; not forwarding",
+                                       throttle_duration_sec=2.0)
+                return
+            cmd = driver_command(msg.joint_names, msg.points[0].positions, self.measured,
+                                 self._gripper_out(), self.lower, self.upper, self.max_step,
+                                 self.speed, self.prefix)
+            if cmd is None:
+                self.get_logger().warn(f"unexpected servo joints {list(msg.joint_names)}",
+                                       throttle_duration_sec=2.0)
+                return
+            self._send(cmd)
+
+        def _safety_reason(self) -> str:
+            if not self.safety_topic:
+                return ""
+            return safety_block(self.safety_state, self._age(self.safety_t), self.safety_max_age)
+
+        def _safety(self, msg) -> None:
+            try:
+                self.safety_state = json.loads(msg.data)
+            except ValueError:
+                return
+            self.safety_t = self.get_clock().now()
+            self._safety_watch()
+
+        def _safety_watch(self) -> None:
+            reason = self._safety_reason()
+            if self.enabled and reason:
+                self._disable_hold()
+                self.get_logger().error(f"servo bridge disabled: {reason}")
+
+        def _disable_hold(self) -> None:
+            self.enabled = False
+            if self._age(self.fb_time) <= self.max_fb_age:
+                hold = hold_command(self.measured, self._gripper_out(), self.speed)
+                if hold is not None:
+                    self._send(hold)
+
+        def _enable(self, req, res):
+            reason = self._safety_reason() if req.data else ""
+            if reason:
+                res.success, res.message = False, f"not enabled: {reason}"
+                self.get_logger().warn(res.message)
+                return res
+            self.enabled = bool(req.data)
+            if not self.enabled and self._age(self.fb_time) <= self.max_fb_age:
+                hold = hold_command(self.measured, self._gripper_out(), self.speed)
+                if hold is not None:
+                    self._send(hold)
+            res.success = True
+            res.message = "enabled" if self.enabled else "disabled (holding measured pose)"
+            self.get_logger().warn(f"servo bridge {res.message}")
+            return res
+
+    # Ctrl-C / SIGTERM end spin with KeyboardInterrupt; rclpy's own handler
+    # can invalidate the context while spin builds its wait set (RCLError).
+    # spin_once with a timeout lets the handler run when no message arrives.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    signal.signal(signal.SIGINT, _interrupt)
+    signal.signal(signal.SIGTERM, _interrupt)
+    node = Bridge()
+    try:
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
+    except (KeyboardInterrupt, ExternalShutdownException):   # Ctrl-C / SIGTERM from ros2 launch
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

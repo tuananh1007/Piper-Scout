@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from scout_piper_whole_body_mpc.baselines.sequential import choose_base_pose, run_sequential
-from scout_piper_whole_body_mpc.costs.terms import Goal, WholeBodyCost
+from scout_piper_whole_body_mpc.costs.terms import CostWeights, Goal, WholeBodyCost
 from scout_piper_whole_body_mpc.dynamics.piper import JOINTS, PiperKinematics, parse_xacro_joints
 from scout_piper_whole_body_mpc.dynamics.scout import ScoutParams, fit_slip, rollout_base
 from scout_piper_whole_body_mpc.dynamics.whole_body import WholeBodyModel
@@ -60,6 +60,15 @@ def test_jacobian_matches_finite_differences():
     assert k.manipulability(q) > 0
 
 
+def test_wrist_extension_depends_on_the_elbow_only():
+    k = PiperKinematics()
+    Q = np.random.default_rng(1).uniform(k.lower, k.upper, (500, 6))
+    F = k.link_frames(Q)
+    ref = np.linalg.norm(F[..., 4, :3, 3] - F[..., 2, :3, 3], axis=-1)
+    assert np.allclose(k.wrist_extension(Q), ref, atol=1e-12)
+    assert 0.08 < k.wrist_extension(Q).min() and k.wrist_extension(Q).max() < 0.54
+
+
 # ---------------------------------------------------------------- control
 def _controller(goal_p, obstacles=(), seed=0, samples=256):
     m = WholeBodyModel()
@@ -102,6 +111,43 @@ def test_r3_unreachable_target_moves_the_base_and_beats_arm_only():
     assert err_arm > 0.5                       # W0 cannot reach R3
 
 
+def test_reach_margin_moves_the_base_instead_of_stretching_the_arm():
+    """A stretched arm at the goal leaves the stem servo and the final approach
+    no room; with the reach term the base covers the rest (R3: the arm ends at
+    0.54 m, fully stretched, without it)."""
+    m = WholeBodyModel()
+    cost = WholeBodyCost(m, Goal(p=np.array([1.5, 0.3, 0.40])), w=CostWeights(reach=1e4))
+    log = run_closed_loop(X0, MPPI(m, MPPIConfig(seed=0)), cost, SafetyFilter(m), steps=150)
+    assert np.linalg.norm(m.tcp_world(log.X[-1])[:3, 3] - cost.goal.p) < 0.02
+    assert m.kin.wrist_extension(log.X[-1][3:]) < cost.w.reach_max_m + 0.02
+
+
+def test_wrist_extension_after_advance_needs_no_inverse_kinematics():
+    """The shoulder stays put and the wrist centre translates with the TCP."""
+    k = PiperKinematics()
+    q = np.array([0.15, 1.72, -1.15, -0.06, -0.23, 0.23])
+    assert k.wrist_extension_after_advance(q, 0.0) == pytest.approx(k.wrist_extension(q))
+    F = k.link_frames(q)
+    w = F[4, :3, 3] - F[2, :3, 3]
+    assert k.wrist_extension_after_advance(q, 0.12) == pytest.approx(np.linalg.norm(w + 0.12 * F[-1, :3, 2]))
+
+
+def test_advance_term_leaves_the_wrist_room_for_the_final_approach():
+    """A pose goal followed by a 0.12 m advance (stem_grasp): without the term the
+    arm reaches the pre-grasp pose with the wrist 0.46 m out after the advance,
+    where the Piper's wrist singularity is close; with it, under 0.40 m."""
+    stem = np.array([1.1, -0.1])
+    axis = np.r_[stem, 0.0] / np.linalg.norm(stem)
+    pre = np.r_[stem, 0.396] - 0.12 * axis
+    m = WholeBodyModel()
+    cost = WholeBodyCost(m, Goal(p=pre, approach_axis=axis, advance_m=0.12),
+                         w=CostWeights(reach=1e4, reach_advanced=1e3, orient=2.0))
+    log = run_closed_loop(X0, MPPI(m, MPPIConfig(seed=0)), cost, SafetyFilter(m), steps=120)
+    x = np.asarray(log.X)[-1]
+    assert np.linalg.norm(m.tcp_world(x)[:3, 3] - pre) < 0.02
+    assert m.kin.wrist_extension_after_advance(x[3:], 0.12) < cost.w.reach_max_advanced_m + 0.02
+
+
 OBSTACLE_GOAL = np.array([0.62, -0.35, 0.40])
 OBSTACLE = ([0.58, -0.145, 0.434], 0.03)
 
@@ -125,6 +171,26 @@ def test_obstacle_on_the_direct_path_is_avoided_and_the_goal_reached(seed):
     err = np.linalg.norm(m.tcp_world(log.X[-1])[:3, 3] - OBSTACLE_GOAL)
     assert err < 0.015, err
     assert log.reasons.count("clearance") == 0                # no deadlock against the filter
+
+
+def test_secondary_terms_rerank_only_within_the_goal_tolerance():
+    """A secondary term (Piper-JEPA visibility) may buy at most secondary_tol_m of
+    goal error; an additive extra term trades it freely."""
+    m = WholeBodyModel()
+    x0 = np.r_[0.0, 0.0, 0.0, 0.0, 1.2, -1.0, 0.0, 0.5, 0.0]
+    U = np.zeros((3, 4, 8))
+    X = m.rollout(x0, U)
+    p_end = m.tcp_world(X[:, -1])[:, :3, 3]
+    goal = p_end[0] - np.array([0.2, 0.0, 0.0])  # 20 cm behind: the tolerance stays 1 cm (not 20 % of it)
+    X[1, 1:, 0] += 0.005                       # TCP 5 mm farther over the horizon (base moved 5 mm)
+    X[2, 1:, 0] += 0.05                        # 5 cm farther
+    likes_far = lambda X, U: 200.0 * (0.05 - (X[:, -1, 0] - x0[0]))   # noqa: E731 — 10, 9, 0
+    add = WholeBodyCost(m, Goal(p=goal), extra=[likes_far])
+    sec = WholeBodyCost(m, Goal(p=goal), secondary=[likes_far], secondary_tol_m=0.01)
+    assert int(np.argmin(add(X, U))) == 2                  # additive: the far one wins
+    J = sec(X, U)
+    assert int(np.argmin(J)) == 1                          # secondary: best within 1 cm of the goal error
+    assert sec(X[2:], U[2:])[0] > J[1]                     # the best goal error is remembered per step
 
 
 def test_solve_never_returns_worse_than_stopping():
@@ -219,6 +285,33 @@ def test_unknown_geometry_at_the_robot_stops():
     assert rep.reason == "watchdog" and np.all(rep.u == 0)
 
 
+def test_no_entry_policy_moves_in_unknown_space_but_never_into_it():
+    """Eye-in-hand camera: most of the arm sits in never-observed space. "no_entry"
+    lets those spheres move but refuses a step that takes an observed sphere
+    into unknown space; "stop" (the strict default) stops outright."""
+    m = WholeBodyModel()
+    x_limit = 0.45                                            # observed for x < 0.45, unknown beyond
+
+    def field(p):
+        return np.full(len(p), 1.0), p[:, 0] < x_limit
+
+    C0, _ = m.collision_spheres(X0[None])
+    assert (C0[0, :, 0] >= x_limit).any() and (C0[0, :, 0] < x_limit).any()
+    forward = np.r_[0.2, 0.0, np.zeros(6)]
+    strict = SafetyFilter(m, distance_fn=field)
+    assert strict.project(X0, forward, forward).reason == "watchdog"
+    lenient = SafetyFilter(m, distance_fn=field, unknown_policy="no_entry")
+    back = np.r_[-0.2, 0.0, np.zeros(6)]
+    rep = lenient.project(X0, back, back)                      # backing away keeps known spheres known
+    assert rep.reason in ("ok", "rate") and rep.u[0] < 0
+    x_edge = X0.copy()
+    x_edge[0] = x_limit - 0.01 - C0[0, :, 0].max() + 0.0        # front-most sphere 1 cm short of unknown
+    rep = lenient.project(x_edge, forward, forward)
+    assert rep.reason == "clearance" and rep.u[0] < forward[0]
+    Cn, _ = m.collision_spheres(m.rollout(x_edge, rep.u[None, None])[0, 1][None])
+    assert (Cn[0, :, 0] < x_limit).sum() >= (m.collision_spheres(x_edge[None])[0][0, :, 0] < x_limit).sum()
+
+
 # --------------------------------------------------- semantic scene adapter
 def test_semantic_scene_query_plugs_in():
     sys.path.insert(0, os.path.join(SRC, "scout_piper_scene_repr", "python"))
@@ -237,3 +330,8 @@ def test_semantic_scene_query_plugs_in():
     fn = semantic_distance_fn(SemanticDistanceQuery(vmap), now=0.0)
     d, valid = fn(np.array([[0.7, 0.0, 0.3], [0.5, 0.2, 0.4]]))
     assert valid.all() and abs(d[0] - (0.10 - 0.005 - 0.005)) < 0.011 and d[1] > d[0]
+    # outside the grid (base, arm behind the camera): valid and free, not unknown
+    d_out, v_out = fn(np.array([[-0.5, 0.0, 0.2]]))
+    assert v_out[0] and np.isinf(d_out[0])
+    strict = semantic_distance_fn(SemanticDistanceQuery(vmap), now=0.0, outside_free=False)
+    assert not strict(np.array([[-0.5, 0.0, 0.2]]))[1][0]

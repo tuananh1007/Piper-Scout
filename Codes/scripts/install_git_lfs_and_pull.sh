@@ -44,4 +44,4 @@ else
 fi
 
 echo
-echo "Done. Rebuild with: colcon build --symlink-install --packages-up-to isaac_ros_nvblox"
+echo "Done. Rebuild with: ./scripts/colcon_build_safe.sh --symlink-install --packages-up-to isaac_ros_nvblox"

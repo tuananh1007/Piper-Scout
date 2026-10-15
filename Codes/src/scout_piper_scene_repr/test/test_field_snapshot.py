@@ -22,10 +22,11 @@ sys.path.insert(0, HERE)
 
 from scout_piper_scene_repr_py.distance_query import SemanticDistanceQuery  # noqa: E402
 from scout_piper_scene_repr_py.field import (  # noqa: E402
-    AGE_UNKNOWN, FieldSampler, export_field, fill_msg)
+    AGE_UNKNOWN, DistanceFieldSnapshot, FieldSampler, exclude_target, export_field, fill_msg,
+    snapshot_distance_fn)
 from scout_piper_scene_repr_py.policy import DEFAULT_POLICIES  # noqa: E402
 from scout_piper_scene_repr_py.voxel_map import SemanticVoxelMap, grid_around  # noqa: E402
-from test_distance_query import LEAF_Z, STEM_R, STEM_X, WALL_Z, build  # noqa: E402
+from test_distance_query import LEAF_Z, STEM_R, STEM_X, STEM_Z, WALL_Z, build  # noqa: E402
 
 VOXEL = 0.005
 
@@ -81,6 +82,58 @@ def test_fill_msg_round_trip(scene):
 
 
 # ------------------------------------------------------- sampler vs query
+def test_exclude_target_releases_the_target_and_stays_conservative(scene):
+    """Snapshot grasp-mode exclusion vs the exact one (SemanticDistanceQuery
+    recomputes the field without the target voxels)."""
+    vmap, q, snap, sampler = scene
+    target = np.array([STEM_X, 0.0, STEM_Z - STEM_R])
+    radius = 0.03
+    ex = exclude_target(snap, target, radius)
+    s_ex = FieldSampler(ex)
+    rng = np.random.default_rng(1)
+    near = target + rng.uniform(-0.06, 0.06, (300, 3))
+    far_on_stem = np.array([[STEM_X, 0.08, STEM_Z - STEM_R - 0.005], [STEM_X, -0.1, STEM_Z - STEM_R - 0.004]])
+    pts = np.vstack([target - [0, 0, 0.005], far_on_stem, near])
+    before = sampler.query(pts, 2.0, 100.0)["hard"]
+    after = s_ex.query(pts, 2.0, 100.0)["hard"]
+    g = q.query(pts, mode="grasp", target_point=target, exclusion_radius_m=radius, gradient=False)
+    exact, seen = g.hard_distance, g.valid                    # (unknown space is clamped to 0 there)
+    assert after[0] > before[0] + 0.01                        # the target is released
+    assert np.allclose(after[1:3], before[1:3], atol=1e-6)    # the rest of the stem stays hard
+    assert np.all(after >= before - 1e-6)                     # removing obstacles only adds clearance
+    err = (after - exact)[seen]
+    assert seen.sum() > 100 and np.all(err <= 1.5 * VOXEL), err.max()   # never beyond the exact field
+    assert np.median(-err) < 2 * VOXEL                        # and not much more cautious near the target
+    # inside the ball unknown space (the unseen back of the stem) counts as observed
+    fn = snapshot_distance_fn(ex, now=2.0, max_voxel_age_s=30.0)
+    d, valid = fn(target[None] + [0.0, 0.0, 0.004])
+    assert valid[0] and d[0] > 0.0
+    assert snap.hard_distance is not ex.hard_distance and exclude_target(snap, [9.0, 9, 9], 0.03) is snap
+
+
+def test_exclude_target_keeps_a_neighbouring_stem_hard():
+    """Two vertical stems 5 cm apart, both within the exclusion radius of a
+    grasp point on the first: only the first is released."""
+    vs, nvox = 0.01, 40
+    origin = np.array([-0.2, -0.2, -0.2])
+    g = origin + (np.stack(np.meshgrid(*[np.arange(nvox)] * 3, indexing="ij"), -1) + 0.5) * vs
+    d1 = np.linalg.norm(g[..., :2], axis=-1) - 0.009                 # stem radius + padding
+    d2 = np.linalg.norm(g[..., :2] - [0.05, 0.0], axis=-1) - 0.009
+    snap = DistanceFieldSnapshot(origin=origin, voxel_size=vs, shape=(nvox,) * 3, stamp=0.0, hard_classes=["stem"],
+                                 hard_distance=np.minimum(d1, d2).astype(np.float32),
+                                 hard_class=np.zeros((nvox,) * 3, np.uint8), age_ds=np.zeros((nvox,) * 3, np.uint16))
+    probes = np.array([[0.0, -0.03, 0.0],                           # beside the target stem
+                       [0.05, -0.03, 0.0],                          # beside the neighbour
+                       [0.0, -0.03, 0.15]])                         # beside the target stem, outside the ball
+    s0, s1, s2 = (FieldSampler(x).query(probes, 0.0, 30.0)["hard"]
+                  for x in (snap, exclude_target(snap, [0.0, 0.0, 0.0], 0.10),
+                            exclude_target(snap, [0.0, 0.0, 0.0], 0.10, connected=False)))
+    assert s1[0] > s0[0] + 0.02                                      # target stem released
+    assert s1[1] == pytest.approx(s0[1], abs=1e-6)                   # neighbour still hard
+    assert s2[1] > s0[1] + 0.01                                      # (the plain ball would drop it)
+    assert s1[2] == pytest.approx(s0[2], abs=0.011)                  # the target stem beyond the ball stays
+
+
 def test_sampler_is_conservative_and_matches_query(scene):
     vmap, q, snap, fs = scene
     pts = probe_points(vmap)

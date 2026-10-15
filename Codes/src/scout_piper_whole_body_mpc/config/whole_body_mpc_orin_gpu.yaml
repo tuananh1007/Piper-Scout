@@ -1,0 +1,6 @@
+# Jetson AGX Orin GPU (profile:=orin_gpu = whole_body_mpc_gpu.yaml + this).
+# Start at 512 samples; set from benchmarks/timing.py --backends torch-cuda on
+# the Orin (p95 under 90 ms with the plant geometry).
+whole_body_mpc:
+  ros__parameters:
+    samples: 512

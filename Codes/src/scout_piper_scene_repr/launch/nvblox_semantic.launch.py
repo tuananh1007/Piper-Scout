@@ -13,9 +13,18 @@ Assumes the RealSense driver publishes /camera/color/* and aligned depth, and
 the segmentation node publishes a label image (merged) or the legacy masks
 (separate).
 
+Each nvblox_node is a separate process with its own CUDA context, so every
+class costs GPU and host memory; ``classes:=stem,target`` starts only those
+mappers (the demux still publishes every class's depth).
+
 Usage:
     ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py
     ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py input_mode:=separate
+    ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py classes:=stem,target,other
+    ros2 launch scout_piper_scene_repr nvblox_semantic.launch.py rviz:=true
+
+``field_bridge:=true`` (default) adds ``nvblox_field_bridge.py``, which merges
+the class ESDFs into /scene_repr/distance_field and /scene_repr/target_goal.
 """
 
 import os
@@ -29,6 +38,9 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 CLASS_NAMES = ["stem", "branch", "leaf", "target"]
+# "other": depth outside every class mask (class_demux publish_other). Its
+# mapper gives the planner pots, walls and supports, and the observed space.
+MAPPER_NAMES = CLASS_NAMES + ["other"]
 
 # config/nvblox_per_class.yaml key -> nvblox_ros parameter
 PARAM_MAP = {
@@ -36,6 +48,16 @@ PARAM_MAP = {
     "max_integration_distance_m": "static_mapper.projective_integrator_max_integration_distance_m",
     "weighting": "static_mapper.projective_integrator_weighting_mode",
 }
+
+
+def selected_classes(spec: str) -> list:
+    """Comma-separated subset of MAPPER_NAMES, in that order (unknown names are an error)."""
+    names = [c.strip() for c in spec.split(",") if c.strip()]
+    unknown = sorted(set(names) - set(MAPPER_NAMES))
+    if unknown or not names:
+        raise ValueError(f"classes:={spec!r}: choose from {MAPPER_NAMES}"
+                         + (f"; unknown {unknown}" if unknown else ""))
+    return [c for c in MAPPER_NAMES if c in names]
 
 
 def per_class_parameters(table: dict, class_name: str, global_frame: str) -> dict:
@@ -102,11 +124,25 @@ def _launch_setup(context, *args, **kwargs):
             ],
         }],
     )
+    classes = selected_classes(LaunchConfiguration("classes").perform(context))
     nvblox_nodes = [
         _make_nvblox_node(c, per_class_parameters(table, c, global_frame), base_params, camera_params)
-        for c in CLASS_NAMES
+        for c in classes
     ]
-    return [demux] + nvblox_nodes
+    out = [demux] + nvblox_nodes
+    if LaunchConfiguration("field_bridge").perform(context).lower() in ("1", "true", "yes"):
+        out.append(Node(
+            package="scout_piper_scene_repr",
+            executable="nvblox_field_bridge.py",
+            name="scene_repr_nvblox_field_bridge",
+            output="screen",
+            parameters=[{"classes": classes, "world_frame": global_frame,
+                         "policy_yaml_path": os.path.join(share, "config", "semantic_classes.yaml")}],
+        ))
+    if LaunchConfiguration("rviz").perform(context).lower() in ("1", "true", "yes"):
+        out.append(Node(package="rviz2", executable="rviz2", name="semantic_scene_rviz", output="log",
+                        arguments=["-d", os.path.join(share, "rviz", "semantic_scene.rviz")]))
+    return out
 
 
 def generate_launch_description():
@@ -129,5 +165,19 @@ def generate_launch_description():
             default_value="odom",
             description="World-fixed frame the per-class maps live in (must exist in TF).",
         ),
+        DeclareLaunchArgument(
+            "classes",
+            default_value=",".join(MAPPER_NAMES),
+            description="Comma-separated classes to map (stem, branch, leaf, target, other); one "
+                        "nvblox process (and CUDA context) each, so fewer saves GPU and host memory.",
+        ),
+        DeclareLaunchArgument(
+            "field_bridge",
+            default_value="true",
+            description="Start nvblox_field_bridge.py: merged ESDFs on /scene_repr/distance_field "
+                        "for the MoveIt plugin and the whole-body MPC.",
+        ),
+        DeclareLaunchArgument("rviz", default_value="false",
+                              description="Open RViz with rviz/semantic_scene.rviz"),
         OpaqueFunction(function=_launch_setup),
     ])

@@ -11,17 +11,23 @@ turns those predictions into a cost for the whole-body MPC. Research plan:
 
 | Module | Role |
 |---|---|
-| `encoder.py` | `DenseEncoder` interface. `VJepaEncoder` (V-JEPA 2/2.1 via `torch.hub`, lazy torch import) and `ColorPatchEncoder` (numpy reference used by the tests; **not** a V-JEPA result) |
-| `target_memory.py` | descriptor from the init mask; per frame: cosine similarity → gated softmax → image mean/covariance, entropy, confidence, `tracking`/`occluded`/`lost`; 3-D estimate from aligned depth when valid |
+| `encoder.py` | `DenseEncoder` interface. `VJepaEncoder` (V-JEPA 2/2.1 via `torch.hub`, lazy torch import), `DinoV2Encoder` (DINOv2 patch tokens, the E1 baseline T2) and `ColorPatchEncoder` (numpy reference used by the tests; **not** a V-JEPA result) |
+| `target_memory.py` | descriptor from the init mask; per frame: cosine similarity → gated softmax → image mean/covariance, entropy, confidence, `tracking`/`occluded`/`lost`; 3-D world estimate from aligned depth when valid and the camera pose is known |
 | `metrics.py` | E1 metrics: ID retention, false-switch rate, centre error, jitter, occlusion recovery |
 | `action.py` | action embedding Γ = [Δs_b, Δθ_b, Δp_ee, Δr_ee, Δg] in the base frame at t, from a command (`action_embedding`) or, batched, from two whole-body states (`action_from_states`, used for training data and MPC rollouts) |
 | `readout.py` | §12 read-outs from (predicted) features: similarity, gated softmax, location û, entropy, identity cos(r̂, r), visibility; `readout_sequence` gates each predicted step around the previous one |
 | `predictor.py` | `DensePredictor` interface, `PersistencePredictor`, `StateConditionedPredictor` (MPC state rollouts → Γ → predictor), `OracleStatePredictor` (synthetic upper bound) |
-| `torch_predictor.py` | learned predictor (lazy torch): patch tokens + action token, pre-norm transformer, residual head (zero-initialised = persistence); P0 action-free, P2 unweighted, P3 target-weighted (§11) by configuration; `train_predictor` with L_TF + λ_R L_roll |
+| `torch_predictor.py` | learned predictor (lazy torch): patch tokens + one token for the action and the joint angles (P_φ(Z, a, s), §10), pre-norm transformer, residual head (zero-initialised = persistence); P0 action- and state-free, P2 unweighted, P3 target-weighted (§11) by configuration; optional projection of the encoder features onto their top principal directions (stored in the checkpoint); `train_predictor` with L_TF + λ_R L_roll |
 | `prediction_metrics.py` | E3 metrics per horizon: target error, visibility F1 and AUROC, identity accuracy / switch rate, target-region vs global latent error |
 | `predictive_cost.py` | Stage C `JepaVisibilityCost`, an `ExtraTerm` for the whole-body MPC: J_vis (centring, entropy, FoV barrier, soft loss of visibility) + J_id, with a geometry anchor (below) |
 | `synthetic.py` | synthetic dense-feature world: z-buffered surfel renderer for an eye-in-hand camera, flower + identical twin + occluding leaf + stems + wall, random-motion episodes |
-| `episode.py` | rosbag2 → `.npz` export and offline evaluation (`jepa_episode eval …`) |
+| `episode.py` | rosbag2 → `.npz` export (frames, aligned depth, intrinsics, camera poses from the bag's TF, whole-body states from `/odom` + `/joint_states`, framewise masks, merged labels; two passes, TF first) and offline evaluation (`jepa_episode eval …`) |
+| `annotate.py` | target / distractor / plant masks: PNG import from any tool, keyframe polygons with vertex interpolation (OpenCV window), `info` (`jepa_annotate`) |
+| `e1.py` | E1 comparison T0 (framewise segmentation), T1 (Lucas–Kanade), T2 (DINOv2 + memory), T3 / T4 (V-JEPA 2 / 2.1 + memory) from `config/e1_methods.yaml`, and the H1 go/no-go rule (`jepa_e1`) |
+| `train.py` | P3B.9: features per episode (cached), Γ and joint angles from states, masks to the grid, optional feature projection (`--proj-dim`), P0 / P2 / P3 training on CUDA, E3 scores vs persistence, checkpoints with the training frame interval (`jepa_train`; `--synthetic N` for a check without data) |
+| `latency.py` | P3B.10: predictor rollout and predictive-cost time per sample count over the MPC horizon, fp16 option, untrained models of any feature size (`--grid`, `--feat-dim`, `--input-dim`) (`jepa_latency`) |
+| `predictive_mpc_node.py` | C3 (P3B.11): the whole-body MPC node with the target memory, the learned predictor and the visibility cost in one process |
+| `ground.py` | publish a target mask (PNG, box or circle) on `/piper_jepa/init_mask` (`jepa_ground`) |
 | `image_codec.py` | `sensor_msgs/Image` ↔ numpy without cv_bridge; shared by the node and the bag exporter |
 | `target_state_node.py` | ROS 2 node |
 
@@ -99,24 +105,77 @@ fixed-threshold F1. P3 is the only predictor that beats persistence on every
 target metric, at every horizon. Caveats: synthetic features, one seed, a
 small CPU model; P1 (V-JEPA 2-AC) is not in the comparison.
 
-**Closed loop (C2 vs C3 with the oracle predictor), `benchmarks/visibility_mpc.py`:
-inconclusive.** Pre-grasp goal between the flower and its twin, 2 seeds,
-60 steps, MPPI with 64 samples:
+**Closed loop (C2 vs C3 with the oracle predictor), `benchmarks/visibility_mpc.py`.**
+First run (2026-10-07, 2 seeds, 60 steps, 64 samples): inconclusive. C3 kept
+the flower in view no more than C2 (75–87 % vs 90–93 %) and gave up 3–17 cm of
+goal error, because the visibility cost was added to the goal cost.
 
-| Method | Flower in view | Tracker ends on | Goal error |
-|---|---|---|---|
-| C2 geometry-only | 90–93 % | twin (2/2) | 0.3–1.0 cm |
-| C3-oracle, sequential read-out | 75–87 % | twin (2/2) | 3.2–4.4 cm |
-| C3-oracle, anchor refreshed by the tracker | 25–87 % | flower 1/2, twin 1/2 | 3.6–4.7 cm |
-| C3-oracle, anchor from grounding | 72–78 % | twin / elsewhere | 8.7–17 cm |
+Rerun (2026-10-10, CPU, 64 / 128 samples), with three changes:
+- a feasibility check: 52 % of 2885 sampled whole-body poses on the goal see
+  the flower (25 % near the image centre), so a view-preserving end pose exists;
+- `C3c`: the visibility cost as a `WholeBodyCost.secondary` term: it may raise
+  the horizon-mean goal error by at most 1 cm over the best candidate, and by
+  at most 20 % of the remaining distance near the goal;
+- `--hard`: start poses where geometry-only motion loses the flower (C2 run
+  from 30 random starts that see the flower; the 3 with the lowest visible
+  fraction kept).
 
-The cost does what it is built to do on candidate rankings (unit tests), but
-in closed loop it trades goal accuracy against a view of the flower that this
-pre-grasp pose may not offer at all, and 64 samples do not find a better
-compromise. Before claiming H4 this needs: a check that a view-preserving
-reachable path exists in the test scene, visibility as a near-goal constraint
-or a scheduled weight instead of a constant cost, more samples (GPU), and the
-learned predictor in the loop (P3B.11).
+| Start | Method | Flower in view | Tracker ends on flower | Goal error | Steps |
+|---|---|---|---|---|---|
+| default, 3 seeds | C2 | 81–95 % | 2 of 6 | 0.1–1.0 cm | 35–80 |
+| | C3 (additive) | 36–94 % | 3 of 6 | 2.6–15.4 cm | 80 (limit) |
+| | C3c (secondary) | 67–74 % | 0 of 3 | 0.8–1.0 cm | 18–31 |
+| hard, 3 starts | C2 | 17–31 % | 0 of 3 | 0.1–0.9 cm | 45–120 |
+| | C3 (additive) | 89–100 % | 2 of 3 | 1.6–5.3 cm | 80 (limit) |
+| | C3c (secondary) | 55–79 % | 1 of 3 | 0.4–1.0 cm | 14–22 |
+
+The first C3c version tested only the plan's terminal error; a receding
+horizon then postponed progress (one hard start: flower in view for 16 s, 18 cm
+from the goal at the end), hence the horizon mean.
+
+Conclusion (oracle predictor, synthetic): the visibility cost no longer costs
+goal accuracy, and where geometry alone loses the flower it keeps it in view
+2.5–3.6 times as long during the approach. It does not decide what is seen at
+the end: near the goal the constraint hands control back to the goal cost, and
+from these approach directions the flower is hidden at the end pose C2 also
+reaches (in view at the end in 1 of 3 hard starts, as for C2). Identity at
+the grasp therefore needs the end pose itself chosen for the view (one of the
+52 % of goal poses that see the flower), not only a trajectory cost. Caveats:
+oracle predictor (the upper bound), three hard starts, CPU sample counts; the
+learned predictor in the loop is A9 / P3B.11.
+
+**End pose chosen for the view (2026-10-10, `view_pose.py`).** The end pose is
+now picked first: whole-body poses that put the TCP on the goal are sampled,
+those whose eye-in-hand camera has a free line of sight to the flower kept
+(leaf, twin and stems as occluders; on the robot the semantic field and the
+memory's `p_world`), the best by angle off the optical axis, move from the
+current state, turn of the approach axis and manipulability; the MPC gets its
+approach axis as a pose goal (orientation weight 30). The line-of-sight test is
+conservative: of the poses it calls visible, 90 % show the flower when
+rendered (it finds 57 % of them). CPU, 64 samples, 120 steps:
+
+| Start | Method | Flower in view | At the end: visible / tracker on flower | Goal error | Axis error |
+|---|---|---|---|---|---|
+| default, 3 seeds | C2 | 79–94 % | 3 of 3 / 0 of 3 | 0.1–0.6 cm | |
+| | C2v (view end pose) | 75–97 % | 3 of 3 / **3 of 3** | 0.5–0.6 cm | 1.3–2.9° |
+| | C3c | 63–79 % | 3 of 3 / 0 of 3 | 0.6–1.0 cm | |
+| | C3cv (both) | 93–95 % | 3 of 3 / 0 of 3 | 0.0–0.2 cm | 31–38° |
+| hard, 3 starts | C2 | 19–39 % | 1 of 3 / 0 of 3 | 0.1–1.0 cm | |
+| | C2v | 71–89 % | **3 of 3 / 2 of 3** | 0.1–0.9 cm | 1.0–5.3° |
+| | C3c | 26–75 % | 1 of 3 / 1 of 3 | 0.7–0.9 cm | |
+| | C3cv | 9–91 % | 2 of 3 / 0 of 3 | 0.3–1.1 cm | 29–42° |
+
+The end pose decides identity at the grasp: with it the tracker ends on the
+flower in 5 of 6 runs (C2: 0 of 6, C3c: 1 of 6) and the flower is visible at
+the end in 6 of 6. Adding the trajectory visibility term (C3cv) fails: it
+keeps the current view and holds the camera 29–42° off the chosen axis
+(counting the axis error in the secondary constraint, 0.1 m per rad, reduced
+that to 26° in one run, not enough). `predictive_mpc_node` therefore chooses
+the end pose for point goals (`jepa_view_end_pose`) and suspends the
+visibility cost while that axis is set (`view_suspends_visibility_cost`).
+Hardware-free (ROS, synthetic camera): the axis is chosen once the target is
+anchored, and the visibility cost leaves the MPC. Caveats: one synthetic scene,
+oracle visibility for scoring the runs, six starts.
 
 ## ROS interface
 
@@ -159,12 +218,51 @@ twin; with torch: the untrained network is exactly persistence and survives a
 save/load round trip, and a trained P2 uses the action (beats persistence and
 the action-free P0 on a shift world).
 
+## Datasets, E1, training, latency, C3 (2026-10-09)
+
+The path from robot to results, each step a command (MODULE_TASKS.md has the order):
+
+```text
+record_bag.sh e1|e3  →  jepa_episode export  →  jepa_annotate  →  jepa_e1 run (H1 go/no-go)
+                                                               →  jepa_train (P0 / P2 / P3)  →  jepa_latency (Orin)
+                                                                                             →  predictive_mpc_node (C3)
+```
+
+**Predictor step.** A checkpoint records the time between its training frames
+(`step_s`); the MPC steps the predictor every `jepa_stride` MPC periods and
+derives `jepa_stride` from `step_s` when it is 0 (the default). Export E3
+episodes with a frame interval that is a multiple of the MPC period: with the
+colour stream at 30 fps and the MPC at 10 Hz, `--stride 6` gives 0.2 s
+(`jepa_stride` 2); the default `--stride 1` (0.033 s) matches no MPC step and
+the node warns.
+
+**Feature size.** The cost predicts samples × predictor steps × cells ×
+channels features every MPPI iteration: with V-JEPA 2 ViT-L at 256 px (16 × 16
+cells, 1024 channels), 256 samples and 10 steps that is 2.7 GB. `jepa_train
+--proj-dim 64` projects the features onto their 64 main directions (fitted on
+the training episodes, uncentred so cosines inside the subspace are kept,
+stored in the checkpoint; the node, the cost and the target descriptor use it
+automatically). `results.json` reports the energy kept (`proj_energy`).
+On the development CPU, 32 samples × 10 steps took 1270 ms with 1024 channels
+and 440 ms projected to 64 (`jepa_latency --grid 16 16 --feat-dim 1024 --state`
+vs `--input-dim 1024 --feat-dim 64 --state`); MODULE_TASKS.md A8 / B4 measure
+the GPU.
+
+Checked here without a GPU: the export on a bag recorded from the fake robot
+(37 frames, states for 34, camera poses for 35), annotation and E1 runner on
+synthetic episodes (T0 / T1 / reference memory; V-JEPA and DINOv2 not
+loaded), training on synthetic episodes (CPU smoke run only), latency on the
+CPU (64 samples × 4 predictor steps ≈ 250 ms: a GPU is needed for 10 Hz), and
+the predictive MPC node on the fake robot with a synthetic camera (cost
+active in 216 of 216 cycles once grounded; persistence predictor).
+
 ## Not done yet
 
-- V-JEPA inference has not been run yet (the tests use only the numpy
-  `ColorPatchEncoder`); the hub entry point is configuration until verified on the Orin.
+- V-JEPA and DINOv2 inference have not been run yet (the tests use only the
+  numpy `ColorPatchEncoder`); the hub entry points in `config/e1_methods.yaml`
+  are to be verified on the workstation (MODULE_TASKS.md A6).
 - Touching/merged instances are not handled specially.
 - Stage B/C run only on the synthetic world: no recorded E3 episodes (P3B.8),
   no V-JEPA features, no GPU timing (P3B.10), and the closed-loop C3 result
   above is inconclusive (P3B.11).
-- Gripper state Δg is not wired (always 0).
+- Δg comes from the recorded finger joints (`gripper` in the episode, joint 7 − joint 8) for training; in MPC rollouts it is 0, since the whole-body MPC does not move the gripper.

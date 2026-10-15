@@ -8,6 +8,7 @@ Inputs:
   mask_topic         Image mono8                     leaf mask, for the outline
   depth_topic        Image                           depth aligned to the mask
   camera_info_topic  CameraInfo                      intrinsics
+  color_topic        Image                           colour image, for the UV texture
   /ft_sensor/raw     WrenchStamped                   |F| > threshold ⇒ touching
   /joint_states      JointState                      piper_joint7 closed ⇒ grasped
   TF                 planning_frame ← cloud frame, camera frame, piper_link7
@@ -16,28 +17,51 @@ Outputs:
   /plant_twin/markers   MarkerArray   TRIANGLE_LIST leaf (per-vertex colour)
                                       + LINE_STRIP stem
   /plant_twin/leaf_tip  PointStamped  stem/leaf attachment point
+  /plant_twin/state     String (JSON) fit quality of the frame (fitting.fit_quality:
+                                      residuals in mm, inlier fractions,
+                                      confidence, valid), touching, pulling,
+                                      force, cloud age, stamp, frame,
+                                      silhouette_iou, reinit_count, texture_coverage
+  ~/export              std_srvs/Trigger  OBJ + MTL + PNG of the current leaf into
+                                      export_dir (texture.export_obj)
+
+Re-initialisation (texture.ReinitMonitor): the fitted mesh's silhouette is
+compared with the leaf mask every frame; ``reinit_frames`` frames in a row
+below ``reinit_min_iou`` without contact re-run the first-frame set-up from
+the current mask (new outline, holes, plane, stem). Texture
+(texture.UVTexture): every ``texture_every_n`` frames the colour image is
+baked into a ``texture_size``² UV image, weighted by view angle.
 """
 
 from __future__ import annotations
 
 from typing import Optional, Tuple
 
+import json
+
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point, PointStamped, WrenchStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CameraInfo, Image, JointState, PointCloud2
 from sensor_msgs_py import point_cloud2
-from std_msgs.msg import ColorRGBA
+from std_msgs.msg import ColorRGBA, String
 from tf2_ros import Buffer, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
-from .fitting import FrameObservation, PlantTwinFitter
+import os
+import time
+
+from std_srvs.srv import Trigger
+
+from .fitting import FrameObservation, PlantTwinFitter, twin_state
 from .leaf import LeafModel
 from .outline import outline_from_mask
 from .stem import StemModel
+from .texture import ReinitMonitor, UVTexture, export_obj, silhouette, silhouette_iou
 
 
 def _unpack_rgb(packed: np.ndarray) -> np.ndarray:
@@ -71,6 +95,11 @@ class PlantTwinNode(Node):
             ("rate_hz", 10.0),
             ("stem_ctrl_points", 6),
             ("stem_radius_m", 0.003),
+            ("color_topic", "/camera/color/image_raw"),
+            ("reinit_min_iou", 0.6), ("reinit_frames", 5),
+            ("texture_size", 256), ("texture_every_n", 3),
+            ("export_dir", "/tmp/plant_twin"),
+            ("leaf_backend", "numpy"), ("device", "cpu"),
         ])
         p = lambda k: self.get_parameter(k).value  # noqa: E731
         self.frame = p("planning_frame")
@@ -90,7 +119,14 @@ class PlantTwinNode(Node):
         self.K: Optional[np.ndarray] = None
         self.force = 0.0
         self.gripper_gap = 0.035
+        self.cloud_time: Optional[float] = None      # node clock [s] of the last leaf / stem cloud
         self.fitter: Optional[PlantTwinFitter] = None
+        self.color: Optional[Image] = None
+        self.texture: Optional[UVTexture] = None
+        self.reinit = ReinitMonitor(min_iou=float(p("reinit_min_iou")), frames=int(p("reinit_frames")))
+        self.reinit_count = 0
+        self.frames = 0
+        self.iou: Optional[float] = None
 
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(PointCloud2, p("leaf_cloud_topic"), self._leaf_cb, be)
@@ -98,10 +134,13 @@ class PlantTwinNode(Node):
         self.create_subscription(Image, p("mask_topic"), self._mask_cb, be)
         self.create_subscription(Image, p("depth_topic"), self._depth_cb, be)
         self.create_subscription(CameraInfo, p("camera_info_topic"), self._info_cb, be)
+        self.create_subscription(Image, p("color_topic"), self._color_cb, be)
+        self.create_service(Trigger, "~/export", self._export_srv)
         self.create_subscription(WrenchStamped, "/ft_sensor/raw", self._wrench_cb, 20)
         self.create_subscription(JointState, "/joint_states", self._js_cb, 20)
         self.pub_markers = self.create_publisher(MarkerArray, "/plant_twin/markers", 1)
         self.pub_tip = self.create_publisher(PointStamped, "/plant_twin/leaf_tip", 1)
+        self.pub_state = self.create_publisher(String, "/plant_twin/state", 1)
         self.create_timer(1.0 / float(p("rate_hz")), self._tick)
 
     # ---------------------------------------------------------------- inputs
@@ -130,13 +169,16 @@ class PlantTwinNode(Node):
         xyz, rgb = self._cloud(msg, want_rgb=True)
         if xyz is not None:
             self.leaf_pts, self.leaf_rgb = xyz, rgb
+            self.cloud_time = self._now_s()
 
     def _stem_cb(self, msg):
         xyz, _ = self._cloud(msg, want_rgb=False)
         if xyz is not None:
             self.stem_pts = xyz
+            self.cloud_time = self._now_s()
 
     def _mask_cb(self, msg): self.mask = msg
+    def _color_cb(self, msg): self.color = msg
     def _depth_cb(self, msg): self.depth = msg
 
     def _info_cb(self, msg: CameraInfo):
@@ -150,6 +192,9 @@ class PlantTwinNode(Node):
     def _js_cb(self, msg: JointState):
         if "piper_joint7" in msg.name:
             self.gripper_gap = float(msg.position[msg.name.index("piper_joint7")])
+
+    def _now_s(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
 
     def _fingertip(self):
         tf = self._lookup(self.fingertip)
@@ -193,8 +238,10 @@ class PlantTwinNode(Node):
         ctrl = np.linspace(base, leaf.tip_point(leaf_params), k)
         stem = StemModel(ctrl, radius_m=float(self.get_parameter("stem_radius_m").value))
 
-        self.fitter = PlantTwinFitter(leaf, stem)
+        self.fitter = PlantTwinFitter(leaf, stem, leaf_backend=str(self.get_parameter("leaf_backend").value),
+                                      device=str(self.get_parameter("device").value))
         self.fitter.leaf_params = leaf_params
+        self.texture = UVTexture(leaf, size=int(self.get_parameter("texture_size").value))
         self.get_logger().info(
             f"plant_twin initialised: {len(leaf.faces)} faces, {len(holes)} holes")
         return True
@@ -207,7 +254,65 @@ class PlantTwinNode(Node):
         contact = self._fingertip() if touching else None
         pulling = touching and self.gripper_gap < self.closed
         res = self.fitter.step(FrameObservation(self.leaf_pts, self.stem_pts, contact, pulling))
+        self.frames += 1
         self._publish(res)
+        self._silhouette_and_texture(res.leaf_params, touching)
+        age = None if self.cloud_time is None else self._now_s() - self.cloud_time
+        st = twin_state(res.quality, touching, pulling, self.force, age, self._now_s(), self.frame)
+        st.update({"silhouette_iou": None if self.iou is None else round(self.iou, 3),
+                   "reinit_count": self.reinit_count,
+                   "texture_coverage": None if self.texture is None else round(self.texture.coverage(), 3)})
+        self.pub_state.publish(String(data=json.dumps(st)))
+
+    def _images(self):
+        """(mask, depth m, colour RGB or None, camera R, t) of the latest frame, or None."""
+        if self.mask is None or self.depth is None or self.K is None:
+            return None
+        cam = self._lookup(self.camera_frame)
+        if cam is None:
+            return None
+        try:
+            mask = self.bridge.imgmsg_to_cv2(self.mask, desired_encoding="mono8")
+            depth = self.bridge.imgmsg_to_cv2(self.depth, desired_encoding="passthrough").astype(np.float32)
+            rgb = (self.bridge.imgmsg_to_cv2(self.color, desired_encoding="rgb8")
+                   if self.color is not None else None)
+        except Exception:  # noqa: BLE001
+            return None
+        if np.nanmax(depth) > 10.0:
+            depth = depth / 1000.0
+        return mask, depth, rgb, cam[0], cam[1]
+
+    def _silhouette_and_texture(self, leaf_params, touching: bool) -> None:
+        im = self._images()
+        if im is None:
+            return
+        mask, depth, rgb, R, t = im
+        leaf = self.fitter.leaf
+        sil = silhouette(leaf.vertices(leaf_params), leaf.faces, self.K, R, t, mask.shape[:2])
+        self.iou = silhouette_iou(sil, mask)
+        if self.reinit.update(self.iou, touching):
+            self.reinit_count += 1
+            self.get_logger().warn(f"leaf silhouette IoU {self.iou:.2f} below {self.reinit.min_iou} for "
+                                   f"{self.reinit.frames} frames: re-initialising from the current mask "
+                                   f"(#{self.reinit_count})")
+            self.fitter = None                 # the next tick runs the first-frame set-up again
+            return
+        every = max(int(self.get_parameter("texture_every_n").value), 1)
+        if rgb is not None and self.texture is not None and self.frames % every == 0:
+            self.texture.accumulate(leaf_params, rgb, self.K, R, t, depth=depth)
+
+    def _export_srv(self, req, res):
+        if self.fitter is None:
+            res.success, res.message = False, "no twin yet"
+            return res
+        d = str(self.get_parameter("export_dir").value)
+        os.makedirs(d, exist_ok=True)
+        leaf = self.fitter.leaf
+        prefix = os.path.join(d, time.strftime("leaf_%Y%m%d_%H%M%S"))
+        tex = self.texture.image() if self.texture is not None and self.texture.coverage() > 0 else None
+        res.message = export_obj(prefix, leaf.vertices(self.fitter.leaf_params), leaf.faces, leaf.uv, tex)
+        res.success = True
+        return res
 
     def _publish(self, res) -> None:
         out = self.fitter.export()
@@ -252,8 +357,11 @@ def main(args=None) -> None:
     node = PlantTwinNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):    # Ctrl-C, or SIGINT from ros2 launch
         pass
+    except Exception:
+        if rclpy.ok():                                        # not a callback cut off by the shutdown
+            raise
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        rclpy.try_shutdown()

@@ -17,16 +17,19 @@ Differences from ``SemanticDistanceQuery.query`` (by design):
   * outside the grid the snapshot says nothing (``in_bounds`` False): the
     grid only covers the plant, the rest of the robot's workspace is left to
     the planning scene;
-  * no grasp-mode exclusion (planning to a pre-grasp does not need it).
+  * grasp-mode exclusion is a separate step, ``exclude_target``, for
+    consumers that move onto the target (the stem_grasp MPPI servo); planning
+    to a pre-grasp does not need it.
 """
 
 from __future__ import annotations
 
 import array
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 from .distance_query import SemanticDistanceQuery
 
@@ -104,6 +107,125 @@ def fill_msg(msg, snap: DistanceFieldSnapshot, frame_id: str):
     msg.soft_distance = array.array("f", soft.astype(np.float32).tobytes())
     msg.age_ds = array.array("H", snap.age_ds.astype(np.uint16).tobytes())
     return msg
+
+
+def snapshot_from_msg(msg) -> DistanceFieldSnapshot:
+    """Inverse of ``fill_msg``: a ``SemanticDistanceField`` message (or any
+    object with the same fields) back into a snapshot. Consumers outside the
+    publishing process (the whole-body MPC) sample it with ``FieldSampler``."""
+    shape = tuple(int(v) for v in msg.size)
+    n = int(np.prod(shape))
+
+    def arr(seq, dtype):
+        a = np.frombuffer(bytes(seq), dtype) if isinstance(seq, (bytes, bytearray)) else np.asarray(seq, dtype)
+        return a.reshape(shape) if a.size == n else None
+
+    stamp = msg.header.stamp.sec + 1e-9 * msg.header.stamp.nanosec
+    soft = arr(msg.soft_distance, np.float32) if len(msg.soft_distance) else None
+    return DistanceFieldSnapshot(
+        origin=np.array([msg.origin.x, msg.origin.y, msg.origin.z], float), voxel_size=float(msg.voxel_size),
+        shape=shape, stamp=float(stamp), hard_classes=list(msg.hard_classes),
+        hard_distance=arr(msg.hard_distance, np.float32), hard_class=arr(msg.hard_class, np.uint8),
+        soft_class=str(msg.soft_class), soft_max_penetration=float(msg.soft_max_penetration),
+        soft_distance=soft, age_ds=arr(msg.age_ds, np.uint16))
+
+
+def exclude_target(snap: DistanceFieldSnapshot, center, radius: float = 0.10, connected: bool = True,
+                   seed_radius: float = 0.015, free_radius: float = 0.03, margin: float = 0.15
+                   ) -> DistanceFieldSnapshot:
+    """Grasp-mode exclusion on a snapshot (cf. ``SemanticDistanceQuery`` mode
+    "grasp"): the target the gripper closes on no longer counts as an obstacle.
+
+    Removed are the padded obstacle voxels (hard distance ≤ 0) within
+    ``radius`` of ``center`` (the snapshot's frame) that belong to the target
+    object: with ``connected`` the 26-connected parts of that set that come
+    within ``seed_radius`` of ``center``, so a neighbouring stem, branch or pot
+    in the same ball stays hard unless it touches the target inside the ball;
+    without, every obstacle voxel in the ball (the CPU query's grasp mode). The
+    radius is generous on purpose (an oblique approach passes the stem above
+    the grasp point). Unknown space within ``free_radius`` counts as freshly
+    observed: the back of a stem is never seen from one view, and the
+    gripper's own sphere has to reach the grasp point.
+
+    The merged grid keeps no per-class occupancy, so the distances around the
+    target are re-derived from the remaining obstacle voxels with a Euclidean
+    distance transform on a crop of ``radius + margin`` around ``center``. Each
+    free voxel there gets max(old, min(new − √3/2·voxel, distance to a crop
+    face inside the grid)). That never exceeds the true distance to the
+    remaining obstacles: removing obstacles only increases distances
+    (old ≤ true), a voxel centre lies within √3/2 voxel of the surface between
+    it and an obstacle centre, and anything outside the crop is at least as far
+    as the crop face. Remaining obstacle voxels keep their (conservative)
+    depth; farther than ``margin`` from the ball the old values stay. Returns
+    a new snapshot; ``snap`` is not modified."""
+    from scipy.ndimage import label  # noqa: PLC0415
+    c = np.asarray(center, float)
+    vs, n = snap.voxel_size, np.array(snap.shape)
+    lo = np.clip(np.floor((c - radius - margin - snap.origin) / vs).astype(int), 0, n)
+    hi = np.clip(np.ceil((c + radius + margin - snap.origin) / vs).astype(int), 0, n)
+    if np.any(hi <= lo):
+        return snap                                   # the ball does not touch the grid
+    box = tuple(slice(a, b) for a, b in zip(lo, hi))
+    axes = [snap.origin[k] + (np.arange(lo[k], hi[k]) + 0.5) * vs for k in range(3)]
+    X, Y, Z = np.meshgrid(*axes, indexing="ij")
+    r2 = (X - c[0]) ** 2 + (Y - c[1]) ** 2 + (Z - c[2]) ** 2
+    old = snap.hard_distance[box].astype(float)
+    occ = old <= 0.0
+    removed = occ & (r2 <= radius ** 2)
+    if connected and removed.any():
+        lab, _ = label(removed, structure=np.ones((3, 3, 3)))
+        seeds = np.unique(lab[removed & (r2 <= (seed_radius + 0.5 * np.sqrt(3.0) * vs) ** 2)])
+        removed = np.isin(lab, seeds[seeds > 0])
+    new = old
+    if removed.any():
+        keep = occ & ~removed
+        edt = distance_transform_edt(~keep) * vs if keep.any() else np.full(old.shape, np.inf)
+        bound = np.full(old.shape, np.inf)
+        for k, G in enumerate((X, Y, Z)):            # crop faces inside the grid bound outside obstacles
+            if lo[k] > 0:
+                bound = np.minimum(bound, G - (snap.origin[k] + lo[k] * vs))
+            if hi[k] < n[k]:
+                bound = np.minimum(bound, (snap.origin[k] + hi[k] * vs) - G)
+        est = np.minimum(edt - 0.5 * np.sqrt(3.0) * vs, bound)
+        new = np.where(keep, old, np.maximum(old, est))
+    hard = snap.hard_distance.copy()
+    hard[box] = new.astype(np.float32)
+    age = snap.age_ds.copy()
+    sub = age[box]
+    sub[r2 <= free_radius ** 2] = 0
+    age[box] = sub
+    return replace(snap, hard_distance=hard, age_ds=age)
+
+
+def snapshot_distance_fn(snap: DistanceFieldSnapshot, now: float, max_voxel_age_s: float,
+                         outside_free: bool = True, sampler: Optional["FieldSampler"] = None):
+    """DistanceFn (points -> (hard distance, valid)) over a snapshot for the
+    whole-body MPC and its safety filter. Inside the grid, unknown or stale
+    voxels are invalid with distance clamped to ≤ 0 (unknown is not free).
+    Outside the grid (the snapshot covers the plant, not the robot's whole
+    workspace) points are valid with +inf when ``outside_free``. A
+    ``sampler`` built once for ``snap`` saves its set-up per call."""
+    sampler = sampler or FieldSampler(snap)
+
+    def fn(points):
+        q = sampler.query(points, now, max_voxel_age_s)
+        d = np.asarray(q["hard"], float)
+        valid = q["fresh"] | (~q["in_bounds"] if outside_free else False)
+        d = np.where(q["in_bounds"], np.where(valid, d, np.minimum(d, 0.0)),
+                     np.inf if outside_free else 0.0)
+        return d, valid
+    return fn
+
+
+def snapshot_leaf_fn(snap: DistanceFieldSnapshot, weight: float = 50.0, d_soft: float = 0.02):
+    """Soft leaf cost w·(d_soft − d)² from the snapshot's soft class (0 without one)."""
+    sampler = FieldSampler(snap)
+
+    def fn(points):
+        q = sampler.query(points, snap.stamp, np.inf)
+        d = np.where(q["in_bounds"], q["soft"], np.inf)
+        return np.where(d < d_soft, weight * (d - d_soft) ** 2, 0.0)
+    return fn
 
 
 # ----------------------------------------------------------------- sampler

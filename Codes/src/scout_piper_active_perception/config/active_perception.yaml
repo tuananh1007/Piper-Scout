@@ -1,0 +1,47 @@
+# scout_piper_active_perception: next view for the wrist camera (Phase 4).
+# Parameters documented in active_perception_node.py and README.md.
+active_perception:
+  ros__parameters:
+    world_frame: odom
+    flange_frame: piper_link6
+    camera_frame: camera_color_optical_frame
+    tcp_offset_m: 0.14                  # as whole_body_mpc.yaml (calibrate, MODULE_TASKS.md C2)
+    field_topic: /scene_repr/distance_field
+    target_topic: /piper_jepa/target_point
+    target_state_topic: /piper_jepa/target_state
+    twin_state_topic: /plant_twin/state
+    stem_cloud_topic: /stem_grasp/filtered_cloud
+    camera_info_topic: /camera/color/camera_info
+    policy: fused                       # fused | geometry | target | random | fixed_ring
+    alpha: 0.3                          # U_JEPA weight
+    beta: 0.5                           # U_geometry weight
+    gamma: 0.2                          # U_twin weight
+    lambda_t: 0.02                      # score per second of motion to the view
+    lambda_turn: 0.15                   # score per radian the approach axis turns (the MPC closes large turns slowly)
+    required: [joint, corridor, jepa]   # terms that must be met (U <= 0.5) before the grasp
+    sigma_req_mm: 1.0                   # stem joint: worst 1-sigma lateral axis uncertainty
+    corridor_req: 0.05                  # approach corridor: unknown share
+    corridor_length_m: 0.15
+    corridor_radius_m: 0.03
+    stem_crop_m: 0.05
+    stem_radius_guess_m: 0.004
+    half_len_m: 0.03
+    view_min_baseline_m: 0.03
+    view_min_angle_deg: 8.0
+    depth_sigma0_m: 0.0005              # D405 depth noise: sigma0 + k2 * z^2 (check on the robot)
+    depth_k2: 0.002
+    pose_sigma_m: 0.0005                # per-view camera pose error after calibration
+    pose_sigma_deg: 0.1
+    d_min_m: 0.2
+    d_max_m: 0.45
+    max_base_move_m: 0.5
+    reach_max_m: 0.36                   # as whole_body_mpc.yaml: the MPC does not reach a more stretched arm
+    clearance_m: 0.03
+    n_samples: 120000
+    n_candidates: 200
+    max_field_age_s: 5.0
+    max_state_age_s: 1.0
+    target_jump_m: 0.03
+    rate_hz: 1.0
+    auto_publish: false
+    auto_period_s: 10.0

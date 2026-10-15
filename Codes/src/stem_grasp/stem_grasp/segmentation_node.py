@@ -13,6 +13,9 @@ full inference pipeline:
   - Stationary gate via joint_states
   - Target caption channel (fruit/flower) → /stem_grasp/target_mask and
     /stem_grasp/target_point in camera optical frame
+  - Per-instance detections for the operator layer (Phase 5) →
+    /stem_grasp/detections: every YOLO instance, or with Grounded-SAM the
+    stem, target and ``detection_captions`` instances (open vocabulary)
   - Debug overlay image
 
 The only behavioral changes vs the ROS 1 source are mechanical ROS 1→2 swaps:
@@ -28,7 +31,7 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -42,7 +45,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from rclpy.time import Time as RclpyTime
 from sensor_msgs.msg import CameraInfo, Image, JointState
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, String
 from tf2_ros import Buffer, TransformListener
 
 try:
@@ -58,6 +61,44 @@ try:
 except Exception:
     _frangi = None  # type: ignore[assignment]
     _FRANGI_OK = False
+
+
+def motion_gate_applies(enabled: bool, pipeline_state: str, off_states) -> bool:
+    """Whether segmentation pauses while the robot moves.
+
+    The gate (``segment_only_when_stationary``) keeps scans free of motion
+    blur and of clouds smeared across a moving camera. The image-based servo
+    and the final approach move the arm continuously and step once per mask,
+    so in those pipeline states (``motion_gate_off_states``) the gate is off;
+    with it on, each servo step would stop the arm until it settled again.
+    """
+    return bool(enabled) and pipeline_state not in set(off_states or [])
+
+
+def compose_label(masks: Dict[int, np.ndarray], shape, paint_order=(3, 2, 1, 4)) -> np.ndarray:
+    """Merged semantic label image (mono8) for scout_piper_scene_repr's
+    class_demux (``input_mode: merged``): each pixel holds the label id of
+    its class (semantic_classes.yaml: stem 1, branch 2, leaf 3, target 4),
+    0 elsewhere. Classes are painted in ``paint_order`` (later wins, so a
+    target on a stem stays target); labels not listed are painted last."""
+    label = np.zeros(shape, np.uint8)
+    order = [k for k in paint_order if k in masks] + [k for k in masks if k not in paint_order]
+    for k in order:
+        m = masks[k]
+        if m is not None and np.shape(m) == tuple(shape):
+            label[np.asarray(m) > 0] = int(k)
+    return label
+
+
+def parse_class_labels(entries) -> Dict[int, int]:
+    """["0:1", "2:3"] -> {0: 1, 2: 3} (YOLO class id -> semantic label id)."""
+    out = {}
+    for e in entries or []:
+        if not str(e).strip():
+            continue
+        cid, _, lab = str(e).partition(":")
+        out[int(cid)] = int(lab)
+    return out
 
 
 class _Throttle:
@@ -97,7 +138,7 @@ class StemSegmentationNode(Node):
             enable_context_prompt=False,
             context_prompt_fallback_to_base=True,
             context_prompt_clauses=["hanging fruit", "pot"],
-            grounded_sam_extra_captions=[],
+            grounded_sam_extra_captions=[""],   # [""], not []: [] declares a byte array
             target_caption="",
             target_min_pixels=30,
             enable_depth_prefilter=False,
@@ -134,9 +175,27 @@ class StemSegmentationNode(Node):
             sam_checkpoint="",
             grasp_uv_timeout_sec=2.0,
             segment_only_when_stationary=True,
+            # the motion gate keeps scans clean, but the image-based servo
+            # needs masks while the arm moves: no gate in these pipeline states
+            motion_gate_off_states=["SERVOING", "APPROACHING"],
+            # merged label image for the semantic scene (P1.1.4)
+            publish_semantic_label=True,
+            semantic_label_topic="/stem_grasp/semantic_label",
+            # "YOLO class id:label id" (stem 1, branch 2, leaf 3, target 4);
+            # unset ([""]) labels the yolo_stem_class_id instances as stem
+            yolo_class_labels=[""],
+            label_paint_order=[3, 2, 1, 4],
             stationary_joint_vel_threshold=0.02,
             joint_states_timeout_sec=0.75,
             stationary_settle_sec=0.12,
+            # every YOLO instance (class, box, colour, 3-D point) as JSON for the
+            # operator layer (scout_piper_language, Phase 5)
+            publish_detections=True,
+            detections_topic="/stem_grasp/detections",
+            # Grounded-SAM: open-vocabulary classes published as detections as
+            # well (each caption one Grounding-DINO query + SAM masks), e.g.
+            # ["flower", "leaf", "fruit"]; [""] = only the stem and target captions
+            detection_captions=[""],
         )
         self.p = p
         self.throttle = _Throttle()
@@ -212,6 +271,10 @@ class StemSegmentationNode(Node):
         self.centroid_pub = self.create_publisher(
             PointStamped, "/stem_grasp/mask_centroid", 1
         )
+        self.label_pub = self.create_publisher(Image, str(self.p["semantic_label_topic"]), 1)
+        self._class_labels = parse_class_labels(self.p["yolo_class_labels"]) or {
+            int(self.p["yolo_stem_class_id"]): 1}
+        self._yolo_class_masks: Dict[int, np.ndarray] = {}
         self.target_mask_pub = self.create_publisher(
             Image, "/stem_grasp/target_mask", 1
         )
@@ -221,6 +284,9 @@ class StemSegmentationNode(Node):
         self.combined_centroid_pub = self.create_publisher(
             PointStamped, "/stem_grasp/combined_centroid", 1
         )
+        self.detections_pub = self.create_publisher(String, str(self.p["detections_topic"]), 1)
+        self._yolo_instances = None
+        self._gsam_instances = None             # (masks, class ids, confs, names) of the last Grounded-SAM run
 
         # --- Subscribers ---------------------------------------------------
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
@@ -243,6 +309,12 @@ class StemSegmentationNode(Node):
         )
         self.create_subscription(
             JointState, self.p["joint_states_topic"], self.joint_state_cb, qos_rel,
+            callback_group=self.cb_group,
+        )
+        self._pipeline_state = ""
+        self.create_subscription(
+            String, "/stem_grasp/pipeline_state",
+            lambda m: setattr(self, "_pipeline_state", m.data), qos_rel,
             callback_group=self.cb_group,
         )
 
@@ -455,6 +527,10 @@ class StemSegmentationNode(Node):
                 if tmask is not None:
                     self._latest_target_mask = tmask
 
+            if bool(self.p["publish_detections"]):
+                self._gsam_instances = self._collect_gsam_instances(
+                    bgr, image_tensor, [(m > 0, c) for m, c in zip(mask_list, conf_list)],
+                    box_thr, txt_thr)
             return self._select_instance_mask(mask_list, conf_list)
         except Exception as exc:
             if self.throttle.ok("gsam_fail", 2.0):
@@ -463,6 +539,34 @@ class StemSegmentationNode(Node):
         finally:
             if temp_path and os.path.exists(temp_path):
                 os.remove(temp_path)
+
+    def _gsam_caption_instances(self, bgr, image_tensor, caption, box_thr, txt_thr):
+        """[(mask bool (H, W), confidence)] for one Grounding-DINO caption,
+        each box segmented by SAM."""
+        caption = str(caption).strip()
+        if not caption:
+            return []
+        boxes, logits, _ = self._gdino_predict(
+            model=self._gdino_model, image=image_tensor, caption=caption,
+            box_threshold=box_thr, text_threshold=txt_thr, device=self._device,
+        )
+        if boxes is None or len(boxes) == 0:
+            return []
+        h, w = bgr.shape[:2]
+        xyxy = self._box_convert(boxes=boxes * self._torch.Tensor([w, h, w, h]),
+                                 in_fmt="cxcywh", out_fmt="xyxy").to(self._device)
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        self._sam_predictor.set_image(rgb)
+        transformed = self._sam_predictor.transform.apply_boxes_torch(xyxy, rgb.shape[:2])
+        masks, _, _ = self._sam_predictor.predict_torch(
+            point_coords=None, point_labels=None, boxes=transformed, multimask_output=False)
+        out = []
+        for i in range(masks.shape[0]):
+            m = masks[i, 0].detach().cpu().numpy().astype(bool)
+            if m.shape != (h, w):
+                m = cv2.resize(m.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+            out.append((m, float(logits[i].item()) if i < len(logits) else 0.0))
+        return out
 
     def _segment_grounded_sam_target_mask(
         self, bgr, image_source, image_tensor, caption, box_thr, txt_thr
@@ -499,7 +603,18 @@ class StemSegmentationNode(Node):
             return None
         return target
 
+    def _collect_gsam_instances(self, bgr, image_tensor, stem_instances, box_thr, txt_thr):
+        """(masks, class ids, confs, names) for the detections topic: the stem
+        caption's instances, the target caption's and each detection caption's."""
+        from stem_grasp.detections import collect_caption_instances  # noqa: PLC0415
+        captions = [self.p["target_caption"]] + list(self.p["detection_captions"] or [])
+        return collect_caption_instances(
+            str(self.p["text_prompt"]).strip() or "stem", stem_instances, captions,
+            lambda cap: self._gsam_caption_instances(bgr, image_tensor, cap, box_thr, txt_thr))
+
     def _segment_yolo(self, bgr: np.ndarray) -> Tuple[np.ndarray, float]:
+        self._yolo_class_masks = {}
+        self._yolo_instances = None
         if self.yolo is None:
             return np.zeros(bgr.shape[:2], dtype=np.uint8), 0.0
         predict_kwargs = dict(
@@ -535,10 +650,20 @@ class StemSegmentationNode(Node):
         )
         thr = float(self.p["yolo_mask_threshold"])
         stem_class = int(self.p["yolo_stem_class_id"])
+        self._yolo_instances = ([m > thr for m in masks], list(classes), list(confs),
+                                dict(getattr(result, "names", {}) or {}))
         mc, cc = [], []
+        H, W = bgr.shape[:2]
         for idx, m in enumerate(masks):
             cid = int(classes[idx]) if len(classes) > idx else -1
             det = float(confs[idx]) if len(confs) > idx else 0.0
+            lab = self._class_labels.get(cid)
+            if lab is not None:                      # every instance of a mapped class
+                mm = (m > thr).astype(np.uint8)
+                if mm.shape != (H, W):
+                    mm = cv2.resize(mm, (W, H), interpolation=cv2.INTER_NEAREST)
+                prev = self._yolo_class_masks.get(lab)
+                self._yolo_class_masks[lab] = mm if prev is None else np.maximum(prev, mm)
             if cid != stem_class:
                 continue
             mc.append((m > thr).astype(np.uint8) * 255)
@@ -817,7 +942,8 @@ class StemSegmentationNode(Node):
             self.last_motion_time = now
 
     def _robot_is_moving(self) -> bool:
-        if not bool(self.p["segment_only_when_stationary"]):
+        if not motion_gate_applies(bool(self.p["segment_only_when_stationary"]),
+                                   self._pipeline_state, self.p["motion_gate_off_states"]):
             return False
         now = self.get_clock().now()
         if self.latest_joint_state_stamp is None:
@@ -935,14 +1061,36 @@ class StemSegmentationNode(Node):
         out.header = msg.header
         self.mask_pub.publish(out)
         self.conf_pub.publish(Float32(data=stem_conf))
+        if bool(self.p["publish_semantic_label"]):
+            self._publish_label(msg.header, mode, mask, post_keep if bool(self.p["enable_depth_postfilter"]) else None)
         self._publish_centroid(msg.header, centroid)
         self._publish_target(msg.header)
         self._publish_combined_centroid(msg.header, mask, self._cached_target_mask)
+        if bool(self.p["publish_detections"]) and mode in ("yolo_seg", "grounded_sam"):
+            self._publish_detections(msg.header, bgr, self._yolo_instances if mode == "yolo_seg"
+                                     else self._gsam_instances)
 
         if bool(self.p["publish_debug"]):
             self._publish_debug(bgr, mask, stem_conf, centroid)
 
     # ----------------------------------------------------------- publishers
+    def _publish_label(self, header, mode: str, mask: np.ndarray, keep: Optional[np.ndarray]) -> None:
+        """Merged label image: every mapped YOLO class (all instances), else the
+        stem mask as label 1; the target mask (grounded_sam) as label 4."""
+        masks: Dict[int, np.ndarray] = {}
+        if mode == "yolo_seg" and self._yolo_class_masks:
+            masks.update(self._yolo_class_masks)
+        else:
+            masks[1] = mask
+        if self._cached_target_mask is not None and np.shape(self._cached_target_mask) == mask.shape:
+            masks[4] = self._cached_target_mask
+        if keep is not None:
+            masks = {k: np.where(keep, m, 0) for k, m in masks.items()}
+        label = compose_label(masks, mask.shape, tuple(int(v) for v in self.p["label_paint_order"]))
+        out = self.bridge.cv2_to_imgmsg(label, encoding="mono8")
+        out.header = header
+        self.label_pub.publish(out)
+
     def _publish_centroid(self, header, centroid):
         if centroid is None:
             return
@@ -1021,6 +1169,29 @@ class StemSegmentationNode(Node):
         ps.header.frame_id = str(self.p["camera_optical_frame"])
         ps.point.x, ps.point.y, ps.point.z = float(x), float(y), float(z)
         self.target_point_pub.publish(ps)
+
+    def _publish_detections(self, header, bgr, instances) -> None:
+        """Every instance of this frame (YOLO, or the last Grounded-SAM run)
+        as JSON (detections.py)."""
+        import json  # noqa: PLC0415
+        from stem_grasp.detections import describe_instances  # noqa: PLC0415
+        inst = instances or ([], [], [], {})
+        depth, K = None, None
+        if self.latest_depth is not None and self._fx is not None:
+            try:
+                d = self.bridge.imgmsg_to_cv2(self.latest_depth, desired_encoding="passthrough").astype(np.float32)
+                depth = d / 1000.0 if np.nanmax(d) > 10.0 else d
+                if depth.shape != bgr.shape[:2]:
+                    depth = None                     # depth must be aligned to colour
+                K = np.array([[self._fx, 0.0, self._cx], [0.0, self._fy, self._cy], [0.0, 0.0, 1.0]])
+            except Exception:
+                depth = None
+        dets = describe_instances(inst[0], inst[1], inst[2], inst[3], bgr, depth, K,
+                                  min_pixels=int(self.p["target_min_pixels"]))
+        body = {"stamp": header.stamp.sec + 1e-9 * header.stamp.nanosec,
+                "frame_id": str(self.p["camera_optical_frame"]), "image_hw": list(bgr.shape[:2]),
+                "detections": dets}
+        self.detections_pub.publish(String(data=json.dumps(body)))
 
     def _publish_debug(self, bgr, mask, stem_conf, centroid):
         dbg = bgr.copy()

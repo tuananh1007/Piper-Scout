@@ -46,3 +46,9 @@ __pycache__/
 # OS
 .DS_Store
 *.swp
+
+# test logs (TEST_PROCEDURE.md): kept locally, sent separately
+test_logs/
+
+# recorded datasets (scripts/record_bag.sh)
+bags/

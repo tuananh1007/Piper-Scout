@@ -498,7 +498,7 @@ Evidence pointer: E7.
 Report:
 - Piper arm;
 - Scout 2.0;
-- RealSense eye-in-hand camera (state the deployed model: D435 or D405);
+- RealSense D405, eye-in-hand;
 - Jetson AGX Orin 64 GB;
 - F/T sensor if used.
 

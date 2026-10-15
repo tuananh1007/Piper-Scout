@@ -1,0 +1,115 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: false
+      Value: false
+    - Class: rviz_default_plugins/RobotModel
+      Name: Robot
+      Enabled: true
+      Description Topic:
+        Value: /robot_description
+      Value: true
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Name: stem mesh (nvblox)
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_repr/stem/nvblox_stem/mesh
+      Value: true
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Name: branch mesh (nvblox)
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_repr/branch/nvblox_branch/mesh
+      Value: true
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Name: leaf mesh (nvblox)
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_repr/leaf/nvblox_leaf/mesh
+      Value: true
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Name: target mesh (nvblox)
+      Enabled: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_repr/target/nvblox_target/mesh
+      Value: true
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Name: other mesh (nvblox)
+      Enabled: false
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /scene_repr/other/nvblox_other/mesh
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Name: CPU semantic voxels (scene_query_node)
+      Enabled: false
+      Topic:
+        Value: /scene_repr/voxels
+      Value: false
+    - Class: rviz_default_plugins/Pose
+      Name: Target goal (pre-grasp)
+      Enabled: true
+      Topic:
+        Value: /scene_repr/target_goal
+      Shape: Arrow
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Stem mask
+      Enabled: true
+      Topic:
+        Value: /scene_repr/mask/stem
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Gated depth (other)
+      Enabled: false
+      Topic:
+        Value: /scene_repr/depth/other
+      Value: false
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom
+    Frame Rate: 15
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.0
+      Focal Point:
+        X: 0.6
+        Y: 0.0
+        Z: 0.5
+      Name: Current View
+      Pitch: 0.5
+      Yaw: 3.6

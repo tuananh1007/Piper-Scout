@@ -20,7 +20,7 @@ To get nvblox running, follow the source-build path:
        vcs import src < repos.yaml
 
   3. Inside the dev container, build the workspace:
-       colcon build --symlink-install
+       ./scripts/colcon_build_safe.sh --symlink-install
 
 See docs/PHASE1_RUNTIME.md for the updated walkthrough.
 EOF

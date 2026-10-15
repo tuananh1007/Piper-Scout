@@ -6,8 +6,12 @@ whole_body_mpc:
     rate_hz: 10.0
     world_frame: "odom"
     goal_topic: "/whole_body_mpc/goal"        # or /piper_jepa/target_point
-    # Names as published on /joint_states by the Piper driver — check: the
-    # driver may publish joint1..joint6 without the URDF's piper_ prefix.
+    goal_pose_topic: "/whole_body_mpc/goal_pose"   # PoseStamped: position + approach (z) axis
+    goal_pose_full_topic: "/whole_body_mpc/goal_pose_full"   # PoseStamped: full orientation (views)
+    cancel_topic: "/whole_body_mpc/cancel"    # std_msgs/Empty: drop the goal, stop, go idle
+    # Names on /joint_states. The Piper driver itself publishes joint1..joint6
+    # on /joint_states_single; full_system.launch.py relays them as these
+    # (scout_piper_bringup/scripts/piper_joint_state_relay.py).
     joint_names: ["piper_joint1", "piper_joint2", "piper_joint3",
                   "piper_joint4", "piper_joint5", "piper_joint6"]
     tcp_offset_m: 0.14                        # link6 → grasp point; calibrate
@@ -24,11 +28,34 @@ whole_body_mpc:
     d_safe: 0.02                              # safety filter: hard one-step clearance
     plan_margin_m: 0.01                       # planner penalises below d_safe + this (0 deadlocks)
     refine_iters: 2                           # gradient refinement steps per solve (0 = pure MPPI)
+    backend: "numpy"                         # numpy (CPU) | torch (profile:=gpu / orin_gpu)
+    torch_device: "auto"                     # torch: auto = cuda if available, else cpu
     use_semantic_scene: false                 # true = in-process SemanticVoxelMap
+    field_topic: ""                           # /scene_repr/distance_field: CPU map or nvblox bridge
+    field_max_voxel_age_s: 30.0               # older voxels of the field count as unknown
+    field_max_age_s: 2.5                      # field_topic: stop when the newest field is older
+    secondary_tol_m: 0.01                     # goal error a secondary cost term (Piper-JEPA C3) may cost
+    unknown_policy: "no_entry"                # robot spheres may move inside unknown space, not into it
     scene_grid_center: [0.6, 0.0, 0.6]
     scene_half_extent_m: 0.5
     scene_voxel_size_m: 0.01
     max_state_age_s: 0.2
-    max_geometry_age_s: 1.0
+    max_geometry_age_s: 1.0                   # in-process map (use_semantic_scene)
     goal_tolerance_m: 0.01
     handoff_distance_m: 0.05                  # report handoff_ready to the local servo
+    # With a pose goal, "reached" also needs the TCP z axis within this angle of
+    # the approach axis (stem_grasp's ROS 1 MoveIt tolerance was 0.35 rad = 20 deg).
+    approach_tolerance_deg: 15.0
+    w_orient: 2.0                             # weight of the approach-axis cost
+    # Keep the arm's shoulder-to-wrist distance below reach_max_m (max 0.537)
+    # and move the base for the rest, so the pre-grasp pose leaves room for the
+    # stem servo and the final approach. 0 disables.
+    w_reach: 10000.0
+    reach_max_m: 0.36
+    # Pose goals (stem_grasp's pre-grasp) are followed by a final approach of
+    # pose_goal_advance_m along the gripper axis (= stem_grasp
+    # target_position_offset_m): keep the wrist under reach_max_advanced_m
+    # after that advance too, or the wrist straightens into its singularity.
+    pose_goal_advance_m: 0.12
+    w_reach_advanced: 1000.0
+    reach_max_advanced_m: 0.40

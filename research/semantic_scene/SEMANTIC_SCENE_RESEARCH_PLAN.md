@@ -3,7 +3,7 @@
 **Working title:** *Semantic Metric Fields for Thin-Structure Plant Manipulation*  
 **Track:** deterministic semantic geometry  
 **Role:** provide metric collision/clearance authority for whole-body MPC and Piper-JEPA Stage C  
-**Implementation base:** [`Codes/src/scout_piper_scene_repr/`](../../Codes/src/scout_piper_scene_repr/), eye-in-hand RealSense (model to be confirmed, see [`../README.md`](../README.md)), Isaac ROS nvblox  
+**Implementation base:** [`Codes/src/scout_piper_scene_repr/`](../../Codes/src/scout_piper_scene_repr/), eye-in-hand RealSense D405, Isaac ROS nvblox  
 **Status:** aligned with `ROADMAP.md` as of 2026-10-05
 
 ---
@@ -294,7 +294,7 @@ For regions with insufficient observations, expose an unknown/invalid state rath
 
 This distinction is important for safety.
 
-With an eye-in-hand camera, geometry around the gripper is refreshed only while it is inside the sensor's usable depth range. During the final approach the region near the target can fall below the minimum depth (a few tens of cm for a D435, ≈7 cm for a D405), so it ages rather than updates; freshness gating must treat that as stale, not as free.
+With an eye-in-hand camera, geometry around the gripper is refreshed only while it is inside the sensor's usable depth range. During the final approach the region near the target can fall below the minimum depth (≈7 cm for the D405), so it ages rather than updates; freshness gating must treat that as stale, not as free.
 
 ---
 

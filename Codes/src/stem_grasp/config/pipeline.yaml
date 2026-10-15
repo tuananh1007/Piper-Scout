@@ -15,6 +15,8 @@ stem_grasp_pipeline:
     move_group: "arm"
     max_force_n: 2.0
     contact_threshold_n: 0.15
+    # Iterative final approach (P0.4.13): see system.yaml and stem_grasp/approach.py
+    approach_enabled: false
     approach_target_distance: 0.25
     approach_step: 0.05
     approach_max_steps: 8
@@ -23,6 +25,28 @@ stem_grasp_pipeline:
     approach_mask_wait_sec: 2.0
     approach_min_leaf_pixels: 60
     approach_goal_orientation_tolerance: 0.05
+    approach_speed_mps: 0.02
+    approach_align_tolerance_px: 8.0
+    approach_align_window_sec: 1.5
+    approach_timeout_sec: 60.0
+    # Grasp after AT_GRASP (needs approach_enabled): open the gripper before
+    # the approach, close it on arrival through piper_servo_bridge
+    # (~/gripper_cmd, enabled bridge only), GRASPED once the opening settles.
+    grasp_close_gripper: false
+    grasp_gripper_topic: "/piper_servo_bridge/gripper_cmd"
+    grasp_open_width_m: 0.06
+    grasp_closed_width_m: 0.0
+    grasp_settle_sec: 0.5
+    grasp_timeout_sec: 5.0
+    grasp_min_object_m: 0.002
+    gripper_finger_joints: "piper_joint7,piper_joint8"
+    # Release (~/release, std_srvs/Trigger, from GRASPED or AT_GRASP): open the
+    # gripper, back out release_retreat_m along the gripper axis, go IDLE;
+    # ~/scan starts scanning again from IDLE or ABORTED.
+    release_retreat_m: 0.10
+    release_speed_mps: 0.03
+    release_open_timeout_sec: 5.0
+    release_timeout_sec: 15.0
     skeleton_min_stem_points: 6
     skeleton_max_endpoint_jump_m: 0.05
     skeleton_cache_max_age_sec: 2.0
@@ -33,7 +57,66 @@ stem_grasp_pipeline:
     acceleration_scale: 0.12
     grasp_strategy: "nearest_target"
     target_point_timeout_sec: 3.5
+    operator_target_topic: ""             # Phase 5: /operator/target from scout_piper_language
+    operator_target_max_dist_m: 0.05
+    # Phase 4: /active_perception/plan_view asks for views in SCANNING (VIEWING) before the reach
+    active_perception_service: ""
+    active_perception_status_topic: "/active_perception/status"
+    active_perception_view_topic: "/active_perception/next_view"
+    active_perception_max_views: 4
+    active_perception_settle_sec: 1.5
+    active_perception_startup_wait_sec: 5.0
+    active_perception_return_sec: 3.0      # no grasp candidate this long after the last view: back to the scan pose
+    active_perception_view_timeout_sec: 40.0
+    active_perception_view_tolerance_m: 0.02
+    active_perception_view_angle_deg: 20.0
+    # grasp the stem axis: fit the stem cross-section around each skeleton
+    # point (single-view clouds show only the camera-facing half)
+    grasp_point_on_stem_axis: true
+    stem_radius_max_m: 0.02
     servo_cmd_topic: "/servo_node/delta_twist_cmds"
+    # Image-based servo (P0.4.12). The target must appear where the gripper
+    # approach axis (eef_frame z, TCP tcp_offset_m along it) crosses its depth;
+    # the stem position is read from the mask rows around the target's row.
+    # The gain is lambda_inf + (lambda_0 - lambda_inf) exp(-rho e_px), scaled
+    # down within 0.25 m of the stem; above ~10 px it is lambda_inf. moveit_servo
+    # realises ~55 % of a commanded velocity, so 0.5 converges 60 -> 4 px in
+    # ~15 s hardware-free (ROS 1 used 0.07: ~4x slower). Tune on the robot.
+    tcp_offset_m: 0.14
+    servo_lambda_0: 0.8
+    servo_lambda_inf: 0.5
+    servo_rho: 0.3
+    servo_row_band_px: 12
+    target_point_max_age_sec: 0.5
+    servo_mask_max_age_sec: 0.3
+    # Phase 2B MPPI visual servo instead of the IBVS (the IBVS stays the
+    # baseline): arm-only MPPI on the Piper joint velocities, JointJog on
+    # servo_joint_cmd_topic, Scout still; mppi_dt about the mask period.
+    servo_controller: "ibvs"              # ibvs | mppi
+    mppi_samples: 256
+    mppi_horizon: 20
+    mppi_dt: 0.05
+    mppi_backend: "numpy"                 # numpy | torch (mppi_device cuda on the GPU)
+    mppi_qd_max: 0.5
+    scene_field_topic: ""                 # e.g. /scene_repr/distance_field: semantic clearance (mppi)
+    grasp_exclusion_radius_m: 0.10        # target stem released within this of the grasp point
+    # Move to the pre-grasp pose (P0.4.11): "none" only publishes
+    # /stem_grasp/target_pose; "whole_body_mpc" sends it to the whole-body MPC
+    # (run it with execute:=true and bringup_servo:=true), waits for "reached",
+    # cancels the MPC and starts the image-based servo (INSTALL.md 10.9).
+    reach_executor: "none"
+    mpc_world_frame: "odom"
+    mpc_goal_pose_topic: "/whole_body_mpc/goal_pose"
+    mpc_goal_pose_full_topic: "/whole_body_mpc/goal_pose_full"   # views: full TCP orientation
+    mpc_status_topic: "/whole_body_mpc/status"
+    mpc_cancel_topic: "/whole_body_mpc/cancel"
+    reach_timeout_sec: 60.0
+    reach_settle_sec: 1.0
+    # hand off once the MPC reports the TCP within 2 cm and the approach axis
+    # within 15 deg for reach_settle_sec (its own "reached" is 1 cm; the servo
+    # and the final approach correct the rest)
+    reach_handoff_tolerance_m: 0.02
+    reach_handoff_angle_deg: 15.0
 
 stem_grasp_segmentation:
   ros__parameters:
@@ -43,15 +126,27 @@ stem_grasp_segmentation:
     target_min_pixels: 30
     segmentation_min_depth_m: 0.05
     segmentation_max_depth_m: 1.20
+    min_valid_depth_pixels: 50
+    # stock Ultralytics yolo26n-seg weights are trained on COCO, where class 58
+    # is "potted plant"; with a custom stem model, set its stem class id
     yolo_model_path: "/home/sciarm/models/yolo26n-seg.pt"
+    yolo_stem_class_id: 58
     yolo_conf: 0.15
     yolo_iou: 0.45
     yolo_imgsz: 960
     yolo_mask_threshold: 0.25
     grounded_sam_every_n_frames: 5
     segment_only_when_stationary: true
+    # no motion gate while the servo / final approach need a mask every step
+    motion_gate_off_states: ["SERVOING", "APPROACHING"]
+    # merged label image for the semantic scene (class_demux input_mode: merged).
+    # yolo_seg labels the yolo_stem_class_id instances as stem (1); a plant model
+    # with more classes maps "YOLO class id:label id" (stem 1, branch 2, leaf 3,
+    # target 4), e.g. yolo_class_labels: ["0:1", "1:2", "2:3", "3:4"] (not an
+    # empty list: ROS 2 leaves a parameter set to [] uninitialised). Other modes
+    # publish the stem mask as 1 and the target mask as 4
+    publish_semantic_label: true
 
 stem_grasp_pointcloud:
   ros__parameters:
     depth_topic: "/camera/aligned_depth_to_color/image_raw"
-    min_valid_depth_pixels: 50

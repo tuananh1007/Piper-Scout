@@ -82,13 +82,14 @@ install(PROGRAMS
   python/class_demux_node.py
   python/test_mask_publisher.py
   python/scene_query_node.py
+  python/nvblox_field_bridge.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
-install(DIRECTORY config launch docs
+install(DIRECTORY config launch docs rviz
   DESTINATION share/${PROJECT_NAME}
 )
 

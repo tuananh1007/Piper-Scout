@@ -47,7 +47,8 @@ def evaluate(pred, episodes, r, image_hw, K, H, every=3):
         for t0 in range(K - 1, len(ep["Z"]) - H, every):
             if not ep["visible"][t0]:
                 continue
-            Zp.append(pred.rollout(ep["Z"][None, t0 - K + 1:t0 + 1], ep["A"][None, t0:t0 + H])[0])
+            Zp.append(pred.rollout(ep["Z"][None, t0 - K + 1:t0 + 1], ep["A"][None, t0:t0 + H],
+                                   states=ep["states"][None, t0:t0 + H, 3:9])[0])
             sl = slice(t0 + 1, t0 + H + 1)
             Zt.append(ep["Z"][sl]); Lt.append(ep["label"][sl]); Ut.append(ep["u"][sl])
             Vt.append(ep["visible"][sl]); U0.append(ep["u"][t0])

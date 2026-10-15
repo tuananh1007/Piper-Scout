@@ -42,6 +42,7 @@ def generate_launch_description():
                 name="stem_grasp_pipeline",
                 output="screen",
                 parameters=[LaunchConfiguration("config")],
+                additional_env={"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"},
             ),
         ]
     )

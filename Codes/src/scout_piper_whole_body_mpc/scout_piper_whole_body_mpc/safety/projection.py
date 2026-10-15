@@ -11,7 +11,13 @@ The executed command is the closest command to u_MPC that satisfies
     scaled toward zero (bisection on α ∈ [0, 1]). Scaling is a conservative
     approximation of the projection for this non-convex constraint, not the
     exact argmin; it never increases speed.
-  * watchdog: stale state, stale geometry or invalid geometry at the robot ⇒ stop.
+  * watchdog: stale state or stale geometry ⇒ stop;
+  * unknown space (``unknown_policy``): "stop" stops whenever a collision
+    sphere is in unknown/stale space; "no_entry" lets spheres that already
+    are in unknown space move (the robot occupies that space, and an
+    eye-in-hand camera never sees most of the arm) but scales the command so
+    that no sphere moves from observed into unknown space, and checks
+    clearance only for spheres in observed space before and after the step.
 
 This is a safety *filter*, not a formal guarantee (see the research plan's
 formal-guarantee caution).
@@ -43,6 +49,7 @@ class SafetyFilter:
     d_safe: float = 0.02
     max_state_age_s: float = 0.2
     max_geometry_age_s: float = 1.0
+    unknown_policy: str = "stop"           # "stop" | "no_entry"
 
     def stop(self, reason: str) -> SafetyReport:
         return SafetyReport(np.zeros(8), 0.0, reason, float("nan"))
@@ -70,7 +77,7 @@ class SafetyFilter:
 
         C0, r = m.collision_spheres(x[None])
         d0, v0 = self.distance_fn(C0[0])
-        if not v0.all():
+        if not v0.all() and self.unknown_policy != "no_entry":
             return self.stop("watchdog")             # robot inside unknown/stale geometry
         d0 = d0 - r
 
@@ -82,13 +89,20 @@ class SafetyFilter:
 
         def ok(alpha: float) -> bool:
             d1, valid = clearance(alpha)
-            danger = d1 < self.d_safe
-            return bool(valid.all() and not np.any(danger & (d1 < d0 - 1e-9)))
+            if not np.all(valid | ~v0):
+                return False                         # a sphere would enter unknown space
+            danger = (d1 < self.d_safe) & valid & v0
+            return bool(not np.any(danger & (d1 < d0 - 1e-9)))
+
+        def min_clear(alpha: float) -> float:
+            d1, valid = clearance(alpha)
+            known = valid & v0
+            return float(d1[known].min()) if known.any() else float("nan")
 
         if ok(1.0):
-            return SafetyReport(u, 1.0, reason, float(clearance(1.0)[0].min()))
+            return SafetyReport(u, 1.0, reason, min_clear(1.0))
         lo, hi = 0.0, 1.0
         for _ in range(12):
             mid = 0.5 * (lo + hi)
             lo, hi = (mid, hi) if ok(mid) else (lo, mid)
-        return SafetyReport(lo * u, lo, "clearance", float(clearance(lo)[0].min()))
+        return SafetyReport(lo * u, lo, "clearance", min_clear(lo))

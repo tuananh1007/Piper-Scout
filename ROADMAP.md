@@ -1,6 +1,6 @@
 # Piper + Scout Research & Development Roadmap
 
-**Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense (model to be confirmed: D435 in URDF, D405 in the Phase 1 smoke test) on an AgileX Scout 2.0 skid-steer UGV  
+**Platform:** AgileX Piper 6-DoF arm + eye-in-hand Intel RealSense D405 on an AgileX Scout 2.0 skid-steer UGV  
 **Compute:** NVIDIA Jetson AGX Orin 64 GB (on-robot) + operator laptop (GUI)  
 **Application domain:** Autonomous plant manipulation — peduncle/branch grasping for pollination and selective harvesting  
 **Last updated:** 2026-10-07  
@@ -114,12 +114,12 @@ The headline research claim is therefore not “V-JEPA applied to agriculture,�
 | Semantic perception | YOLO / Grounded-SAM paths | Robust open-vocabulary target initialization |
 | Geometry | RealSense → nvblox path validated; CPU `SemanticVoxelMap` + `SemanticDistanceQuery` planner query (v0 backend, synthetic tests) | Per-class nvblox SDF completion; nvblox-backed query; real thin-structure scenes and Orin timing (P1.7.6) |
 | Target persistence | `stem_grasp`: framewise mask centroid + cached 3-D skeleton; `scout_piper_jepa`: Stage A target memory (gated dense matching, re-grounding via `/piper_jepa/init_mask`), tested only with the numpy reference encoder on synthetic scenes | `stem_grasp` identity can still jump under motion, sway, occlusion, or segmentation dropout; V-JEPA not yet run on GPU; E1 dataset and go/no-go benchmark open (P2A.5–P2A.6); `scout_piper_jepa` not in bringup or consumed by `stem_grasp`; untested on hardware |
-| Servo | `FullAdaptiveServoController` | No explicit horizon or semantic constraints |
+| Servo | `FullAdaptiveServoController` (baseline) and the Phase 2B MPPI visual servo (`servo_controller: mppi`: horizon, image / view / joint / clearance / force costs, semantic field with the target released, hard gates); simulated scripted trials 48/50 vs 49/50, MPPI ~40 % faster | Robot trials (P2.3) with a calibrated force estimate; GPU / Orin cycle time |
 | Whole-body control | `scout_piper_whole_body_mpc`: geometry-only MPPI with elitism + gradient refinement (unicycle base + Piper FK from the URDF), safety filter, dry-run ROS node, W0 arm-only and W1 sequential baselines; ≈60 ms/step on 4-core x86 dev CPU (≈85 ms with an obstacle field; synthetic) | Not run on hardware or on semantic geometry; WE1 slip and TCP calibration (P3A.7); W2 QP baseline; Orin timing and GPU port; not in bringup |
 | Prediction | `scout_piper_jepa` Stage B: action-conditioned dense predictor (P0/P2/P3, target-weighted loss), §12 read-outs and a geometry-anchored `JepaVisibilityCost` in the MPC's `extra` hook; synthetic world only | No robot episodes or V-JEPA features yet; synthetic closed-loop C3 vs C2 inconclusive; GPU/Orin latency open |
 | Deformation | `plant_twin`: one leaf + its stem, analytic-Jacobian LM fit ≈28 ms/frame on x86 dev CPU, RViz output | Untested on hardware; no fit-confidence/timestamp topic; current-state fitter only (no forward model); not coupled to planning/control |
-| Collision queries | `scout_piper_scene_repr` MoveIt plugin `Semantic` = FCL + the CPU semantic distance field (P1.7.7); CPU `SemanticDistanceQuery` usable in-process (used by the whole-body MPC) | Plugin tested only in software (real MoveIt model, synthetic field); validate on recorded scenes and the robot (P1.7.6) before relying on it; no robot self-filter yet (P1.7.8); nvblox-backed field open |
-| Force sensing | Code expects `/ft_sensor/raw` | No wrist F/T sensor in the hardware list — add one or calibrate a Piper joint-effort estimate before any force gate is trusted |
+| Collision queries | `scout_piper_scene_repr` MoveIt plugin `Semantic` = FCL + the CPU semantic distance field (P1.7.7); CPU `SemanticDistanceQuery` usable in-process (used by the whole-body MPC); the field topic also feeds the stem_grasp MPPI servo, with the target stem released (`exclude_target`) | Plugin tested only in software (real MoveIt model, synthetic field); validate on recorded scenes and the robot (P1.7.6) before relying on it; no robot self-filter yet (P1.7.8); nvblox-backed field open |
+| Force sensing | Code expects `/ft_sensor/raw`; joint-effort estimate `effort_force_node` + `calibrate_effort` publish there (checked on the fake arm) | No wrist F/T sensor in the hardware list — calibrate the joint-effort estimate on the robot (or add a sensor) before any force gate is trusted; thresholds above its 3-σ noise |
 | Depth alignment | Bringup enables `align_depth`; all depth consumers (`stem_grasp`, `plant_twin`, `scout_piper_scene_repr`, `scout_piper_jepa`, bringup `system.yaml`) default to `/camera/aligned_depth_to_color/image_raw` (2026-10-06) | Hardware check of the aligned stream (P0.3.8) |
 | Language interface | Planned | No persistent linkage between grounded language target and execution target |
 
@@ -136,12 +136,12 @@ The revised sequence separates **representation**, **local control**, **geometry
 **Current status:** ROS 2 workspace, Piper+Scout description, segmentation path, masked point cloud, skeleton/candidate logic, bringup scaffolding, and live RealSense→nvblox smoke path are present.
 
 **Remaining work**
-- moveit_servo wiring;
+- moveit_servo on hardware (wired and checked on the fake arm, P0.5);
 - Nav2 hardware validation;
 - Piper + Scout + RealSense synchronized hardware bringup;
 - ROS 1 → ROS 2 regression;
-- E-stop / stop-and-zero validation;
-- pipeline plan→execute through MoveIt (P0.4.11; `moveit_py` has no Humble binary) and the iterative approach state machine (P0.4.13).
+- E-stop / stop-and-zero validation (the software side: hot-key stop, GUI STOP and the safety supervisor with its base command gate and operator heartbeat, checked on the fake robot);
+- the stem_grasp reach, servo and final approach (P0.4.11–P0.4.13) on hardware: they run hardware-free through the whole-body MPC; plan→execute through MoveIt stays unwired (`moveit_py` has no Humble binary), and nothing closes the gripper yet.
 
 **Exit criteria**
 - Arm + base + camera + TF operate together on hardware.
@@ -357,7 +357,7 @@ Do not advance the JEPA paper claim solely because V-JEPA 2.1 is newer. Continue
 - force/contact penalty;
 - optional deformation penalty.
 
-**Sensing near contact:** with an eye-in-hand camera the target approaches the sensor's minimum depth during the last centimetres. With a D435 this happens before contact, so the servo must run on image-space target state plus the last valid metric estimate; with a D405 depth stays usable much closer. Confirm the camera model before fixing the handoff distance.
+**Sensing near contact:** the eye-in-hand camera is a D405, whose depth stays usable down to ≈7 cm, so live depth is available for most of the final approach; below that the servo runs on image-space target state plus the last valid metric estimate.
 
 **Hard gates**
 - stop/re-ground after persistent target-confidence loss;
@@ -756,6 +756,13 @@ U_{\rm total}
 
 **Exit criterion:** fewer views or lower acquisition time at equal or better grasp performance.
 
+**Implementation (2026-10-12):** `Codes/src/scout_piper_active_perception/`: the
+three U terms with per-term requirements, Fisher information of the stem joint
+at the grasp point, view candidates the whole-body MPC reaches, the five
+ablation policies in simulation, a ROS node whose views the MPC follows (closed
+loop on the fake robot), VGGT helpers not yet run on a GPU. Simulated results
+and their limits in the package README; robot runs in MODULE_TASKS.md C10.
+
 ---
 
 ### Phase 5 — Language/VLM + operator GUI for non-experts (Months 15–18) ★ APPLICATION CAPSTONE
@@ -805,6 +812,15 @@ The VLM initializes the target; Phase 2A maintains its identity afterward.
 - `plant_twin` deformation overlay when valid;
 - confirm/abort;
 - text + local speech input.
+
+**Implementation (2026-10-12):** `Codes/src/scout_piper_language/`: rule-based
+q_ℓ parsing and grounding in the segmentation's detections with clarification
+questions, a VLM interface behind HTTP whose answers are validated against the
+detections, the reachability filter with plain-language reasons on every
+proposal, the 2-s countdown, a software stop shared with the hot key, and a web
+GUI (Command / Inspect / Drive / Watch) served by a ROS node; tested in headless
+Chromium and on the fake robot. No VLA / VLM model, no Tauri shell, no
+operators yet (MODULE_TASKS.md C11, P5.4).
 
 ---
 
@@ -891,7 +907,7 @@ All learned/fitted states carry timestamps and maximum-valid-age watchdogs.
 | Target silently changes identity | Medium | persistent descriptor + abort/re-ground |
 | Scope expands into too many papers | High | Phase 3B remains headline |
 | No wrist F/T sensor on the platform | High | decide on an added sensor or a calibrated joint-effort estimate before Phase 2B; no force claims until then |
-| Camera minimum range blinds depth near grasp | Medium-high (D435) / low (D405) | confirm camera model; image-space servo + last valid depth for the final approach |
+| Camera minimum range blinds depth near grasp | Low (D405, ≈7 cm minimum) | image-space servo + last valid depth for the last few cm |
 | Skid-steer slip breaks the unicycle model | Medium | identify effective track width/slip (WE1); conservative base velocity near plants |
 | Semantic plugin trusted before validation | Medium | plugin implemented (P1.7.7) but only tested in software; keep it out of execution until the P1.7.6 scene runs pass; it refuses to plan when the field is missing or stale |
 

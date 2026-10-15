@@ -1,0 +1,33 @@
+# scout_piper_language: instruction node and operator GUI (Phase 5). See README.md.
+operator_instruction:
+  ros__parameters:
+    world_frame: odom
+    detections_topic: /stem_grasp/detections
+    detections_max_age_s: 2.0
+    field_topic: /scene_repr/distance_field   # "" = reachability without the scene map
+    camera_info_topic: /camera/color/camera_info
+    camera_frame: camera_color_optical_frame
+    tcp_offset_m: 0.14
+    countdown_s: 2.0
+    vlm_url: ""                                # e.g. http://localhost:8000/propose (validated against the detections)
+    vlm_timeout_s: 3.0
+    pipeline_node: /stem_grasp_pipeline
+    active_perception_service: /active_perception/plan_view
+    gripper_open_m: 0.07
+    max_base_move_m: 2.0
+
+operator_gui:
+  ros__parameters:
+    host: 127.0.0.1                            # 0.0.0.0 for a tablet on the robot's closed network
+    port: 8080
+    fps: 10.0
+    camera_topic: /camera/color/image_raw
+    jpeg_quality: 70
+    max_width: 640
+    hold_s: 0.3                                # a drive command holds this long, then zero
+    base_v_max: 0.2
+    base_w_max: 0.4
+    arm_v_max: 0.05
+    camera_frame: camera_color_optical_frame
+    whisper_cmd: ""                            # e.g. "whisper-cli -m /models/ggml-base.en.bin -nt -f {wav}"
+    tts_cmd: ""                                # e.g. "piper --model /models/en_US-lessac-medium.onnx --output_file {wav}"

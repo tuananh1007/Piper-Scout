@@ -1,0 +1,12 @@
+# E1 tracking methods (python3 -m scout_piper_jepa.e1 run ...; PIPER_JEPA_EXPERIMENTS.md §7).
+# The torch.hub entry points must match the releases installed on the machine:
+# check them against the facebookresearch/vjepa2 and facebookresearch/dinov2
+# READMEs before the run, and record what was used.
+methods:
+  T0: {kind: segmentation}                      # recorded seg_masks, largest component per frame
+  T1: {kind: optical_flow}                      # Lucas-Kanade on corners of the initial mask
+  T2: {kind: memory, encoder: dinov2, hub_entry: dinov2_vits14, image_size: 448}
+  T3: {kind: memory, encoder: vjepa, hub_entry: vjepa2_vit_large, image_size: 256}
+  T4: {kind: memory, encoder: vjepa, hub_entry: "", image_size: 384,
+       note: "V-JEPA 2.1: set hub_entry (and hub_repo if it differs) from the release"}
+  ref: {kind: memory, encoder: color_patch}     # numpy pipeline check, not a result
