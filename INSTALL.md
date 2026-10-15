@@ -457,7 +457,7 @@ PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml  # path C (vcstool from 
 | `scout_ros2/` | `agilexrobotics/scout_ros2@humble` | Scout base CAN driver |
 | `ugv_sdk/` | `westonrobot/ugv_sdk@main` | CAN SDK used by `scout_base` |
 | `scout_nav2/` | `AIRLab-POLIMI/scout_nav2@main` | Nav2 stack tuned for the Scout |
-| `realsense-ros/` | `IntelRealSense/realsense-ros@4.58.4` | Camera driver (matches ROS Humble's librealsense2 2.58, 9.2) |
+| `moveit_calibration/` | `moveit/moveit_calibration@3f9d48e` (Jazzy port; `patch_upstream.sh` maps its headers to Humble) | Hand-eye calibration RViz plugin (`piper_quickstart calibrate:=true`) |
 | `isaac_ros_common/`, `isaac_ros_nvblox/`, `isaac_ros_nitros/`, `isaac_ros_gxf/` | `NVIDIA-ISAAC-ROS/*@release-3.2` (`isaac_ros_gxf` is the `gxf` repo) | nvblox from source; release-3.2 is the last Humble tag and there are no Isaac ROS apt packages for Humble any more |
 | `negotiated/` | `osrf/negotiated@master` | Needed by `isaac_ros_nitros` |
 
@@ -465,12 +465,15 @@ PATH=$HOME/.local/bin:$PATH vcs import src < repos.yaml  # path C (vcstool from 
 
 ```bash
 ls src
-# expect, besides our packages: piper_ros scout_ros2 ugv_sdk scout_nav2 realsense-ros
+# expect, besides our packages: piper_ros scout_ros2 ugv_sdk scout_nav2 moveit_calibration
 #   isaac_ros_common isaac_ros_nvblox isaac_ros_nitros isaac_ros_gxf negotiated
 ls src/piper_ros/src/piper/launch/start_single_piper.launch.py \
-   src/scout_nav2/scout_nav2/launch/nav2.launch.py \
-   src/realsense-ros/realsense2_camera/launch/rs_launch.py
+   src/scout_nav2/scout_nav2/launch/nav2.launch.py
 ```
+
+The RealSense driver is not cloned: the dev image installs `ros-humble-realsense2-camera` from apt,
+built against the image's apt `librealsense2` (in the container, `ros2 pkg prefix realsense2_camera`
+prints `/opt/ros/humble`).
 
 If an upstream path has moved, fix the references in
 `src/scout_piper_bringup/launch/full_system.launch.py`,

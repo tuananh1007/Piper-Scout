@@ -36,7 +36,6 @@ Upstream packages will be cloned into `src/` by `vcs import`:
 - `piper_ros/` from `agilexrobotics/piper_ros@humble` (arm driver, ros2_control, MoveIt 2 config)
 - `scout_ros2/` from `agilexrobotics/scout_ros2@humble` (Scout base CAN driver)
 - `scout_nav2/` from `AIRLab-POLIMI/scout_nav2` (Nav2 stack tuned for Scout)
-- `realsense-ros/` from `IntelRealSense/realsense-ros@4.58.4` (camera driver; matches ROS Humble's librealsense2 2.58)
 - `ugv_sdk/` from `westonrobot/ugv_sdk@main` (CAN SDK used by `scout_base`)
 - `moveit_calibration/` from `moveit/moveit_calibration@ros2` (hand-eye calibration RViz plugin, used by `piper_quickstart`)
 - Phase 1 nvblox source build (`release-3.2`, the last Humble tags): `isaac_ros_common/`, `isaac_ros_nvblox/`,
