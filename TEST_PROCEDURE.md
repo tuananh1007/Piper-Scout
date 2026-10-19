@@ -356,7 +356,7 @@ Watch `tegrastats` in another terminal during the first run and save a few
 lines: `tegrastats --interval 2000 | tee $LOG/J6_tegrastats.txt` (Ctrl-C after
 the run).
 
-**Pass:** fourteen `PASS` lines with `--profile orin`; no `MPPI solves overrun`
+**Pass:** seventeen `PASS` lines with `--profile orin`; no `MPPI solves overrun`
 warning with `--profile orin`.
 **Record:** the `MPPI solve median / max` lines of both runs, any overrun
 warnings, the highest RAM use in `tegrastats`.
@@ -419,8 +419,8 @@ ros2 topic hz /camera/aligned_depth_to_color/image_raw | tee $LOG/J8_depth_hz.tx
 ### J9 — GPU stack on the Orin
 
 **Goal:** confirm that the perception stack fits and record its cost. The
-per-class semantic nvblox (step 4) has never run anywhere, so this is also its
-first run.
+per-class semantic nvblox (step 4) runs first on the workstation (MODULE_TASKS.md
+A4); this is its first run on the Orin.
 
 **Steps:** stop J8's launch first (the next launch starts its own camera).
 Record the idle state: `tegrastats --interval 2000 | head -3 | tee $LOG/J9_idle.txt`.

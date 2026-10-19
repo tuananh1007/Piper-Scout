@@ -86,7 +86,7 @@ to the largest torch-cuda value whose p95 with the plant field is under 90 ms
 ### A3 — Hardware-free chains on the GPU profile
 
 **Steps:** `./scripts/hardware_free_checks.sh --profile gpu 2>&1 | tee $LOG/A3_hwfree_gpu.txt`
-**Pass:** fourteen `PASS` lines; no `MPPI solves overrun` warning.
+**Pass:** seventeen `PASS` lines; no `MPPI solves overrun` warning.
 **Record:** the two `MPPI solve median / max` lines.
 
 ### A4 — Per-class nvblox and the distance-field bridge (P1.2.1, P1.3.1, first run)
@@ -367,7 +367,7 @@ python3 src/scout_piper_whole_body_mpc/benchmarks/timing.py --backends numpy,tor
 p95 with the plant field is under 90 ms at ≥ 256 samples, else `orin` (numpy,
 128 samples). Set `samples` in `config/whole_body_mpc_orin_gpu.yaml` (or
 `_orin.yaml`) accordingly and run `./scripts/hardware_free_checks.sh --profile <chosen>`
-(fourteen PASS). **Record:** the table, the chosen profile and samples.
+(seventeen PASS). **Record:** the table, the chosen profile and samples.
 
 ### B3 — nvblox rate and memory on the Orin (P1.1.3, P1.7.6 timing)
 
@@ -545,8 +545,10 @@ not in git) and a photo of each arrangement.
 
 ### C6 — Record the E1 dataset (P2A.5)
 
-Episodes as in PIPER_JEPA_EXPERIMENTS.md §6 (identical neighbours, leaf
-occlusion, camera motion through the robot): `./scripts/record_bag.sh e1 <name>`.
+Episodes as in PIPER_JEPA_EXPERIMENTS.md §8.2–8.3 (identical neighbours, leaf
+occlusion, camera motion through the robot; scene factors in §5, annotation in
+§4). Name each bag so its plant arrangement can be told from the name: §6.2
+puts all episodes of one arrangement into one split: `./scripts/record_bag.sh e1 <name>`.
 Export each with `jepa_episode export` and annotate (A10 steps 2–4).
 
 ### C7 — Record the E3 dataset (P3B.8)

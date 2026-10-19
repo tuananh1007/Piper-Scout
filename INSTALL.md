@@ -169,7 +169,7 @@ clone on the Orin:
 - udev rules and the rest of Step 9 as on the workstation.
 
 **A.6 Run.** First `./scripts/hardware_free_checks.sh --profile orin` (10.2;
-all fourteen checks must pass), then Step 10 on the Orin, in the order of
+all seventeen checks must pass), then Step 10 on the Orin, in the order of
 [`TEST_PROCEDURE.md`](TEST_PROCEDURE.md) parts J and R, with:
 - **the MPC on the Orin profile:** `ros2 launch scout_piper_whole_body_mpc
   whole_body_mpc.launch.py execute:=true profile:=orin`. The MPPI solve is
