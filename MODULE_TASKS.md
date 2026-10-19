@@ -584,8 +584,94 @@ E-stop; `mppi_qd_max` 0.3 for the first runs. **Record:** per run, image error
 over time (`/stem_grasp/servo_status`), approach time, final axis miss and
 distance, aborts; contact or leaf displacement by eye, and the joint-effort
 force (`/ft_sensor/raw`) once C2 step 4 has calibrated it (no F/T sensor). The
-P2.3 exit numbers (≥ 20 % success, ≥ 30 % force) need the 50-trial protocol and
+P2.3 exit numbers (≥ 20 % success, ≥ 30 % force) need the 50-trial protocol below and
 that calibrated force estimate.
+
+#### C9 part 2 — the 50-trial comparison (P2.3.1, P2.3.2 exit gate)
+
+**Question.** On the robot, does the MPPI servo grasp more often and push less
+than the IBVS baseline? **Gate (P2.3.2):** MPPI's success rate is at least 20
+percentage points above IBVS's, and its median peak approach force is at least
+30 % below IBVS's. Both must hold.
+
+**Before trial 1.**
+- C2 complete. The known-mass reading of C2 step 4 is within 20 % of the
+  expected value, and `contact_threshold_n` and `max_force_n` sit above
+  `threshold_3sigma_n`. If the threshold is too high for gentle stem contact,
+  stop and report: the force half of the gate cannot be measured.
+- The C9 first runs done: at least 5 clean runs per controller on a dowel.
+- Settings fixed for the whole protocol; copy the pipeline yaml into
+  `$LOG/C9_settings.yaml`. Both controllers use the same file except
+  `servo_controller`: `approach_enabled: true`, `grasp_close_gripper: true`,
+  `approach_speed_mps: 0.02`, `approach_align_window_sec: 1.5`, `max_force_n`
+  and `contact_threshold_n` from C2, `mppi_backend` and `mppi_samples` from B7,
+  `mppi_qd_max` as settled in the first runs (0.3 unless they justify 0.5),
+  `scene_field_topic` empty. The MPC runs on B2's profile; the force estimator
+  runs (`bringup_force_estimate:=true effort_calibration:=<C2_effort.json>`).
+
+**Targets.** Ten targets, ten trials each (five per controller):
+
+| Target | Stem | Placement |
+|---|---|---|
+| T01–T03 | stand-in dowel, 6–10 mm, green, in a pot | three positions in front of the base start, 0.8–1.25 m ahead and up to ±0.3 m sideways |
+| T04–T05 | stand-in dowel | as T01–T03, with a second dowel 5–9 cm beside the target |
+| T06–T10 | real plant stems on at least 3 plants (R12 weights) | within the arm's reach from the base start |
+
+Tape the base start and each pot's position, so every trial of a target starts
+from the same place.
+
+**Order.** Within a target, alternate in ABBA blocks so drift and plant wear
+fall on both controllers: odd targets IBVS, MPPI, MPPI, IBVS, IBVS, MPPI,
+MPPI, IBVS, IBVS, MPPI; even targets the same with the two swapped. To switch,
+restart the stem_grasp launch with the other `servo_controller`; the rest of
+the bringup keeps running. Run a target's ten trials in one sitting where
+possible, and note any split.
+
+**One trial.**
+1. Base on its tape mark, arm at the scan pose, gripper open, pots on their
+   marks. One trial recorder per session:
+   `ros2 run scout_piper_bringup trial_recorder.py --ros-args -p out:=$LOG/C9_trials_<session>.jsonl`.
+2. Note the trial (`ros2 topic pub --once /trial/note std_msgs/msg/String "data: 'C9 T03 #4'"`),
+   then start it: `ros2 service call /stem_grasp_pipeline/scan std_srvs/srv/Trigger "{}"`.
+   Hand on the E-stop.
+3. Let it run to `GRASPED` or `ABORTED`. Stop it (disable the bridge) if it has not
+   reached `GRASPED` 90 s after it first entered `SERVOING`; that trial is a
+   failure, noted `FAIL timeout`.
+4. At `GRASPED`, check by eye that the stem is between the fingers, standing
+   and unbroken, and that no neighbour was hit. If not, note `FAIL <reason>`:
+   the report then counts the trial as failed. Photograph the first trial of
+   each target and every failure. Release (`/stem_grasp_pipeline/release`).
+5. Reset: pots back to their marks, with any displacement noted in cm. Replace
+   a damaged plant stem with a similar one and note it.
+
+A trial **succeeds** when the report's outcome is `grasped` or `released`
+(the pipeline reached `GRASPED` without an abort or safety trip) and no
+`FAIL` note was added. Any human intervention other than the release is a
+failure (`FAIL intervention`).
+
+**Stop the session** at any unexpected motion, a safety trip the test does not
+explain, or three force-limit aborts in a row; report before continuing.
+
+**Readout.**
+
+```bash
+ros2 run scout_piper_bringup trial_report.py test_logs/*/C9_trials_*.jsonl --gate \
+  --md $LOG/C9_report.md --json $LOG/C9_report.json
+```
+
+`--gate` prints, per controller, the trials, the successes and the median of
+`force_max_approach_n`. That is each trial's peak |F| of the joint-effort
+estimate from the first `SERVOING` to `GRASPING`, so the gripper's own squeeze
+is left out. It then prints the gate line. **Record:** the per-controller
+table, the gate line, the success per target and controller (from the JSON),
+median approach times and axis misses, and the one-sided Fisher exact p of the
+success difference. With 50 trials per controller a 20-point gain (e.g. 50 %
+vs 70 %) gives p ≈ 0.03; the gate itself is the two pre-set thresholds.
+
+**Optional third arm.** MPPI with the semantic field
+(`scene_field_topic:=/scene_repr/distance_field`, C4's stack running), five
+more trials per target in the same alternation. It is decided before trial 1
+and is not part of the gate.
 
 ---
 
@@ -735,7 +821,7 @@ Copy into `$LOG/MODULE_RESULTS.md`.
 | C6 E1 recorded | | | episodes, frames |
 | C7 E3 recorded | | | episodes, frames |
 | C8 C3 vs C2 on robot | | | in view, tracker, goal error |
-| C9 MPPI servo vs IBVS | | | error vs time, approach s, axis miss |
+| C9 MPPI servo vs IBVS | | | error vs time, approach s, axis miss; 50-trial: success and median approach force per controller, gate line |
 | C10 active perception | | | σ₀, k₂, dropout; views, s, sigma, corridor, grasp per policy |
 | C11 operator GUI | | | proposals right / wrong, time to proposal, STOP |
 | D1 semantic vs occupancy (real) | | | failures per representation |

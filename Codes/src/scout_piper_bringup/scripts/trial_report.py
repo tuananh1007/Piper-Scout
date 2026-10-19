@@ -12,8 +12,16 @@ for and the stem-joint uncertainty before / after them, the reach (time,
 final TCP and orientation error, MPPI solve times), the servo (time, final
 pixel error and axis miss), the approach, the peak contact force, the
 gripper opening when GRASPED, the base travel, safety trips, the operator's
-instructions and notes (``/trial/note``, e.g. "slipped"). Prints a Markdown
+instructions and notes (``/trial/note``, e.g. "slipped"); a note starting with
+"FAIL" (e.g. "FAIL neighbour hit") turns a grasped trial into a failure. Prints a Markdown
 table for RESULTS.md and the success rate and median times over all trials.
+
+``--gate`` adds the Phase 2B comparison (MODULE_TASKS.md C9, P2.3.2) per servo
+controller: success rate, and the peak contact force from the first SERVOING to
+the first GRASPING (the final approach, before the gripper closes; the whole
+trial when it never gets there), as its median over the trials that servoed.
+The gate: MPPI succeeds at least 20 percentage points more often than IBVS, and
+its median approach force is at least 30 % lower.
 
 ROS-free (reads the JSONL only).
 """
@@ -150,8 +158,13 @@ def summarize(trial: List[Dict]) -> Dict:
         sv = _last(trial, "servo", before=b, after=a)
         out["approach"] = {"time_s": _r(b - a, 2), "distance_m": _r(sv["data"].get("distance_m")) if sv else None}
 
-    forces = [e["data"] for e in trial if e.get("kind") == "force" and isinstance(e.get("data"), (int, float))]
-    out["force_max_n"] = _r(max(forces), 2) if forces else None
+    forces = [e for e in trial if e.get("kind") == "force" and isinstance(e.get("data"), (int, float))]
+    out["force_max_n"] = _r(max(e["data"] for e in forces), 2) if forces else None
+    if "SERVOING" in iv:  # final approach: first SERVOING to first GRASPING (or the trial's end)
+        a = iv["SERVOING"][0][0]
+        b = iv["GRASPING"][0][0] if "GRASPING" in iv else t1
+        near = [e["data"] for e in forces if a <= e["t"] < b]
+        out["force_max_approach_n"] = _r(max(near), 2) if near else None
     if "GRASPED" in iv:
         g = _last(trial, "gripper", before=iv["GRASPED"][0][0] + 0.5)
         out["gripper_at_grasp_mm"] = _r(1000 * g["data"], 1) if g else None
@@ -159,6 +172,9 @@ def summarize(trial: List[Dict]) -> Dict:
     out["base_travel_m"] = _r(sum(math.dist(p[:2], q[:2]) for p, q in zip(odo, odo[1:])), 3) if len(odo) > 1 else 0.0
     out["instructions"] = [e["data"] for e in trial if e.get("kind") == "instruction"]
     out["notes"] = [e["data"] for e in trial if e.get("kind") == "note"]
+    failed = [n for n in out["notes"] if isinstance(n, str) and n.upper().startswith("FAIL")]
+    if failed and out["outcome"] in ("grasped", "released", "at grasp"):  # judged by eye: the note decides
+        out["outcome"] = f"failed ({failed[0]})"
     return out
 
 
@@ -172,6 +188,34 @@ def aggregate(rows: List[Dict]) -> Dict:
             "median_reach_s": _r(statistics.median(reach), 2) if reach else None,
             "median_success_duration_s": _r(statistics.median(dur), 2) if dur else None,
             "safety_trips": sum(len(r["safety_trips"]) for r in rows)}
+
+
+GATE = {"baseline": "ibvs", "candidate": "mppi", "success_gain_pp": 20.0, "force_reduction": 0.30}  # P2.3.2
+
+
+def by_controller(rows: List[Dict]) -> Dict:
+    """Success rate and median approach force per servo controller (trials that reached SERVOING)."""
+    out, name = {}, lambda r: r["servo"]["controller"] or "unknown"  # unknown: no servo status while servoing
+    for c in sorted({name(r) for r in rows if r.get("servo")}):
+        rs = [r for r in rows if r.get("servo") and name(r) == c]
+        ok = [r for r in rs if r["outcome"] in ("grasped", "released")]
+        f = [r["force_max_approach_n"] for r in rs if r.get("force_max_approach_n") is not None]
+        out[c] = {"trials": len(rs), "grasped": len(ok), "success_rate": _r(len(ok) / len(rs), 3),
+                  "median_force_approach_n": _r(statistics.median(f), 3) if f else None, "force_samples": len(f)}
+    return out
+
+
+def gate(per: Dict, g: Dict = GATE) -> Dict:
+    """The P2.3.2 exit gate from by_controller(): None where a controller or its forces are missing."""
+    b, c = per.get(g["baseline"]), per.get(g["candidate"])
+    if not b or not c:
+        return {"passed": None, "reason": f"needs trials of both {g['baseline']} and {g['candidate']}"}
+    gain = _r(100 * (c["success_rate"] - b["success_rate"]), 1)
+    fb, fc = b["median_force_approach_n"], c["median_force_approach_n"]
+    red = _r(1 - fc / fb, 3) if fb and fc is not None else None
+    ok_s, ok_f = gain >= g["success_gain_pp"], (red is not None and red >= g["force_reduction"])
+    return {"success_gain_pp": gain, "force_reduction": red, "success_ok": ok_s, "force_ok": ok_f if red is not None else None,
+            "passed": ok_s and ok_f}
 
 
 def markdown(rows: List[Dict], agg: Dict) -> str:
@@ -203,10 +247,21 @@ def main(argv=None) -> int:
     ap.add_argument("logs", nargs="+", help="trial_recorder.py JSONL files")
     ap.add_argument("--json", help="write the per-trial summaries and the aggregate here")
     ap.add_argument("--md", help="write the Markdown table here")
+    ap.add_argument("--gate", action="store_true", help="add the per-controller Phase 2B comparison (C9, P2.3.2)")
     a = ap.parse_args(argv)
     rows = [summarize(t) for t in segment(load(a.logs)) if t]
     agg = aggregate(rows)
     md = markdown(rows, agg)
+    if a.gate:
+        agg["controllers"] = by_controller(rows)
+        agg["gate"] = gate(agg["controllers"])
+        md += "\n\n| controller | trials | grasped | success | median approach force N |\n|---|---|---|---|---|\n" + "\n".join(
+            f"| {c} | {v['trials']} | {v['grasped']} | {v['success_rate']} | {v['median_force_approach_n']} |"
+            for c, v in agg["controllers"].items())
+        g = agg["gate"]
+        md += (f"\n\nP2.3.2 gate ({GATE['candidate']} vs {GATE['baseline']}): " + (g["reason"] if "reason" in g else
+               f"success {g['success_gain_pp']:+} points (need +{GATE['success_gain_pp']:g}), force reduction "
+               f"{g['force_reduction']} (need {GATE['force_reduction']}) -> {'PASS' if g['passed'] else 'FAIL'}"))
     print(md)
     if a.md:
         with open(a.md, "w") as f:

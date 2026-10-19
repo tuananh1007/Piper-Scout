@@ -109,6 +109,36 @@ def test_cli_writes_json_and_markdown(tmp_path):
     assert out_m.read_text().startswith("| # | outcome")
 
 
+def test_approach_force_and_phase_2b_gate(tmp_path):
+    r1, r2, r3 = (rep.summarize(t) for t in rep.segment(_session()))
+    assert r1["force_max_approach_n"] == 1.5      # SERVOING to GRASPING: the 4.0 N while closing is left out
+    assert "force_max_approach_n" not in r2 and r3["force_max_approach_n"] is None   # no SERVOING / no force
+
+    def row(controller, outcome, force):
+        return {"outcome": outcome, "servo": {"controller": controller}, "force_max_approach_n": force}
+    rows = ([row("ibvs", "released", 2.0)] * 5 + [row("ibvs", "aborted (in APPROACHING)", 3.0)] * 5
+            + [row("mppi", "released", 1.0)] * 8 + [row("mppi", "aborted (in SERVOING)", None)] * 2)
+    per = rep.by_controller(rows)
+    assert per["ibvs"] == {"trials": 10, "grasped": 5, "success_rate": 0.5, "median_force_approach_n": 2.5,
+                           "force_samples": 10}
+    assert per["mppi"]["success_rate"] == 0.8 and per["mppi"]["median_force_approach_n"] == 1.0
+    assert rep.gate(per) == {"success_gain_pp": 30.0, "force_reduction": 0.6, "success_ok": True, "force_ok": True,
+                             "passed": True}
+    per["mppi"]["success_rate"] = 0.6                 # +10 points only
+    assert rep.gate(per)["passed"] is False
+    assert rep.gate({"ibvs": per["ibvs"]})["passed"] is None
+    judged = rep.summarize(rep.segment(_session())[0] + [{"t": 32.0, "kind": "note", "data": "FAIL stem pushed over"}])
+    assert judged["outcome"] == "failed (FAIL stem pushed over)"
+
+    path = tmp_path / "s.jsonl"
+    path.write_text("\n".join(json.dumps(e) for e in _session()) + "\n")
+    out_j = tmp_path / "r.json"
+    assert rep.main([str(path), "--gate", "--json", str(out_j)]) == 0
+    agg = json.loads(out_j.read_text())["aggregate"]
+    assert agg["controllers"]["ibvs"]["trials"] == 1 and agg["controllers"]["unknown"]["trials"] == 1
+    assert agg["gate"]["passed"] is None          # no MPPI trials here
+
+
 def test_recorder_throttle():
     th = rec.Throttle(0.2)
     assert th(0.0, "a") and not th(0.1, "a")
